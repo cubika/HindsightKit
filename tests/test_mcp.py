@@ -13,6 +13,20 @@ from provenloop import cli
 
 
 class McpTests(unittest.TestCase):
+    def test_explicit_bank_works_without_vscode_roots(self):
+        async def check():
+            params = StdioServerParameters(command=sys.executable,
+                args=['-u', str(Path(__file__).with_name('mcp_fixture.py')), 'vscode'],
+                env={**os.environ, 'TEST_FIXED_BANK': 'shared-on-server', 'FASTMCP_LOG_LEVEL': 'CRITICAL',
+                     'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
+            async with stdio_client(params) as (reader, writer):
+                async with ClientSession(reader, writer) as client:
+                    await client.initialize()
+                    result = await client.call_tool('recall', {'query': 'shared bank'})
+                    self.assertFalse(result.is_error, result)
+                    self.assertEqual([item['bank'] for item in result.structured_content['memories']], ['shared-on-server'])
+        asyncio.run(asyncio.wait_for(check(), timeout=45))
+
     def test_vscode_roots_and_cli_cwd_are_isolated_without_model_calls(self):
         async def check():
             with tempfile.TemporaryDirectory() as temp:
@@ -27,8 +41,9 @@ class McpTests(unittest.TestCase):
                     async def list_roots(_):
                         return types.ListRootsResult(roots=[types.Root(uri=path.as_uri()) for path in active_roots])
                     params = StdioServerParameters(command=sys.executable,
-                        args=[str(Path(__file__).with_name('mcp_fixture.py')), context], cwd=str(cwd),
-                        env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
+                        args=['-u', str(Path(__file__).with_name('mcp_fixture.py')), context], cwd=str(cwd),
+                        env={**os.environ, 'FASTMCP_LOG_LEVEL': 'CRITICAL',
+                             'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
                     async with stdio_client(params) as (reader, writer):
                         async with ClientSession(reader, writer, list_roots_callback=list_roots if roots is not None else None) as client:
                             await client.initialize()
@@ -53,4 +68,4 @@ class McpTests(unittest.TestCase):
                 self.assertFalse(result.is_error, result)
                 result = await session('vscode', root, [a], changed_roots=[b])
                 self.assertTrue(result.is_error)
-        asyncio.run(check())
+        asyncio.run(asyncio.wait_for(check(), timeout=120))

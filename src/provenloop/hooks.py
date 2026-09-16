@@ -7,9 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 
-from hindsight_client import Hindsight
 from filelock import FileLock
 
+from . import connection
 from .cli import home, node, runtime
 from .memory import Memory, Scope, scope_for
 
@@ -18,7 +18,9 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
     session_id = event.get('sessionId')
     if not isinstance(session_id, str) or not session_id:
         raise ValueError('Copilot did not provide a session ID; skipping memory to avoid mixing sessions.')
-    name = hashlib.sha256(session_id.encode()).hexdigest()
+    bank = connection.fixed_bank(config)
+    destination = json.dumps((config.get('apiUrl', ''), bank)) if bank else ''
+    name = hashlib.sha256((session_id + destination).encode()).hexdigest()
     path = home() / 'sessions' / (name + '.json')
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + '.lock', timeout=5):
@@ -28,7 +30,8 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
             scope = Scope(pinned['bankId'], pinned['_repository'])
         else:
             directory = str(Path(event.get('cwd') or os.getcwd()).resolve(strict=True))
-            scope = scope_for(directory)
+            bank = connection.fixed_bank(config)
+            scope = Scope(bank) if bank else scope_for(directory)
         resolved = {**config, 'bankId': scope.bank, 'dynamicBankId': False, 'optInOnly': False,
                     '_directory': directory, '_repository': scope.repository,
                     'autoSeed': False, 'codebaseSurvey': False, 'manageBankConfig': False}
@@ -43,10 +46,12 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
 
 
 async def prompt_memory(config, event):
-    client = Hindsight(base_url=config['apiUrl'], timeout=6, max_attempts=1)
+    client = connection.sdk(config, timeout=6, max_attempts=1)
     try:
         service = Memory(client, Scope(config['bankId'], config['_repository']))
-        return await asyncio.wait_for(service.read('recall', event.get('prompt') or '', 2048), timeout=7)
+        result = await asyncio.wait_for(service.read('recall', event.get('prompt') or '', 2048), timeout=7)
+        await connection.report(config, 'copilot-cli')
+        return result
     finally:
         await client.aclose()
 

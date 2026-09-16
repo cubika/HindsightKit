@@ -15,7 +15,7 @@ from hindsight_client import Hindsight
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
-from provenloop import cli, hooks
+from provenloop import cli, hooks, connection
 from provenloop.memory import SHARED_BANK, scope_for
 
 
@@ -23,7 +23,8 @@ async def main():
     cli.prepare_env()
     _, paths = cli.profile_config()
     url = f'http://127.0.0.1:{paths.port}'
-    client = Hindsight(base_url=url)
+    key = connection.load().get('apiToken')
+    client = Hindsight(base_url=url, api_key=key)
     runtime = cli.runtime()
     suffix = uuid.uuid4().hex[:10]
     marker_a, marker_b, marker_shared = [prefix + suffix for prefix in ['A-', 'B-', 'SHARED-']]
@@ -36,7 +37,7 @@ async def main():
         for path in [a, b]: cli.run(['git', 'init', path], capture=True)
         bank_a, bank_b = scope_for(a).bank, scope_for(b).bank
         config = base / 'coding-agent.json'
-        config.write_text(json.dumps({'apiUrl': url, 'serverMode':'self-hosted','optInOnly':False}))
+        config.write_text(json.dumps({'apiUrl': url, 'apiToken':key, 'serverMode':'self-hosted','optInOnly':False}))
         env = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src'),
                'HINDSIGHT_CONFIG': str(config), 'PROVENLOOP_HOME': str(base / 'state')}
 

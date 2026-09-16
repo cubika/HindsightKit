@@ -2113,21 +2113,32 @@ name = "provenloop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "hindsight-api-slim", extra = ["embedded-db", "local-onnx"] },
+    { name = "fastmcp" },
+    { name = "filelock" },
+    { name = "github-copilot-sdk" },
     { name = "hindsight-client" },
     { name = "hindsight-copilot" },
+]
+
+[package.optional-dependencies]
+server = [
+    { name = "hindsight-api-slim", extra = ["embedded-db", "local-onnx"] },
     { name = "hindsight-embed" },
     { name = "pg0-embedded" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hindsight-api-slim", extras = ["embedded-db", "local-onnx"], specifier = "==0.10.0" },
+    { name = "fastmcp", specifier = "==4.0.4" },
+    { name = "filelock", specifier = "==3.32.7" },
+    { name = "github-copilot-sdk", specifier = "==1.0.14" },
+    { name = "hindsight-api-slim", extras = ["embedded-db", "local-onnx"], marker = "extra == 'server'", specifier = "==0.10.0" },
     { name = "hindsight-client", specifier = "==0.10.0" },
     { name = "hindsight-copilot", specifier = "==0.1.0" },
-    { name = "hindsight-embed", specifier = "==0.10.0" },
-    { name = "pg0-embedded", specifier = "==0.15.2" },
+    { name = "hindsight-embed", marker = "extra == 'server'", specifier = "==0.10.0" },
+    { name = "pg0-embedded", marker = "extra == 'server'", specifier = "==0.15.2" },
 ]
+provides-extras = ["server"]
 
 [[package]]
 name = "psycopg2-binary"

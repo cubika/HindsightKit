@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 import sys
+import os
 from provenloop.mcp import serve
 
 class Client:
@@ -10,6 +11,10 @@ class Client:
         return SimpleNamespace(model_dump=lambda **ignored: {'results': [], 'bank': kwargs['bank_id']})
     async def aclose(self): pass
 
-with patch('provenloop.mcp.Hindsight', Client), \
-     patch('provenloop.mcp.profile_config', return_value=({}, SimpleNamespace(port=9077))):
+config = {'apiUrl': 'http://127.0.0.1:9077'}
+if os.environ.get('TEST_FIXED_BANK'):
+    config['provenloop'] = {'bank': os.environ['TEST_FIXED_BANK']}
+
+with patch('provenloop.connection.sdk', lambda *args, **kwargs: Client()), \
+     patch('provenloop.connection.load', return_value=config):
     serve(sys.argv[1])

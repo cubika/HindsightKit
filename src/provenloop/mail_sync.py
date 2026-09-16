@@ -45,7 +45,9 @@ apply only to that message. Null means unknown: never fill it from the enclosing
 Copy exception names and code identifiers exactly from the supporting passage; never substitute a
 similar name from the subject. An unknown timezone remains unknown: do not fabricate a UTC time.
 The current reply's unresolved status ('still investigating') qualifies
-the historical diagnosis. Keep that uncertainty with the finding, not as a standalone status fact."""
+the historical diagnosis. Keep that uncertainty with the finding, not as a standalone status fact.
+current_reply_context is repeated only to qualify historical evidence; never extract it again as
+a separate finding. previously_imported=true means context only, even when the text is useful."""
 OBSERVATIONS_MISSION = """Combine supported work findings without losing their conditions, dates or
 attribution. Distinguish proposals and unresolved questions from decisions and observed results.
 Keep corrections and conflicting reports explicit. Merge repeated reports of the same technical
@@ -83,7 +85,7 @@ def extraction_content(content, metadata, known=()):
         messages.append({'kind': 'quoted_context', 'author': None, 'reported_at': None,
                          'previously_imported': parts[index] == KNOWN_QUOTE, 'text': parts[index+1].strip()})
     records = []
-    current_context = messages[0]['text'][:500]
+    current_context = messages[0]['text'] if len(messages[0]['text']) <= 350 else ''
     for message in messages:
         # Bounded records repeat attribution when a long quote is split.
         text = message.pop('text')

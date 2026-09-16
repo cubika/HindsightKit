@@ -5,10 +5,42 @@ param(
     [string]$ReasoningEffort,
     [string]$ModelDir,
     [int]$Port = 0,
+    [string]$ApiUrl,
+    [string]$Bank,
+    [string]$ApiKeyEnv,
+    [string]$DeviceName,
+    [string]$Listen,
+    [switch]$Share,
+    [switch]$Local,
+    [switch]$ReplaceConnection,
     [switch]$NoOpen
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+# Validate connection changes before installing or changing any dependencies.
+$codingConfig = if ($env:HINDSIGHT_CONFIG) { $env:HINDSIGHT_CONFIG } else { Join-Path $env:USERPROFILE '.hindsight/coding-agent.json' }
+$existingConnection = if (Test-Path -LiteralPath $codingConfig) { Get-Content -Raw -LiteralPath $codingConfig | ConvertFrom-Json } else { $null }
+if ($ApiUrl -and $Local) { throw '-ApiUrl and -Local cannot be combined.' }
+$clientOnly = [bool]$ApiUrl -or (-not $Local -and $existingConnection.provenloop.mode -eq 'client')
+if ($clientOnly -and ($Share -or $Listen -or $Model -or $ModelDir -or $Port -or $ReasoningEffort)) {
+    throw 'Client installation cannot configure server options.'
+}
+if ($clientOnly -and -not ($Bank -or $existingConnection.provenloop.bank)) { throw 'Client installation requires -Bank.' }
+if ($ApiUrl) {
+    $parsedApi = [uri]$ApiUrl
+    if ($parsedApi.Scheme -notin @('http', 'https') -or -not $parsedApi.Host -or $parsedApi.UserInfo -or
+        $parsedApi.Query -or $parsedApi.Fragment -or $parsedApi.AbsolutePath -ne '/' -or $ApiUrl -match '\s') {
+        throw 'Use an HTTP(S) API origin without credentials, path, query, or fragment.'
+    }
+}
+$selectedMode = if ($clientOnly) { 'client' } else { 'local' }
+if ($existingConnection.provenloop -and -not $ReplaceConnection -and
+    (($existingConnection.provenloop.mode -ne $selectedMode) -or
+     ($ApiUrl -and $existingConnection.apiUrl.TrimEnd('/') -ne $ApiUrl.TrimEnd('/')) -or
+     ($Bank -and $existingConnection.provenloop.bank -ne $Bank))) {
+    throw 'Changing a connection requires -ReplaceConnection; existing memory is preserved.'
+}
 
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments)
@@ -55,14 +87,26 @@ try {
 
     $env:UV_CACHE_DIR = Join-Path $PSScriptRoot '.runtime/uv-cache'
     $env:PYTHONUTF8 = '1'
-    Write-Host 'Installing the pinned Hindsight runtime...'
-    Invoke-Checked $uvBinary @('sync', '--project', $PSScriptRoot, '--python', '3.12', '--frozen')
+    Write-Host 'Installing the pinned runtime...'
+    $syncArgs = @('sync', '--project', $PSScriptRoot, '--python', '3.12', '--frozen')
+    # Preserve a previously installed server until a connection change succeeds.
+    $hadServer = Test-Path -LiteralPath (Join-Path $PSScriptRoot '.venv/Lib/site-packages/hindsight_api')
+    if (-not $clientOnly -or $hadServer) { $syncArgs += @('--extra', 'server') }
+    Invoke-Checked $uvBinary $syncArgs
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
     $setupArgs = @('-m', 'provenloop.cli', 'setup')
     if ($Model) { $setupArgs += @('--model', $Model) }
     if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }
     if ($Port) { $setupArgs += @('--port', "$Port") }
+    if ($ApiUrl) { $setupArgs += @('--api-url', $ApiUrl) }
+    if ($Bank) { $setupArgs += @('--bank', $Bank) }
+    if ($ApiKeyEnv) { $setupArgs += @('--api-key-env', $ApiKeyEnv) }
+    if ($DeviceName) { $setupArgs += @('--device-name', $DeviceName) }
+    if ($Listen) { $setupArgs += @('--listen', $Listen) }
+    if ($Share) { $setupArgs += '--share' }
+    if ($Local) { $setupArgs += '--local' }
+    if ($ReplaceConnection) { $setupArgs += '--replace-connection' }
     if ($NoOpen) { $setupArgs += '--no-open' }
     Invoke-Checked $python $setupArgs
     $commandRoot = if ($env:PROVENLOOP_HOME) { $env:PROVENLOOP_HOME } else { Join-Path $env:USERPROFILE '.provenloop' }

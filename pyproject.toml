@@ -8,10 +8,17 @@ version = "0.1.0"
 description = "Set up local Hindsight memory for GitHub Copilot."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "hindsight-api-slim[embedded-db,local-onnx]==0.10.0",
-    "hindsight-embed==0.10.0",
     "hindsight-client==0.10.0",
     "hindsight-copilot==0.1.0",
+    "fastmcp==4.0.4",
+    "filelock==3.32.7",
+    "github-copilot-sdk==1.0.14",
+]
+
+[project.optional-dependencies]
+server = [
+    "hindsight-api-slim[embedded-db,local-onnx]==0.10.0",
+    "hindsight-embed==0.10.0",
     "pg0-embedded==0.15.2",
 ]
 
@@ -19,4 +26,4 @@ dependencies = [
 provenloop = "provenloop.cli:main"
 
 [tool.setuptools.package-data]
-provenloop = ["*.mjs", "*.json", "web/*.html", "web/*.css", "web/*.js"]
+provenloop = ["*.mjs", "*.json", "client/*.json", "web/*.html", "web/*.css", "web/*.js"]

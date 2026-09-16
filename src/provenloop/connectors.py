@@ -188,10 +188,15 @@ def make_app(sync, *, port, token, instance, hindsight_url, shutdown=None):
 
 async def serve(directory, api_url, hindsight_url, port):
     from .mail_sync import MailSync
+    from . import connection
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     token, instance = secrets.token_urlsafe(32), secrets.token_hex(16)
-    sync = MailSync(directory, api_url)
+    config = connection.load()
+    if connection.client_mode(config):
+        raise RuntimeError('Configure email on the local Hindsight server installation.')
+    # Credentials are loaded inside the child, never written to service.json or argv.
+    sync = MailSync(directory, api_url, client=connection.sdk(config, timeout=120))
     shutdown = asyncio.Event()
     runner = web.AppRunner(make_app(sync, port=port, token=token, instance=instance,
                                    hindsight_url=hindsight_url, shutdown=shutdown), access_log=None)
