@@ -1,6 +1,6 @@
 // Preserve comments and unrelated settings when connecting the official integrations.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, mkdtempSync, cpSync, rmSync } from 'node:fs';
-import { dirname, join, basename, relative, isAbsolute } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { dirname, join, relative, isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
@@ -30,14 +30,14 @@ function edit(path, changes) {
 }
 
 if (action === 'preflight') {
-  const [mcpPath, cliPath, configPath, apiUrl, project, bank] = args;
+  const [mcpPath, cliPath, configPath, apiUrl] = args;
   for (const path of [mcpPath, cliPath, configPath]) read(path);
   const vs = read(mcpPath).value.servers?.hindsight;
-  if (vs && (vs.url !== apiUrl + '/mcp/' + bank + '/' || vs.type !== 'http' || vs.headers)) {
+  if (vs && !vs.args?.includes('provenloop.cli')) {
     throw new Error('Existing Hindsight endpoint differs in ' + mcpPath);
   }
   const cli = read(cliPath).value.mcpServers?.hindsight;
-  if (cli && !cli.args?.some(a => typeof a === 'string' && /(?:coding-agents|hindsight-coding-agents)[\\/]dist[\\/]mcp-server\.js$/.test(a))) {
+  if (cli && !cli.args?.includes('provenloop.cli') && !cli.args?.some(a => typeof a === 'string' && /(?:coding-agents|hindsight-coding-agents)[\\/]dist[\\/]mcp-server\.js$/.test(a))) {
     throw new Error('Existing server named hindsight is not the official coding-agents integration: ' + cliPath);
   }
   const cfg = read(configPath).value;
@@ -47,39 +47,37 @@ if (action === 'preflight') {
   }
   if (cfg.apiUrl && cfg.apiUrl.replace(/\/$/, '') !== apiUrl) throw new Error('Hindsight already uses another endpoint in ' + configPath);
   if (cfg.serverMode && cfg.serverMode !== 'self-hosted') throw new Error('Existing Hindsight serverMode conflicts in ' + configPath);
-  if (cfg.mapPathToBank?.[project] && cfg.mapPathToBank[project] !== bank) throw new Error('Existing project bank differs in ' + configPath);
-  const harness = cfg.harnesses?.['copilot-cli'] ?? {};
-  if (harness.mapPathToBank) throw new Error('A Copilot-specific path map overrides the shared map in ' + configPath + '. Use the top-level mapPathToBank.');
-  const effective = { ...cfg, ...harness, ...(harness.banks?.[bank] ?? cfg.banks?.[bank]) };
-  if (effective.disabled || effective.retainSessions === false || effective.apiToken || effective.bank) {
+  if (cfg.disabled || cfg.retainSessions === false || cfg.apiToken || cfg.bankId ||
+      Object.keys(cfg.harnesses ?? {}).length || Object.keys(cfg.banks ?? {}).length) {
     throw new Error('Existing Hindsight overrides disable learning or change routing/authentication in ' + configPath);
   }
-  if (effective.apiUrl && effective.apiUrl.replace(/\/$/, '') !== apiUrl) throw new Error('A harness/bank override changes the endpoint in ' + configPath);
-  if (effective.serverMode && effective.serverMode !== 'self-hosted') throw new Error('A harness/bank override changes serverMode in ' + configPath);
-  if (effective.autoReflect === false) throw new Error('Automatic memory injection is disabled in ' + configPath);
-  for (const layer of [cfg, cfg.harnesses?.['copilot-cli']]) {
-    for (const [mapped, target] of Object.entries(layer?.mapPathToBank ?? {})) {
-      const suffix = relative(project, mapped);
-      if ((!suffix || (!suffix.startsWith('..') && !isAbsolute(suffix))) && target !== bank) {
-        throw new Error('A more specific project mapping uses another bank in ' + configPath);
-      }
-    }
+  for (const bank of Object.values(cfg.mapPathToBank ?? {})) {
+    if (!/^provenloop-[0-9a-f]{12}$/.test(bank)) throw new Error('An unrelated memory mapping exists in ' + configPath);
   }
 } else if (action === 'vscode') {
-  const [path, apiUrl, bank] = args;
-  edit(path, [[['servers', 'hindsight'], { type: 'http', url: apiUrl + '/mcp/' + encodeURIComponent(bank) + '/' }]]);
+  const [path, python] = args;
+  edit(path, [[['servers', 'hindsight'], { type: 'stdio', command: python,
+    args: ['-m', 'provenloop.cli', 'mcp', '--context', 'vscode'] }]]);
 } else if (action === 'config') {
-  const [path, project, bank, apiUrl] = args;
+  const [path, apiUrl] = args;
   const cfg = read(path).value;
-  const defaults = { serverMode: 'self-hosted', apiUrl, autoUpdate: false, autoSeed: false, codebaseSurvey: false, optInOnly: true, maxParallelRetains: 2 };
+  const defaults = { serverMode: 'self-hosted', apiUrl, autoUpdate: false, autoSeed: false, codebaseSurvey: false, maxParallelRetains: 2 };
   const changes = Object.entries(defaults).filter(([key]) => !(key in cfg)).map(([key, value]) => [[key], value]);
-  changes.push([['mapPathToBank', project], bank]);
+  changes.push([['optInOnly'], false], [['mapPathToBank'], undefined], [['optInPaths'], undefined]);
   edit(path, changes);
+} else if (action === 'remove-project') {
+  const [path, apiUrl, bank] = args;
+  if (existsSync(path)) {
+    const entry = read(path).value.servers?.hindsight;
+    if (entry?.type === 'http' && entry.url === apiUrl + '/mcp/' + bank + '/' && !entry.headers) {
+      edit(path, [[['servers', 'hindsight'], undefined]]);
+    }
+  }
 } else if (action === 'install-cli') {
-  const [userHome, configPath, apiUrl, nodePath] = args;
+  const [userHome, configPath, apiUrl, nodePath, python] = args;
   const packageRoot = join(runtime, 'node_modules/@vectorize-io/hindsight-coding-agents');
   const stage = mkdtempSync(join(runtime, 'integration-'));
-  // Run the official installer in staging: it owns the hook protocol and skill.
+  // Run the official installer in staging to obtain the supported hook event wiring.
   // Merge only its entries into user config because upstream JSON.parse loses JSONC.
   process.env.HINDSIGHT_CONFIG = join(stage, '.hindsight/coding-agent.json');
   const { run } = await import(pathToFileURL(join(packageRoot, 'dist/installer.js')).href);
@@ -88,20 +86,20 @@ if (action === 'preflight') {
   });
   if (code) throw new Error('Official Copilot installer failed: ' + code);
   const entry = read(join(stage, '.copilot/mcp-config.json')).value.mcpServers.hindsight;
-  entry.command = nodePath;
-  entry.args = [join(packageRoot, 'dist/mcp-server.js')];
+  entry.command = python;
+  entry.args = ['-m', 'provenloop.cli', 'mcp', '--context', 'cli'];
   entry.env = { ...entry.env, HINDSIGHT_CONFIG: configPath };
   const hooksPath = join(stage, '.copilot/hooks/hindsight-coding-agents.json');
   const hooks = read(hooksPath).value;
   const installedHookPath = join(userHome, '.copilot/hooks/hindsight-coding-agents.json');
   const oldHooks = read(installedHookPath).value.hooks ?? {};
-  for (const entries of Object.values(hooks.hooks)) {
+  for (const [event, entries] of Object.entries(hooks.hooks)) {
     for (const hook of entries) {
       const match = /^node "(.+)"$/.exec(hook.command);
       if (!match) throw new Error('Unexpected official Copilot hook command.');
       hook.type = 'command';
-      hook.exec = nodePath;
-      hook.args = [join(packageRoot, 'dist', basename(match[1]))];
+      hook.exec = python;
+      hook.args = ['-m', 'provenloop.cli', 'hook', event];
       hook.timeoutSec = hook.timeout;
       hook.env = { ...hook.env, HINDSIGHT_CONFIG: configPath };
       delete hook.command;
@@ -113,24 +111,26 @@ if (action === 'preflight') {
   for (const [event, additions] of Object.entries(hooks.hooks)) {
     const keep = (oldHooks[event] ?? []).filter(hook => {
       const script = hook.args?.[0] ?? hook.command ?? '';
-      return !/copilot-(?:sessionstart-|stop-)?hook\.js/.test(script);
+      return !/copilot-(?:sessionstart-|stop-)?hook\.js/.test(script) && !hook.args?.includes('provenloop.cli');
     });
     mergedHooks[event] = [...keep, ...additions];
   }
   edit(join(userHome, '.copilot/mcp-config.json'), [[['mcpServers', 'hindsight'], entry]]);
   edit(installedHookPath, [[['version'], hooks.version], [['hooks'], mergedHooks]]);
-  const skill = join(userHome, '.copilot/skills/hindsight-coding-agent');
-  mkdirSync(dirname(skill), { recursive: true });
-  cpSync(join(packageRoot, 'skill'), skill, { recursive: true });
+  // Retire only our unchanged copy of the upstream skill: its old tool names no longer apply.
+  const skill = join(userHome, '.copilot/skills/hindsight-coding-agent/SKILL.md');
+  const originalSkill = join(packageRoot, 'skill/SKILL.md');
+  if (existsSync(skill) && readFileSync(skill).equals(readFileSync(originalSkill))) rmSync(skill);
   const within = relative(runtime, stage);
   if (!within || within.startsWith('..') || isAbsolute(within)) throw new Error('Invalid staging directory.');
   rmSync(stage, { recursive: true });
 } else if (action === 'check') {
-  const [mcpPath, configPath, project, bank, apiUrl] = args;
+  const [mcpPath, configPath, python] = args;
   const vs = read(mcpPath).value.servers?.hindsight;
   const cfg = read(configPath).value;
-  if (vs?.url !== apiUrl + '/mcp/' + encodeURIComponent(bank) + '/' || cfg.mapPathToBank?.[project] !== bank) {
-    throw new Error('Copilot Chat and CLI are not configured for the same project bank.');
+  if (vs?.command !== python || !vs.args?.includes('provenloop.cli') ||
+      cfg.optInOnly !== false || cfg.bankId || cfg.mapPathToBank) {
+    throw new Error('Copilot is not configured for automatic repository routing.');
   }
 } else {
   throw new Error('Unknown integration operation: ' + action);

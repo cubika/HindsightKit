@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from provenloop import cli
 from provenloop.command import prepend_path
+from provenloop.memory import scope_for, SHARED_BANK
 
 
 class SetupTests(unittest.TestCase):
@@ -42,8 +43,8 @@ class SetupTests(unittest.TestCase):
             cli.run(['git', 'init', main], capture=True)
             cli.run(['git', '-C', main, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], capture=True)
             cli.run(['git', '-C', main, 'worktree', 'add', '-b', 'fixture', worktree], capture=True)
-            self.assertEqual(cli.project_identity(main), cli.project_identity(worktree))
-            self.assertNotEqual(cli.project_identity(main)[1], cli.project_identity(sibling)[1])
+            self.assertEqual(scope_for(main), scope_for(worktree))
+            self.assertEqual(scope_for(sibling).bank, SHARED_BANK)
 
     def test_existing_port_is_idempotent(self):
         from hindsight_embed.profile_manager import ProfileManager
@@ -62,11 +63,11 @@ class SetupTests(unittest.TestCase):
             mcp = Path(temp) / 'mcp.json'
             original = '{\n  // user comment\n  "servers": {"other": {"command": "other"},},\n}\n'
             mcp.write_text(original)
-            cli.integrate('vscode', mcp, 'http://127.0.0.1:9077', 'test-bank')
+            cli.integrate('vscode', mcp, 'python.exe')
             self.assertIn('// user comment', mcp.read_text())
             self.assertIn('"other"', mcp.read_text())
             first = mcp.read_bytes()
-            cli.integrate('vscode', mcp, 'http://127.0.0.1:9077', 'test-bank')
+            cli.integrate('vscode', mcp, 'python.exe')
             self.assertEqual(first, mcp.read_bytes())
             self.assertEqual(original, Path(str(mcp) + '.provenloop-backup').read_text())
 
@@ -77,7 +78,7 @@ class SetupTests(unittest.TestCase):
             mcp.write_text(json.dumps({'servers': {'hindsight': {'type': 'http', 'url': 'https://example.invalid/mcp/old/'}}}))
             original = mcp.read_bytes()
             with self.assertRaises(subprocess.CalledProcessError):
-                cli.integrate('preflight', mcp, base / 'cli.json', base / 'config.json', 'http://127.0.0.1:9077', base, 'bank')
+                cli.integrate('preflight', mcp, base / 'cli.json', base / 'config.json', 'http://127.0.0.1:9077')
             self.assertEqual(original, mcp.read_bytes())
 
     def test_disabled_learning_and_jsonc_runtime_config_are_rejected(self):
@@ -92,7 +93,7 @@ class SetupTests(unittest.TestCase):
             ]:
                 config.write_text(content)
                 with self.assertRaises(subprocess.CalledProcessError):
-                    cli.integrate('preflight', base / 'vs.json', base / 'cli.json', config, 'http://127.0.0.1:9077', base, 'bank')
+                    cli.integrate('preflight', base / 'vs.json', base / 'cli.json', config, 'http://127.0.0.1:9077')
                 self.assertEqual(content, config.read_text())
 
     def test_official_installer_merges_and_uses_stable_absolute_paths(self):
@@ -102,12 +103,12 @@ class SetupTests(unittest.TestCase):
             mcp.parent.mkdir()
             mcp.write_text('{ // keep\n "mcpServers": {"other": {"command": "other"},},\n}\n')
             config = base / '.hindsight/coding-agent.json'
-            cli.integrate('config', config, base, 'bank', 'http://127.0.0.1:9077')
+            cli.integrate('config', config, 'http://127.0.0.1:9077')
             hook_path = base / '.copilot/hooks/hindsight-coding-agents.json'
             hook_path.parent.mkdir()
             hook_path.write_text(json.dumps({'version': 1, 'hooks': {'sessionStart': [{'command': 'echo user-hook', 'timeout': 1}]}}))
             for _ in range(2):
-                cli.integrate('install-cli', base, config, 'http://127.0.0.1:9077', cli.node())
+                cli.integrate('install-cli', base, config, 'http://127.0.0.1:9077', cli.node(), __import__('sys').executable)
             self.assertIn('// keep', mcp.read_text())
             self.assertIn('"other"', mcp.read_text())
             hooks = json.loads((base / '.copilot/hooks/hindsight-coding-agents.json').read_text())
@@ -117,9 +118,8 @@ class SetupTests(unittest.TestCase):
                     if hook.get('command') == 'echo user-hook':
                         continue
                     self.assertTrue(Path(hook['exec']).is_absolute())
-                    self.assertTrue(Path(hook['args'][0]).is_file())
-                    self.assertNotIn('integration-', hook['args'][0])
-            self.assertTrue((base / '.copilot/skills/hindsight-coding-agent/SKILL.md').is_file())
+                    self.assertEqual(hook['args'][:3], ['-m', 'provenloop.cli', 'hook'])
+            self.assertEqual(json.loads(config.read_text())['optInOnly'], False)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [string]$Project = (Get-Location).Path,
     [string]$Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$ReasoningEffort,
@@ -17,7 +16,6 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "$File failed (exit $LASTEXITCODE)." }
 }
 
-$projectPath = (Resolve-Path -LiteralPath $Project).Path
 $toolsDirectory = Join-Path $PSScriptRoot '.runtime/tools'
 New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
 
@@ -60,7 +58,7 @@ try {
     Write-Host 'Installing the pinned Hindsight runtime...'
     Invoke-Checked $uvBinary @('sync', '--project', $PSScriptRoot, '--python', '3.12', '--frozen')
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
-    $setupArgs = @('-m', 'provenloop.cli', 'setup', '--project', $projectPath)
+    $setupArgs = @('-m', 'provenloop.cli', 'setup')
     if ($Model) { $setupArgs += @('--model', $Model) }
     if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }

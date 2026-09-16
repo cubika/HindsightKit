@@ -1,6 +1,6 @@
 # ProvenLoop
 
-Set up local [Hindsight](https://github.com/vectorize-io/hindsight) memory for GitHub Copilot Chat and Copilot CLI. Both use the same memory bank for a project. Hindsight owns storage, extraction, recall, and consolidation; ProvenLoop installs and configures the official components.
+Set up local [Hindsight](https://github.com/vectorize-io/hindsight) memory for GitHub Copilot Chat and Copilot CLI. Install once for your Windows user. Each session selects its repository memory automatically; sessions outside Git use shared memory. Hindsight owns storage, extraction, recall, and consolidation.
 
 ## Setup on Windows
 
@@ -10,10 +10,10 @@ From this checkout, run:
 .\setup.ps1
 ```
 
-To connect another project:
+After installation, setup can be run again from any directory:
 
 ```powershell
-.\setup.ps1 -Project C:\source\my-project
+provenloop setup
 ```
 
 The command installs missing uv/Node prerequisites, a pinned Python environment, Hindsight, its local database, multilingual embeddings, the official UI, and both Copilot integrations. It checks Copilot authentication and starts Copilot's own login flow when needed. A Copilot entitlement and internet access are required. No Hindsight Cloud account or API key is needed.
@@ -49,7 +49,21 @@ provenloop copilot
 
 Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. Services keep running when setup exits. Run `start` after restarting Windows; no login task or system service is installed.
 
-The official CLI hooks write sessions back and inject relevant memory. The VS Code integration adds the official recall/retain instructions and an HTTP MCP server. Only projects passed to setup participate in CLI memory. Initial git-history import and the automatic codebase survey are disabled; normal session learning stays enabled.
+## Memory scope
+
+| Session starts in | Writes to | Reads from |
+| --- | --- | --- |
+| Git repository A | A | A and shared |
+| Git repository B | B | B and shared |
+| Ordinary directory | Shared | Shared |
+
+The Git common directory identifies a repository: subdirectories and worktrees share one bank, while different repositories with the same name remain separate. A session keeps its starting scope even if a shell command changes directory. Repository memory is never automatically promoted into shared memory.
+
+The CLI prompt hook runs bounded, parallel recall requests for the allowed banks. Session writeback uses the unmodified official Copilot transcript hook. Both clients expose retain, recall, and reflect through a small MCP adapter that selects banks itself; the agent cannot supply a different bank ID. Reflect also reads only the permitted banks. Token budgets are split across the results.
+
+VS Code uses user-level MCP configuration and global Copilot instructions. Its workspace roots determine the repository. Open one repository per VS Code window; a multi-root workspace spanning different repositories is rejected, and missing workspace information never silently writes to shared memory. A window with no folders uses shared memory when VS Code reports an empty root list. Existing default/named VS Code profiles and Insiders are configured; future independent profiles need to inherit MCP settings or rerun setup. Remote machines and containers need their own local setup.
+
+No per-repository enable step is needed. Initial git-history import and the automatic codebase survey remain disabled. Upgrading removes only known ProvenLoop workspace registrations, preserving unrelated settings and all existing banks.
 
 Use the official Hindsight UI to inspect memories, correct facts, or invalidate obsolete information. Retrieval and model behavior still need judgment: remembered information can be incomplete or wrong.
 
@@ -63,10 +77,11 @@ Use the official Hindsight UI to inspect memories, correct facts, or invalidate 
 | ~/.hindsight/profiles/provenloop.env | Official Hindsight configuration |
 | ~/.hindsight/profiles/provenloop.log | API log |
 | ~/.pg0/instances/hindsight-embed-provenloop | Local database |
-| ~/.hindsight/coding-agent.json | Official CLI integration settings and project mapping |
-| ~/.copilot/hooks/hindsight-coding-agents.json | Official hooks, with absolute executable paths |
-| Project .vscode/mcp.json | VS Code memory endpoint |
-| Project .github/copilot-instructions.md | Official recall/retain rule |
+| ~/.hindsight/coding-agent.json | Local endpoint and session capture settings |
+| ~/.provenloop/sessions | Small session-to-repository routing records; no transcripts |
+| ~/.copilot/hooks/hindsight-coding-agents.json | Copilot hooks with absolute executable paths |
+| %APPDATA%/Code/User/mcp.json | VS Code user-level MCP registration |
+| ~/.copilot/copilot-instructions.md | Global memory instructions |
 
 Existing unrelated MCP servers and VS Code JSONC comments are preserved. Changed files receive a `.provenloop-backup` copy once. Conflicting Hindsight endpoints or disabled-learning settings stop setup. The official coding-agent configuration itself must be strict JSON. This release uses the default Copilot profile; a custom COPILOT_HOME must be unset before setup. Keep this checkout and runtime directory in place while using the installed environment.
 
@@ -77,7 +92,7 @@ Pinned components: Hindsight 0.10.0, coding-agents 0.6.1, hindsight-copilot 0.1.
 ```powershell
 uv sync --frozen --python 3.12
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-# Explicit live integration test; uses Copilot calls and restarts this Hindsight profile:
+# Explicit live access-matrix test; uses Copilot calls and cleans its synthetic data:
 .\.venv\Scripts\python.exe tests/live_memory.py
 ```
 

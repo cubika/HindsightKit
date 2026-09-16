@@ -1,2 +1,3 @@
 include setup.ps1 uv.lock AGENTS.md
 include tests/live_memory.py
+include tests/mcp_fixture.py
