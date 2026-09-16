@@ -356,14 +356,14 @@ class WorkIQMailSource:
                     output.append(_failed_message(previous, self._account["id"], raw["_workiq_error"]))
                     continue
                 _metadata(raw)
-                if any(raw.get(key) != previous.get(key) for key in ("id", "internetMessageId", "conversationId", "parentFolderId", "receivedDateTime", "lastModifiedDateTime")):
+                if any(raw.get(key) != previous.get(key) for key in ("id", "internetMessageId", "conversationId", "parentFolderId", "receivedDateTime")):
                     raise WorkIQError("workiq_message_changed")
                 try:
                     output.append(normalize_message(raw, self._account["id"]))
                 except WorkIQError as error:
                     if error.code not in {"workiq_complete_body_missing", "workiq_body_too_large", "workiq_protected_body_unavailable"}:
                         raise
-                    output.append(_failed_message(previous, self._account["id"], error.code))
+                    output.append(_failed_message(raw, self._account["id"], error.code))
         return output
 
 

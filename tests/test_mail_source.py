@@ -229,6 +229,15 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("body", output[0]["raw"])
         self.assertIn("Do not remove", output[2]["content"])
 
+    async def test_body_revision_can_advance_after_metadata_without_changing_identity(self):
+        source = WorkIQMailSource()
+        source._account = {'id':'mailbox'}
+        async def fetch(paths, **kwargs):
+            return [mail(lastModifiedDateTime='2026-09-16T00:00:00Z')]
+        source._fetch = fetch
+        result = await source.messages([mail()])
+        self.assertEqual(result[0]['source_version'], source_version(mail(lastModifiedDateTime='2026-09-16T00:00:00Z')))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,3 +49,5 @@ Independent source review confirmed the API-specific percentile and consistency 
 The page passed real discovery, save/reload, two five-message previews, and desktop/mobile checks at 1280, 800, 390, and 320 pixels. Source HTML remained inert, selections survived polling, and no horizontal overflow or console errors remained. The final small failure-list addition passed synthetic DOM checks; a browser was unavailable for a new screenshot of that addition.
 
 Model latency remains the main constraint. This test establishes useful extraction on the inspected examples, not a guarantee that a large historical mailbox finishes quickly or that every future fact is correct. Queue state and failures remain visible, and the existing model configuration is preserved.
+
+A separate one-day scan through the real source and a recording test receiver processed 49 emails: 39 candidates, two deterministic skips, and eight protected bodies. After fixing a metadata/body revision race, repeating the scan submitted no unchanged content and kept the eight protected items visible for retry. This check did not call a model.

@@ -489,7 +489,8 @@ class MailSync:
             content = item.get("content", "")
             error = item.get("error") or ("body_too_large" if len(content.encode("utf-8")) > MAX_BODY_BYTES else None)
             if error:
-                original = next((m for m in needed if source_key(m, identity) == key), None)
+                original = item.get('raw') or next((m for m in needed if source_key(m, identity) == key), None)
+                original = {k: v for k, v in original.items() if k not in {'body', 'bodyPreview'}}
                 self.db.execute("INSERT OR REPLACE INTO receipts VALUES (?,?,?)", (key, json.dumps(original), str(error)))
                 failed += 1
                 continue

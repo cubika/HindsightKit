@@ -92,6 +92,20 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConnectorLifecycleTests(unittest.TestCase):
+    def test_open_reuses_healthy_api_without_triggering_database_setup(self):
+        from provenloop import cli
+        from types import SimpleNamespace
+        with patch.object(cli, 'prepare_env'), patch.object(cli, 'require_local'), \
+             patch.object(cli, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
+             patch.object(cli.connection, 'load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
+             patch.object(cli.connection, 'request', new_callable=AsyncMock), \
+             patch.object(cli, 'start') as start, \
+             patch.object(connectors, 'ensure_running', return_value='http://127.0.0.1:19078'), \
+             patch.object(cli.webbrowser, 'open') as browser:
+            self.assertEqual(cli.main(['connectors']), 0)
+        start.assert_not_called()
+        browser.assert_called_once_with('http://127.0.0.1:19078')
+
     def test_stop_waits_when_http_was_already_closed(self):
         info = {'port':19078,'token':'token','instance':'instance'}
         with patch.object(connectors, 'read_service', side_effect=[info, info, None, None]), \

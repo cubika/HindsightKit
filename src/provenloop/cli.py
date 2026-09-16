@@ -657,8 +657,15 @@ def main(argv=None):
             webbrowser.open(ui_url)
         elif args.command == 'connectors':
             from .connectors import ensure_running
-            api_url, ui_url = start()
+            require_local()
             _, paths = profile_config()
+            # Reuse a healthy installed API. Opening mail settings does not run
+            # database setup or migrate an existing installation.
+            api_url, ui_url = f'http://127.0.0.1:{paths.port}', f'http://localhost:{paths.ui_port}'
+            try:
+                asyncio.run(connection.request(connection.load(), 'GET', '/health'))
+            except Exception:
+                api_url, ui_url = start()
             url = ensure_running(home() / 'mail', api_url, ui_url, paths.ui_port + 1)
             webbrowser.open(url)
         elif args.command == 'copilot':
