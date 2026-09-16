@@ -1,7 +1,6 @@
 """Provision a standalone PostgreSQL server using its official command-line tools."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import asyncio
 import csv
 import io
@@ -194,38 +193,33 @@ class Postgres:
         conn = self.connection(app=True)
         return f"postgresql://hindsight:{quote(conn['password'], safe='')}@127.0.0.1:{conn['port']}/{conn['database']}"
 
-    def command(self, name, args=(), *, connection=None, input=None):
-        conn = connection or self.connection()
+    def sql(self, query, *, database=None, app=False):
+        conn = self.connection(database=database, app=app)
         env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
-        env.update(PGPASSWORD=conn['password'], PGCONNECT_TIMEOUT='10', PGCLIENTENCODING='UTF8',
-                   PGOPTIONS='-c timezone=UTC -c datestyle=ISO,YMD -c extra_float_digits=3')
-        return execute([self.binary(name), '-h', conn['host'], '-p', conn['port'],
-                        '-U', conn['user'], '-w', *args], env=env, input=input,
-                       sensitive=(conn['password'], self.state['admin_password'], self.state['password']))
+        env.update(PGPASSWORD=conn['password'], PGCONNECT_TIMEOUT='10', PGCLIENTENCODING='UTF8')
+        return execute([self.binary('psql'), '-h', conn['host'], '-p', conn['port'],
+                        '-U', conn['user'], '-w', '-X', '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1',
+                        '-d', conn['database']], env=env, input=query + ';\n',
+                       sensitive=(conn['password'], self.state['admin_password'], self.state['password'])).stdout.strip()
 
-    def sql(self, query, *, database=None, app=False, connection=None):
-        conn = connection or self.connection(database=database, app=app)
-        return self.command('psql', ['-X', '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1',
-                            '-d', conn['database']], connection=conn, input=query + ';\n').stdout.strip()
-
-    def prepare_database(self, database=None):
+    def prepare_database(self):
         state = self.state
         # Passwords are random URL-safe tokens, sent through stdin rather than argv.
         if self.sql("SELECT 1 FROM pg_roles WHERE rolname='hindsight'", database='postgres') != '1':
             self.sql(f"CREATE ROLE hindsight LOGIN PASSWORD '{state['password']}'", database='postgres')
         self.sql('ALTER ROLE hindsight NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', database='postgres')
-        db = database or state['database']
+        db = state['database']
         if self.sql(f"SELECT 1 FROM pg_database WHERE datname='{db}'", database='postgres') != '1':
             self.sql(f"CREATE DATABASE {ident(db)} OWNER hindsight TEMPLATE template0 ENCODING 'UTF8'", database='postgres')
         for extension in EXTENSIONS:
             self.sql(f'CREATE EXTENSION IF NOT EXISTS {ident(extension)} WITH SCHEMA public', database=db)
         self.sql(f"ALTER EXTENSION vector UPDATE TO '{VECTOR_VERSION}'", database=db)
-        self.validate(database=db)
+        self.validate()
 
-    def validate(self, database=None):
+    def validate(self):
         info = json.loads(self.sql("SELECT json_build_object('version', current_setting('server_version_num')::int, "
             "'superuser', (SELECT rolsuper FROM pg_roles WHERE rolname=current_user), "
-            "'extensions', (SELECT json_object_agg(extname, extversion) FROM pg_extension))", app=True, database=database))
+            "'extensions', (SELECT json_object_agg(extname, extversion) FROM pg_extension))", app=True))
         if info['version'] != 180006:
             raise RuntimeError('The running PostgreSQL version does not match the pinned 18.6 distribution.')
         if info['superuser']:
@@ -234,64 +228,8 @@ class Postgres:
             raise RuntimeError('Required PostgreSQL extensions are missing or have an unexpected version.')
         # Exercise all installed extensions using the application's own privileges.
         self.sql("SELECT '[1,0]'::vector <=> '[1,0]'::vector; SELECT similarity('memory','memory'); "
-                 "SELECT count(*) FROM pg_stat_statements; SELECT to_tsvector('simple','memory') @@ to_tsquery('simple','memory')", app=True, database=database)
+                 "SELECT count(*) FROM pg_stat_statements; SELECT to_tsvector('simple','memory') @@ to_tsquery('simple','memory')", app=True)
         return info
-
-    def snapshot(self, connection):
-        tables = json.loads(self.sql("SELECT coalesce(json_agg(json_build_array(n.nspname,c.relname)), '[]') "
-            "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-            "WHERE c.relkind='r' AND n.nspname NOT IN ('pg_catalog','information_schema') "
-            "AND n.nspname NOT LIKE 'pg_toast%' AND NOT EXISTS "
-            "(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e')",
-            connection=connection))
-        # Order-independent content fingerprints catch UPDATEs as well as inserted/deleted rows.
-        return {schema + '.' + table: json.loads(self.sql(
-                "SELECT json_build_array(count(*), coalesce(sum(('x'||substr(md5(row_to_json(t)::text),1,16))::bit(64)::bigint::numeric),0)::text, "
-                "coalesce(sum(('x'||substr(md5(row_to_json(t)::text),17,16))::bit(64)::bigint::numeric),0)::text) "
-                f'FROM {ident(schema)}.{ident(table)} t', connection=connection)) for schema, table in tables}
-
-    def backup(self):
-        directory = self.root / 'backups'
-        directory.mkdir(exist_ok=True)
-        target = directory / (self.state['database'] + '-' + uuid.uuid4().hex + '.dump')
-        self.command('pg_dump', ['-Fc', '-f', target, '-d', self.state['database']])
-        return target
-
-    def restore_legacy(self, source):
-        """Restore into a fresh database; never replace the source or a populated target."""
-        directory = self.root / 'backups'
-        directory.mkdir(exist_ok=True)
-        tag = uuid.uuid4().hex
-        archive = directory / ('pg0-' + tag + '.dump')
-        database = 'hindsight_' + tag[:12]
-        role = 'provenloop_restore_' + tag[:12]
-        before = self.snapshot(source)
-        version = int(self.sql('SHOW server_version_num', connection=source))
-        if version // 10000 > 18:
-            raise RuntimeError('The source database is newer than PostgreSQL 18; refusing a downgrade.')
-        self.command('pg_dump', ['-Fc', '-f', archive, '-d', source['database']], connection=source)
-        if self.snapshot(source) != before:
-            raise RuntimeError('The source database changed during backup. Stop its writers before retrying.')
-        self.sql(f'CREATE DATABASE {ident(database)} OWNER hindsight TEMPLATE template0', database='postgres')
-        self.sql(f'CREATE ROLE {ident(role)} NOLOGIN SUPERUSER', database='postgres')
-        try:
-            conn = self.connection(database=database)
-            self.command('pg_restore', ['--single-transaction', '--exit-on-error', '--no-owner', '--no-acl',
-                         '--role', role, '-d', database, archive], connection=conn)
-            self.sql(f'REASSIGN OWNED BY {ident(role)} TO hindsight', database=database)
-            after = self.snapshot(conn)
-            if before != after:
-                raise RuntimeError('Restored table content does not match the source. The old database is unchanged.')
-        finally:
-            # If interrupted, a NOLOGIN role cannot expose elevated application access.
-            # Reassign any committed objects before removing that temporary role.
-            self.sql(f'REASSIGN OWNED BY {ident(role)} TO hindsight', database=database)
-            self.sql(f'DROP ROLE {ident(role)}', database='postgres')
-        self.prepare_database(database=database)
-        state = self.state
-        state.update(database=database, migration={'source': 'pg0', 'backup': str(archive), 'verified_tables': len(before)})
-        atomic_json(self.state_path, state)
-        return archive
 
 
 def configured_url(config):
@@ -301,7 +239,7 @@ def configured_url(config):
 def require_postgresql(config):
     value = configured_url(config)
     if urlsplit(value).scheme not in ('postgresql', 'postgres'):
-        raise RuntimeError('This profile still uses pg0. Run provenloop setup to migrate to standalone PostgreSQL.')
+        raise RuntimeError('A PostgreSQL connection is required. Run provenloop setup to configure it.')
     return value
 
 
@@ -329,10 +267,6 @@ async def check_external(url):
 
 def write_profile_database(path: Path, url):
     original = path.read_text(encoding='utf-8')
-    backup = path.with_name(path.name + '.before-postgresql')
-    if not backup.exists():
-        shutil.copy2(path, backup)
-        restrict_access(backup)
     lines = [line for line in original.splitlines()
              if not re.match(r'^\s*(?:export\s+)?(?:HINDSIGHT_EMBED_API_DATABASE_URL|HINDSIGHT_API_DATABASE_URL)\s*=', line)]
     lines.append(DATABASE_KEY + '=' + url)
@@ -342,88 +276,22 @@ def write_profile_database(path: Path, url):
     os.replace(temporary, path)
 
 
-@contextmanager
-def legacy_connection(root: Path, tools: Postgres):
-    """Use the existing pg0 installation only to read its persistent database."""
-    instance = root / 'instances/hindsight-embed-provenloop'
-    reject_links(instance / 'data')
-    metadata = instance / 'instance.json'
-    if not metadata.is_file():
-        if instance.exists() and any(instance.iterdir()):
-            raise RuntimeError('Legacy PostgreSQL files exist without instance.json; migration requires recovery first.')
-        yield None
-        return
-    info = json.loads(metadata.read_text(encoding='utf-8'))
-    data = Path(info['data_dir']).resolve(strict=True)
-    installation = Path(info['installation_dir']).resolve(strict=True)
-    reject_links(Path(info['installation_dir']))
-    if data != (instance / 'data').resolve() or not installation.is_relative_to((root / 'installation').resolve()):
-        raise RuntimeError('Legacy PostgreSQL metadata points outside the expected pg0 directories.')
-    if not (installation / 'bin/postgres.exe').is_file():
-        version = str(info.get('version', ''))
-        if not re.fullmatch(r'[0-9]+[.][0-9]+[.][0-9]+', version):
-            raise RuntimeError('Legacy PostgreSQL metadata has an invalid version.')
-        installation = installation / version
-        reject_links(installation)
-    ctl = installation / 'bin/pg_ctl.exe'
-    version = execute([installation / 'bin/postgres.exe', '--version']).stdout
-    major = (data / 'PG_VERSION').read_text().strip()
-    if not re.search(r'PostgreSQL\) ' + re.escape(major) + r'\.', version):
-        raise RuntimeError('Legacy PostgreSQL binaries do not match its data directory.')
-    was_running = execute([ctl, '-D', data, 'status'], allowed=(0, 3)).returncode == 0
-    port = str(info['port'])
-    if was_running:
-        # postmaster.pid contains the actual live port, unlike stale instance metadata.
-        port = (data / 'postmaster.pid').read_text().splitlines()[3]
-    try:
-        if not was_running:
-            port = str(available_port(0))
-            execute([ctl, '-D', data, '-l', tools.root / 'migration-source.log', '-w', '-t', '60',
-                     '-o', f'-h 127.0.0.1 -p {port}', 'start'])
-        conn = {'host': '127.0.0.1', 'port': port, 'user': info['username'],
-                'password': info['password'], 'database': info['database']}
-        if Path(tools.sql('SHOW data_directory', connection=conn)).resolve() != data:
-            raise RuntimeError('The legacy database connection points to an unexpected cluster.')
-        yield conn
-    finally:
-        if not was_running and execute([ctl, '-D', data, 'status'], allowed=(0, 3)).returncode == 0:
-            execute([ctl, '-D', data, '-m', 'fast', '-w', '-t', '60', 'stop'])
-
-
-def setup_database(root: Path, config, profile_path: Path, *, stop_api, legacy_root=None):
+def setup_database(root: Path, config, profile_path: Path, *, stop_api):
     server = Postgres(root)
     private_directory(server.root)
     with FileLock(str(server.root / 'setup.lock'), timeout=600):
         current = configured_url(config)
-        if current and not current.startswith('pg0'):
+        if current:
             require_postgresql(config)
             if not server.state_path.is_file() or current != server.url:
                 asyncio.run(check_external(current))
                 stop_api()
                 return None
-        if current.startswith('pg0') and current not in ('pg0', 'pg0://hindsight-embed-provenloop'):
-            raise RuntimeError('A custom pg0 database is configured. Migrate it explicitly before switching this profile.')
         server.install()
         server.initialize()
         server.start()
         server.prepare_database()
-        if current == server.url:
-            return server
-        # Quiesce Hindsight before taking a consistent full-database backup.
-        stop_api()
-        try:
-            # A failed profile write may leave a verified candidate. Always re-read the source
-            # until the profile has switched; it could have received newer memories meanwhile.
-            with legacy_connection(legacy_root or Path.home() / '.pg0', server) as source:
-                if source:
-                    print('Migrating existing Hindsight data to PostgreSQL; keeping the old database and backup.', flush=True)
-                    before = server.snapshot(source)
-                    server.restore_legacy(source)
-                    stop_api()
-                    if server.snapshot(source) != before:
-                        raise RuntimeError('The old database changed during migration. Close its clients and rerun setup.')
-                write_profile_database(profile_path, server.url)
-        except BaseException:
-            # Profile switching is last. A failed backup/restore never points Hindsight at an empty DB.
-            raise
+        if current != server.url:
+            stop_api()
+            write_profile_database(profile_path, server.url)
         return server

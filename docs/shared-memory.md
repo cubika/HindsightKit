@@ -14,9 +14,9 @@ Install a client on each machine used for coding:
 .\setup.ps1 -Server http://memory-host:9077
 ```
 
-Enter the server's connection key at the hidden prompt. The machine name comes from the local hostname. No bank, device name, listening address, or tunnel ID is required. Client setup installs coding integrations without a database, models, dashboard, or server processes.
+Enter the server's connection key at the hidden prompt. A client connecting to the server on the same Windows account reuses its local key automatically. The machine name comes from the local hostname. No bank, device name, listening address, or tunnel ID is required. Client setup installs coding integrations without a database, models, dashboard, or server processes.
 
-Bank selection is internal. Repository sessions keep their own memory and read shared memory; sessions outside Git use shared memory. Clones with the same Git origin share repository memory across machines, even when their local paths differ. Repositories without an origin stay device-local. Setup does not combine unrelated repository memories.
+Bank selection is internal. Repository sessions keep their own memory and read shared memory; sessions outside Git use shared memory. Clones with the same Git origin share repository memory across machines, even when their local paths differ. Repositories without an origin stay device-local. HTTPS and SSH origins with the same canonical host/path are normalized, including Azure DevOps standard URLs. Custom SSH host aliases need a common origin URL on both machines. Setup does not combine unrelated repository memories.
 
 ## Local use and network transport
 

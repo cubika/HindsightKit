@@ -185,13 +185,13 @@ class RemoteSetupTests(unittest.TestCase):
             with self.client_environment(Path(temp)) as fixture:
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://127.0.0.1:19078', 'apiToken': 'saved-key',
                     'logLevel': 'warn', 'provenloop': {'mode': 'client', 'bank': 'previous-bank',
-                    'deviceId': 'existing-device-id', 'name': 'Old hostname'}}))
+                    'deviceId': '39c07d23-4f04-4e57-a4b3-e80f9f2229cc', 'name': 'Old hostname'}}))
                 with patch.object(cli.getpass, 'getpass') as prompt:
                     cli.setup_client(options(server='http://127.0.0.1:19078'))
                 prompt.assert_not_called()
                 config = json.loads(fixture.path.read_text())
                 self.assertEqual(config['apiToken'], 'saved-key')
-                self.assertEqual(config['provenloop']['deviceId'], 'existing-device-id')
+                self.assertEqual(config['provenloop']['deviceId'], '39c07d23-4f04-4e57-a4b3-e80f9f2229cc')
                 self.assertEqual(config['provenloop']['name'], 'Automatic-Hostname')
                 self.assertNotIn('bank', config['provenloop'])
                 self.assertEqual(config['logLevel'], 'warn')

@@ -208,6 +208,11 @@ class MailSync:
             await self.source.__aenter__()
             self._source_open = True
 
+    def _require_source(self):
+        if self.source is None:
+            from .mail_source import find_workiq
+            find_workiq()
+
     def _bind(self, account):
         address = account.get("mail") or account.get("userPrincipalName") or account.get("address")
         identity = str(account.get("id") or address or "").casefold()
@@ -302,6 +307,8 @@ class MailSync:
         return {**self.status(), "items": items}
 
     async def boot(self):
+        if self._get('config')['enabled']:
+            self._require_source()
         if self._scheduler is None:
             self._scheduler = asyncio.create_task(self._schedule())
         if self._get("config")["enabled"]:
@@ -314,6 +321,7 @@ class MailSync:
             self._task = asyncio.create_task(self._run())
 
     async def start(self):
+        self._require_source()
         config = self._get("config")
         if not config["folder_ids"]:
             raise ValueError("Select at least one folder before starting.")
@@ -325,6 +333,7 @@ class MailSync:
         return self.status()
 
     async def sync(self):
+        self._require_source()
         if not self._get("config")["folder_ids"]:
             raise ValueError("Select at least one folder before synchronizing.")
         self._launch()

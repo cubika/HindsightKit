@@ -1,10 +1,9 @@
-"""Local configuration page and process lifecycle for the WorkIQ mail importer."""
+"""Local settings and lifecycle host for optional connector adapters."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import hmac
-import inspect
 import json
 import os
 from pathlib import Path
@@ -103,7 +102,7 @@ def stop(directory):
             raise RuntimeError('Connector is still stopping; Hindsight was left running.')
 
 
-def make_app(sync, *, port, token, instance, hindsight_url, shutdown=None):
+def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
     origin = f'http://127.0.0.1:{port}'
     hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
     origins = {origin, f'http://localhost:{port}'}
@@ -137,67 +136,74 @@ def make_app(sync, *, port, token, instance, hindsight_url, shutdown=None):
 
     app = web.Application(middlewares=[local_requests], client_max_size=32768)
 
-    async def snapshot():
-        value = sync.status()
-        if inspect.isawaitable(value):
-            value = await value
-        return {**value, 'hindsight_url': hindsight_url + '/banks/' + quote(sync.bank, safe='')}
+    def snapshot(identity):
+        value = host.status(identity)
+        return {**value, 'hindsight_url': hindsight_url + '/banks/' + quote(value['bank'], safe='')}
 
     async def page(request):
-        name = request.match_info.get('name', 'connectors.html')
-        if name not in {'connectors.html', 'connectors.css', 'connectors.js'}:
+        identity = request.match_info.get('connector')
+        name = host.spec(identity).view if identity else 'catalog.html'
+        content = (WEB / name).read_text(encoding='utf-8')
+        content = content.replace('__TOKEN__', token).replace('__CONNECTOR_ID__', identity or '')
+        return web.Response(text=content, content_type='text/html')
+
+    async def asset(request):
+        name = request.match_info['name']
+        allowed = {'catalog.js', 'connectors.css'} | {asset for spec in host.registry.values() for asset in spec.assets}
+        if name not in allowed:
             raise web.HTTPNotFound()
         content = (WEB / name).read_text(encoding='utf-8')
-        if name.endswith('.html'):
-            content = content.replace('__TOKEN__', token)
         mime = {'html': 'text/html', 'css': 'text/css', 'js': 'text/javascript'}[name.rsplit('.', 1)[1]]
         return web.Response(text=content, content_type=mime)
 
     async def status(request):
-        return web.json_response(await snapshot())
+        return web.json_response(snapshot(request.match_info['connector']))
+
+    async def catalog(request):
+        return web.json_response({'connectors': host.catalog()})
 
     async def health(request):
-        return web.json_response({'instance': instance, 'service': 'provenloop-mail'})
+        return web.json_response({'instance': instance, 'service': 'provenloop-connectors'})
 
     async def action(request):
         name = request.match_info['action']
-        if name == 'shutdown':
-            if shutdown:
-                shutdown.set()
-            return web.json_response({'instance': instance})
-        if name not in {'discover', 'config', 'preview', 'start', 'pause', 'sync'}:
-            raise web.HTTPNotFound()
+        identity = request.match_info['connector']
+        data = None
         if name == 'config':
             try:
                 data = await request.json()
             except (ValueError, UnicodeError):
                 raise ValueError('设置必须是有效的 JSON。')
-            if not isinstance(data, dict) or set(data) != {'folder_ids', 'lookback_days', 'interval_minutes'}:
-                raise ValueError('请选择文件夹、历史扫描天数和同步间隔。')
-            result = await sync.configure(data)
-        else:
-            result = await getattr(sync, name)()
-        return web.json_response(result if name == 'preview' else await snapshot())
+        result = await host.action(identity, name, data)
+        return web.json_response(result if name == 'preview' else snapshot(identity))
+
+    async def stop_host(request):
+        if shutdown:
+            shutdown.set()
+        return web.json_response({'instance': instance})
 
     app.router.add_get('/', page)
-    app.router.add_get(r'/{name:connectors\.(?:html|css|js)}', page)
+    app.router.add_get('/connectors/{connector}', page)
+    app.router.add_get(r'/{name:[A-Za-z0-9_-]+\.(?:css|js)}', asset)
     app.router.add_get('/health', health)
-    app.router.add_get('/api/status', status)
-    app.router.add_post('/api/{action}', action)
+    app.router.add_get('/api/connectors', catalog)
+    app.router.add_get('/api/connectors/{connector}', status)
+    app.router.add_post('/api/connectors/{connector}/{action}', action)
+    app.router.add_post('/api/shutdown', stop_host)
     return app
 
 
 async def serve(directory, api_url, hindsight_url, port):
-    from .mail_sync import MailSync
+    from .connector_registry import ConnectorHost
     from . import connection
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     token, instance = secrets.token_urlsafe(32), secrets.token_hex(16)
     config = connection.server_load()
     # Credentials are loaded inside the child, never written to service.json or argv.
-    sync = MailSync(directory, api_url, client=connection.sdk(config, timeout=120))
+    host = ConnectorHost(directory.parent, config)
     shutdown = asyncio.Event()
-    runner = web.AppRunner(make_app(sync, port=port, token=token, instance=instance,
+    runner = web.AppRunner(make_app(host, port=port, token=token, instance=instance,
                                    hindsight_url=hindsight_url, shutdown=shutdown), access_log=None)
     info = {'port': port, 'token': token, 'instance': instance, 'pid': os.getpid()}
     try:
@@ -207,11 +213,11 @@ async def serve(directory, api_url, hindsight_url, port):
         temporary = state.with_suffix('.tmp')
         temporary.write_text(json.dumps(info), encoding='utf-8')
         temporary.replace(state)
-        await sync.boot()
+        await host.boot()
         await shutdown.wait()
     finally:
         await runner.cleanup()
-        await sync.close()
+        await host.close()
         if read_service(directory) == info:
             (directory / 'service.json').unlink(missing_ok=True)
 

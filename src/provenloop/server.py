@@ -86,8 +86,10 @@ class ClientsExtension(HttpExtension):
             authorize(authorization)
             from .connection import validate_bank
             from .memory import SHARED_BANK
+            from .connector_registry import enabled_connectors
             return {'protocol': 1, 'routing': 'repository',
-                    'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK))}
+                    'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK)),
+                    'connectors': enabled_connectors(inventory.path.parent)}
 
         @router.post('/provenloop/scope')
         def scope(body: RepositoryScope, authorization: str | None = Header(default=None)):

@@ -15,6 +15,13 @@ from provenloop import cli, connection, mcp as memory_mcp
 
 
 class McpTests(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.TemporaryDirectory()
+        self.addCleanup(self.home.cleanup)
+        environment = patch.dict(os.environ, {'PROVENLOOP_HOME': self.home.name})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_explicit_bank_works_without_vscode_roots(self):
         async def check():
             params = StdioServerParameters(command=sys.executable,
@@ -50,7 +57,7 @@ class McpTests(unittest.TestCase):
                         async with ClientSession(reader, writer, list_roots_callback=list_roots if roots is not None else None) as client:
                             await client.initialize()
                             tools = await client.list_tools()
-                            self.assertEqual({t.name for t in tools.tools}, {'recall', 'retain', 'reflect', 'recall_mail'})
+                            self.assertEqual({t.name for t in tools.tools}, {'recall', 'retain', 'reflect'})
                             for tool in tools.tools:
                                 self.assertNotIn('bank_id', tool.input_schema.get('properties', {}))
                             result = await client.call_tool('recall', {'query':'isolation test for an empty bank'})
@@ -74,13 +81,32 @@ class McpTests(unittest.TestCase):
 
 
 class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
-    async def call_tools(self, config, action, sdk_client):
+    async def test_server_advertised_mail_is_available_without_local_import_state(self):
+        config = {'apiUrl': 'https://memory.example.invalid', 'apiToken': 'synthetic-key',
+                  'provenloop': {'mode': 'client', 'routing': 'repository', 'connectors': ['workiq']}}
+        client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
+            model_dump=lambda **kwargs: {'results': []})), aclose=AsyncMock())
+        async def action(server):
+            tool = await server.get_tool('recall_mail')
+            self.assertIsNotNone(tool)
+            return await tool.fn(query='shared mail')
+        result, constructor = await self.call_tools(config, action, client, saved_mail=False)
+        self.assertEqual(result['bank'], 'provenloop-mail')
+        constructor.assert_called_once_with(base_url=config['apiUrl'], api_key='synthetic-key', timeout=90)
+
+    async def call_tools(self, config, action, sdk_client, *, saved_mail=True):
         server = memory_mcp.FastMCP("Mail connection fixture")
-        with patch.object(connection, "load", return_value=config), \
+        with tempfile.TemporaryDirectory() as temp, \
+             patch.dict(os.environ, {'PROVENLOOP_HOME': temp}), \
+             patch.object(connection, "load", return_value=config), \
              patch.object(connection, "Hindsight", return_value=sdk_client) as constructor, \
              patch.object(connection, "report", new=AsyncMock()), \
              patch.object(memory_mcp, "FastMCP", return_value=server), \
              patch.object(server, "run"):
+            if saved_mail:
+                directory = Path(temp) / 'mail'
+                directory.mkdir()
+                (directory / 'sync.sqlite3').touch()
             memory_mcp.serve("vscode")
             result = await action(server)
         return result, constructor
@@ -112,9 +138,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
             model_dump=lambda **kwargs: {"results": []})), aclose=AsyncMock())
         async def action(server):
-            mail = await server.get_tool("recall_mail")
-            with self.assertRaisesRegex(ValueError, "local mail-import installation"):
-                await mail.fn(query="Mail finding")
+            self.assertIsNone(await server.get_tool("recall_mail"))
             client.arecall.assert_not_awaited()
             normal = await server.get_tool("recall")
             return await normal.fn(query="Allowed shared finding", ctx=None, max_tokens=1024)
@@ -123,3 +147,15 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["bank"] for item in result["memories"]], ["allowed-shared-bank"])
         self.assertEqual(client.arecall.await_args.kwargs["bank_id"], "allowed-shared-bank")
         client.aclose.assert_awaited_once()
+
+    async def test_unused_mail_does_not_register_tool_or_construct_sdk(self):
+        config = {'apiUrl': 'https://memory.example.invalid', 'apiToken': 'synthetic-unused-key'}
+        client = SimpleNamespace(arecall=AsyncMock(), aclose=AsyncMock())
+        async def action(server):
+            self.assertIsNone(await server.get_tool('recall_mail'))
+            for name in ['retain', 'recall', 'reflect']:
+                self.assertIsNotNone(await server.get_tool(name))
+            self.assertFalse((Path(os.environ['PROVENLOOP_HOME']) / 'mail').exists())
+        _, constructor = await self.call_tools(config, action, client, saved_mail=False)
+        constructor.assert_not_called()
+        client.arecall.assert_not_awaited()

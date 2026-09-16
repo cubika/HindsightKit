@@ -15,6 +15,33 @@ from provenloop.server import ClientsExtension
 
 
 class RoutingTests(unittest.TestCase):
+    def test_nondefault_origin_ports_remain_separate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli.run(['git', 'init', root], capture=True)
+            identities = []
+            for origin in ['https://git.example:3000/team/repo', 'https://git.example:4000/team/repo',
+                           'https://git.example:443/team/repo', 'git@git.example:team/repo.git',
+                           'https://dev.azure.com/org/project/_git/repo', 'git@ssh.dev.azure.com:v3/org/project/repo']:
+                cli.run(['git', '-C', root, 'config', 'remote.origin.url', origin], capture=True)
+                identities.append(repository_identity(scope_for(root)))
+            self.assertNotEqual(identities[0], identities[1])
+            self.assertEqual(identities[2], identities[3])
+            self.assertEqual(identities[4], identities[5])
+
+    def test_new_session_records_do_not_hide_legacy_alias_and_unpublished_bank_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli.run(['git', 'init', root], capture=True)
+            selected = scope_for(root)
+            sessions = root / 'sessions'
+            sessions.mkdir()
+            for name, bank in [('old', selected.bank), ('new', 'provenloop-repo-new-identity')]:
+                (sessions / (name + '.json')).write_text(json.dumps({'_repository': str(root), 'bankId': bank}))
+            aliases = root / 'repositories.json'
+            seed_aliases(aliases, sessions, {}, 'device-one')
+            self.assertEqual(list(json.loads(aliases.read_text()).values()), [selected.bank])
+
     def test_same_origin_across_paths_and_protocols_reuses_existing_server_bank(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

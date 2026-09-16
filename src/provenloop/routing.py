@@ -36,6 +36,11 @@ def repository_identity(scope):
             return None
         identity = match[1].lower() + '/' + match[2].strip('/')
     identity = identity.removesuffix('.git')
+    # Azure DevOps publishes different paths for the same repository over SSH/HTTPS.
+    if identity.startswith('ssh.dev.azure.com/v3/'):
+        parts = identity.split('/')
+        if len(parts) == 5:
+            identity = f'dev.azure.com/{parts[2]}/{parts[3]}/_git/{parts[4]}'
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
@@ -52,19 +57,21 @@ async def resolve(config, scope):
                  connection.validate_bank(result['sharedBank']))
 
 
-def seed_aliases(path, sessions, old_config, device=None):
+def seed_aliases(path, sessions, old_config, device=None, api_url=None):
     """Map previously used server checkouts to their existing banks on first upgrade."""
     from filelock import FileLock
     path = Path(path)
-    candidates = dict(old_config.get('mapPathToBank', {}))
+    candidates = set(old_config.get('mapPathToBank', {}).items()) if not api_url or old_config.get('apiUrl') == api_url else set()
     for record in Path(sessions).glob('*.json'):
         value = json.loads(record.read_text(encoding='utf-8'))
+        if api_url and value.get('apiUrl') != api_url:
+            continue
         if value.get('_repository'):
-            candidates[value['_repository']] = value.get('bankId')
+            candidates.add((value['_repository'], value.get('bankId')))
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + '.lock', timeout=5):
         aliases = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
-        for repository, bank in candidates.items():
+        for repository, bank in sorted(candidates):
             if not Path(repository).is_dir():
                 continue
             scope = scope_for(repository)

@@ -3,6 +3,8 @@
 (() => {
   const byId = (id) => document.getElementById(id);
   const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const connectorId = document.querySelector('meta[name="connector-id"]')?.content;
+  const api = '/api/connectors/' + encodeURIComponent(connectorId);
   const controls = {
     discover: byId("discover-button"), save: byId("save-button"),
     preview: byId("preview-button"), toggle: byId("toggle-button"),
@@ -107,8 +109,9 @@
     const loaded = Boolean(snapshot);
     const connected = Boolean(snapshot?.account);
     const enabled = Boolean(snapshot?.config?.enabled);
+    const available = snapshot?.availability?.ready !== false;
     const canPause = enabled || isActive();
-    const ready = loaded && connected && selected.size > 0;
+    const ready = loaded && connected && selected.size > 0 && available;
     controls.discover.disabled = busy;
     controls.retry.disabled = busy;
     controls.lookback.disabled = !loaded || busy;
@@ -116,7 +119,7 @@
     controls.search.disabled = !folders.length;
     controls.recommend.disabled = busy || !folders.some((folder) => folder.recommended && !folder.excluded);
     controls.clear.disabled = busy || !selected.size;
-    controls.save.disabled = busy || !loaded || !dirty;
+    controls.save.disabled = busy || !loaded || !dirty || !available;
     controls.preview.disabled = busy || !ready || isActive();
     controls.sync.disabled = busy || !ready || isActive();
     controls.toggle.disabled = busy || (!canPause && !ready) || snapshot?.run?.state === "stopping";
@@ -186,6 +189,9 @@
   }
 
   function renderStatus() {
+    const prerequisite = snapshot.availability;
+    byId('prerequisite-banner').hidden = prerequisite?.ready !== false;
+    byId('prerequisite-text').textContent = prerequisite?.message || '';
     const account = snapshot.account;
     byId("account-address").textContent = account ? plainText(account.address, "当前 WorkIQ 账号") : "点击“读取邮箱文件夹”，连接当前 WorkIQ 账号。";
     byId("account-name").textContent = plainText(account?.name);
@@ -378,6 +384,7 @@
   }
 
   async function request(path, { method = "GET", body, signal, timeout = 30000 } = {}) {
+    path = path === '/api/status' ? api : api + path.slice(4);
     const controller = new AbortController();
     const abort = () => controller.abort();
     if (signal?.aborted) abort();

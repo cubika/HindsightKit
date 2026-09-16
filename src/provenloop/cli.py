@@ -268,10 +268,13 @@ def start():
     print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
-    directory = home() / 'mail'
-    if (directory / 'sync.sqlite3').exists():
+    from .connector_registry import enabled_connectors
+    if enabled_connectors(home()):
         from .connectors import ensure_running
-        ensure_running(directory, f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
+        try:
+            ensure_running(home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
+        except RuntimeError as exc:
+            print(f'Optional connectors: {exc}', file=sys.stderr)
     return f'http://127.0.0.1:{paths.port}', ui_url
 
 
@@ -420,7 +423,7 @@ def server_status():
     url = configured_url(config)
     managed = database.state_path.is_file() and url == database.url
     print('Database: ' + ('standalone PostgreSQL ' + ('running' if database.running() else 'stopped')
-          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'pg0; run setup to migrate'))
+          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'PostgreSQL not configured; run setup'))
     manager = DaemonEmbedManager()
     healthy = manager.is_running(PROFILE)
     ui = manager.is_ui_running(PROFILE)
@@ -510,7 +513,8 @@ def setup_server(args):
     from .routing import seed_aliases
     old_config = json.loads(old_path.read_text(encoding='utf-8')) if old_path.is_file() else {}
     device = connection.device_id(old_config.get('provenloop', {}).get('deviceId'))
-    seed_aliases(home() / 'repositories.json', home() / 'sessions', old_config, device)
+    seed_aliases(home() / 'repositories.json', home() / 'sessions', old_config, device,
+                 f'http://127.0.0.1:{paths.port}')
     install_node_packages()
     ensure_copilot()
     configure_sharing(key, bank)
@@ -518,6 +522,7 @@ def setup_server(args):
     private_directory(key_path.parent)
     key_path.write_text(key, encoding='utf-8')
     restrict_access(key_path)
+    restrict_access(paths.config)
 
     def stop_api():
         if not DaemonEmbedManager().stop(PROFILE):
@@ -539,6 +544,8 @@ def setup_client(args):
     from hindsight_copilot.instructions import RULE_TEXT, write_rule
     if args.model or args.model_dir or args.port or args.reasoning_effort:
         raise ValueError('Client setup accepts the server address; model and port settings belong on the server.')
+    if not shutil.which('git'):
+        raise RuntimeError('Git must be installed for automatic repository memory selection.')
     selected_home = os.environ.get('COPILOT_HOME')
     if selected_home and Path(selected_home).resolve() != (Path.home() / '.copilot').resolve():
         raise RuntimeError('This setup uses the default Copilot profile. Unset COPILOT_HOME before setup.')
@@ -548,6 +555,10 @@ def setup_client(args):
     old = previous.get('provenloop', {})
     # Reuse a saved key only for the same destination. Never send it to a new host.
     saved_key = previous.get('apiToken') if previous.get('apiUrl') == api_url and old else None
+    if not saved_key and connection.has_server():
+        local = connection.server_load()
+        if api_url == local['apiUrl']:
+            saved_key = local.get('apiToken')
     candidate = {'apiUrl': api_url, 'apiToken': api_key(args, saved_key)}
     discovered = asyncio.run(connection.request(candidate, 'GET', '/ext/provenloop/connection'))
     if discovered.get('protocol') != 1 or discovered.get('routing') != 'repository':
@@ -555,6 +566,7 @@ def setup_client(args):
     shared_bank = connection.validate_bank(discovered.get('sharedBank', ''))
     asyncio.run(connection.request(candidate, 'GET', '/v1/default/banks/' + shared_bank))
     info = {'mode': 'client', 'routing': 'repository', 'activity': True,
+            'connectors': discovered.get('connectors', []),
             'deviceId': connection.device_id(old.get('deviceId')), 'name': socket.gethostname()}
     candidate['provenloop'] = info
     install_node_packages(client=True)
@@ -599,7 +611,7 @@ def clients():
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,backup,clients,ui,connectors,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,clients,ui,connectors,copilot}')
     setup_parser = sub.add_parser('setup', help='Install and start the server, or install a client with --server URL.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -609,7 +621,7 @@ def main(argv=None):
     setup_parser.add_argument('--no-open', action='store_true')
     setup_parser.add_argument('--server', help='Install a client connected to this HTTP(S) server address.')
     setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
-    for command in ['start', 'stop', 'status', 'check', 'backup', 'clients', 'ui', 'connectors']:
+    for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -632,7 +644,7 @@ def main(argv=None):
         elif args.command == 'stop':
             require_local()
             from .connectors import stop
-            stop(home() / 'mail')
+            stop(home() / 'connectors')
             run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
             run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
             from .postgres import Postgres, configured_url
@@ -654,15 +666,6 @@ def main(argv=None):
                 else:
                     asyncio.run(check_external(url))
             asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
-        elif args.command == 'backup':
-            require_local()
-            from .postgres import Postgres, require_postgresql
-            config, _ = profile_config()
-            database = Postgres(home() / 'postgresql')
-            if not database.state_path.is_file() or require_postgresql(config) != database.url:
-                raise RuntimeError('Use the PostgreSQL administrator backup tools for this external database.')
-            database.start()
-            print(f'PostgreSQL backup: {database.backup()}')
         elif args.command == 'clients':
             clients()
         elif args.command == 'ui':
@@ -673,13 +676,13 @@ def main(argv=None):
             require_local()
             _, paths = profile_config()
             # Reuse a healthy installed API. Opening mail settings does not run
-            # database setup or migrate an existing installation.
+            # database setup or change its connection.
             api_url, ui_url = f'http://127.0.0.1:{paths.port}', f'http://localhost:{paths.ui_port}'
             try:
                 asyncio.run(connection.request(connection.server_load(), 'GET', '/health'))
             except Exception:
                 api_url, ui_url = start()
-            url = ensure_running(home() / 'mail', api_url, ui_url, paths.ui_port + 1)
+            url = ensure_running(home() / 'connectors', api_url, ui_url, paths.ui_port + 1)
             webbrowser.open(url)
         elif args.command == 'copilot':
             command = copilot_command()
