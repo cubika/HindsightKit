@@ -47,7 +47,7 @@ provenloop stop
 provenloop copilot
 ```
 
-Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. Services keep running when setup exits. Run `start` after restarting Windows; no login task or system service is installed.
+Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. Run `provenloop ui` to start any stopped services and open the dashboard in your browser. Services run in the background without a separate server window and keep running after the terminal closes. Repeated calls reuse the running services. Use `provenloop stop` to stop them; no login task or system service is installed.
 
 The official CLI hooks write sessions back and inject relevant memory. The VS Code integration adds the official recall/retain instructions and an HTTP MCP server. Only projects passed to setup participate in CLI memory. Initial git-history import and the automatic codebase survey are disabled; normal session learning stays enabled.
 
@@ -62,6 +62,7 @@ Use the official Hindsight UI to inspect memories, correct facts, or invalidate 
 | ~/.provenloop/runtime | Official npm components |
 | ~/.hindsight/profiles/provenloop.env | Official Hindsight configuration |
 | ~/.hindsight/profiles/provenloop.log | API log |
+| ~/.hindsight/profiles/provenloop.ui.log | UI server log |
 | ~/.pg0/instances/hindsight-embed-provenloop | Local database |
 | ~/.hindsight/coding-agent.json | Official CLI integration settings and project mapping |
 | ~/.copilot/hooks/hindsight-coding-agents.json | Official hooks, with absolute executable paths |
