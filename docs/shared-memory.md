@@ -20,6 +20,8 @@ Bank selection is internal. Repository sessions keep their own memory and read s
 
 ## Local use and network transport
 
+For two Dev Boxes connected through Microsoft Dev Tunnels, follow the [step-by-step tunnel guide](devtunnel.md). It includes commands for both machines, the address to pass to client setup, and reconnect checks.
+
 To use memory on the server machine, install the client there too:
 
 ```powershell

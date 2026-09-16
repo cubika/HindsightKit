@@ -4,6 +4,8 @@ Run a [Hindsight](https://github.com/vectorize-io/hindsight) memory server and c
 
 ## Setup on Windows
 
+If the machines cannot reach each other directly, use the [Dev Tunnels guide](docs/devtunnel.md).
+
 Install and start the server:
 
 ```powershell
