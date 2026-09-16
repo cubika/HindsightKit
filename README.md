@@ -40,8 +40,6 @@ The model directory must contain the official E5 ONNX graph at `onnx/model.onnx`
 
 PostgreSQL runs as a separate local server with its own data directory. Setup enables `vector` for similarity search, `pg_trgm` for entity matching, and `pg_stat_statements` for query diagnostics. Native full-text search needs no extra extension. PostgreSQL's other bundled contrib extensions remain available for explicit use. The server listens only on 127.0.0.1, uses SCRAM passwords and data checksums, and gives Hindsight a database-owner account without superuser privileges. Credentials and database files are restricted to the installing Windows user and SYSTEM.
 
-On upgrade from pg0, setup stops the Hindsight API, makes a full `pg_dump` archive, and restores into a new standalone database. It verifies table content, extensions and application permissions before switching the profile. The old pg0 data and profile backup are retained. An interrupted switch is retried from the source database, so a stale restored copy is never silently reused. Keep Copilot sessions closed during migration. Custom pg0 instances require an explicit migration; setup refuses to guess their location. PostgreSQL roles and ACLs are replaced by the dedicated Hindsight account, while all database schemas and data are retained.
-
 An existing external PostgreSQL URL in `HINDSIGHT_EMBED_API_DATABASE_URL` is preserved and validated; its administrator must provide PostgreSQL 14+, pgvector 0.8+ and `pg_trgm`. Setup does not manage that server's processes or roles. Changing a connection string does not migrate existing data.
 
 ## Daily use
@@ -51,14 +49,13 @@ provenloop status
 provenloop start
 provenloop ui
 provenloop check
-provenloop backup
 provenloop stop
 provenloop copilot
 ```
 
 Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. PostgreSQL prefers port 15432 and chooses an available port during first setup if needed. Run `provenloop ui` to start stopped services and open the dashboard. The API, UI and standalone PostgreSQL run in the background and keep running after the terminal closes. Use `provenloop stop` to stop them. No login task or Windows service is installed; run `provenloop start` after reboot.
 
-`provenloop backup` writes a consistent custom-format PostgreSQL archive under `~/.provenloop/postgresql/backups`. Copy important backups to another disk. Database server upgrades are explicit: setup will not initialize over an unknown data directory or automatically change its PostgreSQL major version.
+Database server upgrades are explicit: setup will not initialize over an unknown data directory or automatically change its PostgreSQL major version.
 
 ## Memory scope
 
@@ -104,7 +101,6 @@ Configuration and the delivery ledger live in `~/.provenloop/mail`. Credentials 
 | ~/.provenloop/postgresql/data | Standalone PostgreSQL cluster |
 | ~/.provenloop/postgresql/cluster.json | Private local connection configuration |
 | ~/.provenloop/postgresql/postgresql.log | PostgreSQL log |
-| ~/.provenloop/postgresql/backups | Database backups and pg0 migration archives |
 | ~/.hindsight/coding-agent.json | Local endpoint and session capture settings |
 | ~/.provenloop/sessions | Small session-to-repository routing records; no transcripts |
 | ~/.copilot/hooks/hindsight-coding-agents.json | Copilot hooks with absolute executable paths |
@@ -113,7 +109,7 @@ Configuration and the delivery ledger live in `~/.provenloop/mail`. Credentials 
 
 Existing unrelated MCP servers and VS Code JSONC comments are preserved. Changed files receive a `.provenloop-backup` copy once. Conflicting Hindsight endpoints or disabled-learning settings stop setup. The official coding-agent configuration itself must be strict JSON. This release uses the default Copilot profile; a custom COPILOT_HOME must be unset before setup. Keep this checkout and runtime directory in place while using the installed environment.
 
-Pinned components: Hindsight 0.10.0, coding-agents 0.6.1, hindsight-copilot 0.1.0, PostgreSQL 18.6, pgvector 0.8.6, and Copilot CLI 1.0.85. pg0 is no longer installed. Python and npm dependency locks are committed. Local embeddings use ONNX multilingual E5 and ranking uses Hindsight's RRF, without Torch or a separate neural reranker.
+Pinned components: Hindsight 0.10.0, coding-agents 0.6.1, hindsight-copilot 0.1.0, PostgreSQL 18.6, pgvector 0.8.6, and Copilot CLI 1.0.85. Python and npm dependency locks are committed. Local embeddings use ONNX multilingual E5 and ranking uses Hindsight's RRF, without Torch or a separate neural reranker.
 
 ## Development
 

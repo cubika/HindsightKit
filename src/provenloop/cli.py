@@ -408,7 +408,7 @@ def status():
     url = configured_url(config)
     managed = database.state_path.is_file() and url == database.url
     print('Database: ' + ('standalone PostgreSQL ' + ('running' if database.running() else 'stopped')
-          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'pg0; run setup to migrate'))
+          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'PostgreSQL not configured; run setup'))
     manager = DaemonEmbedManager()
     healthy = manager.is_running(PROFILE)
     ui = manager.is_ui_running(PROFILE)
@@ -526,7 +526,7 @@ def setup(args):
         from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
         def stop_api():
             if not DaemonEmbedManager().stop(PROFILE):
-                raise RuntimeError('Cannot stop Hindsight safely before database migration.')
+                raise RuntimeError('Cannot stop Hindsight safely before changing its database connection.')
         config, paths = profile_config()
         setup_database(home() / 'postgresql', config, paths.config, stop_api=stop_api)
     remove_project_registration(coding_config, previous.get('apiUrl', api_url), previous)
@@ -579,7 +579,7 @@ def clients():
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,backup,clients,ui,connectors,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,clients,ui,connectors,copilot}')
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -596,7 +596,7 @@ def main(argv=None):
     setup_parser.add_argument('--api-key-env', help='Read the API key from this environment variable; otherwise prompt securely.')
     setup_parser.add_argument('--device-name', help='Machine display name for client activity.')
     setup_parser.add_argument('--replace-connection', action='store_true', help='Explicitly change this managed connection; preserve old memory.')
-    for command in ['start', 'stop', 'status', 'check', 'backup', 'clients', 'ui', 'connectors']:
+    for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -641,15 +641,6 @@ def main(argv=None):
                 else:
                     asyncio.run(check_external(url))
             asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
-        elif args.command == 'backup':
-            require_local()
-            from .postgres import Postgres, require_postgresql
-            config, _ = profile_config()
-            database = Postgres(home() / 'postgresql')
-            if not database.state_path.is_file() or require_postgresql(config) != database.url:
-                raise RuntimeError('Use the PostgreSQL administrator backup tools for this external database.')
-            database.start()
-            print(f'PostgreSQL backup: {database.backup()}')
         elif args.command == 'clients':
             clients()
         elif args.command == 'ui':
@@ -660,7 +651,7 @@ def main(argv=None):
             require_local()
             _, paths = profile_config()
             # Reuse a healthy installed API. Opening mail settings does not run
-            # database setup or migrate an existing installation.
+            # database setup or change its connection.
             api_url, ui_url = f'http://127.0.0.1:{paths.port}', f'http://localhost:{paths.ui_port}'
             try:
                 asyncio.run(connection.request(connection.load(), 'GET', '/health'))
