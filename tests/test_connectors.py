@@ -65,7 +65,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/api/connectors/workiq', headers=self.headers)
         self.assertEqual(response.status, 200)
         value = await response.json()
-        self.assertEqual(value['hindsight_url'], 'http://localhost:19077/banks/provenloop-mail')
+        self.assertEqual(value['hindsight_url'], 'http://localhost:19077/en/banks/provenloop-mail')
         self.assertNotIn('test-token', json.dumps(value))
         self.assertIn("frame-ancestors 'none'", response.headers['Content-Security-Policy'])
         self.assertEqual(response.headers['Cache-Control'], 'no-store')

@@ -15,7 +15,7 @@ class Connector:
     assets: tuple[str, ...] = ()
 
 
-CONNECTORS = (Connector('workiq', 'WorkIQ 邮件', '将有用的邮件内容保存为可追溯的工作记忆。',
+CONNECTORS = (Connector('workiq', 'WorkIQ email', 'Save useful email findings with links to their sources.',
                         'provenloop.workiq_connector', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
 
 
@@ -48,7 +48,7 @@ class ConnectorHost:
                 state = self.status(identity)
             except Exception:
                 state = {'config': {'enabled': False},
-                         'availability': {'ready': False, 'message': '无法读取连接器设置，请检查本地配置。'}}
+                         'availability': {'ready': False, 'message': 'Unable to read connector settings. Check the local configuration.'}}
             result.append({'id': identity, 'title': spec.title, 'description': spec.description,
                            'url': '/connectors/' + identity, 'enabled': state['config']['enabled'],
                            'availability': state['availability']})
@@ -67,7 +67,7 @@ class ConnectorHost:
             except Exception:
                 # One optional integration must not take down the settings host.
                 if identity in self.adapters:
-                    self.adapters[identity].error = '连接器未能恢复，请打开设置检查。'
+                    self.adapters[identity].error = 'The connector could not resume. Open its settings to check the connection.'
 
     async def close(self):
         import asyncio
