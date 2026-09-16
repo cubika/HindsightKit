@@ -255,8 +255,16 @@ def configure_profile(args):
 
 def start():
     require_local()
-    _, paths = profile_config()
-    print('Starting Hindsight (first start downloads the database and embedding model)...', flush=True)
+    from .postgres import Postgres, require_postgresql, check_external
+    config, paths = profile_config()
+    database_url = require_postgresql(config)
+    database = Postgres(home() / 'postgresql')
+    if database.state_path.is_file() and database_url == database.url:
+        database.start()
+        database.validate()
+    else:
+        asyncio.run(check_external(database_url))
+    print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
     directory = home() / 'mail'
@@ -394,14 +402,20 @@ def status():
         print(f'Memory: reachable at {config["apiUrl"]}\nBank: {connection.fixed_bank(config)}\nMode: client (no local services)')
         return True
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-    _, paths = profile_config()
+    from .postgres import Postgres, configured_url
+    config, paths = profile_config()
+    database = Postgres(home() / 'postgresql')
+    url = configured_url(config)
+    managed = database.state_path.is_file() and url == database.url
+    print('Database: ' + ('standalone PostgreSQL ' + ('running' if database.running() else 'stopped')
+          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'pg0; run setup to migrate'))
     manager = DaemonEmbedManager()
     healthy = manager.is_running(PROFILE)
     ui = manager.is_ui_running(PROFILE)
     print(f'Hindsight: {"running" if healthy else "stopped"} at http://127.0.0.1:{paths.port}')
     print(f'UI: {"running" if ui else "stopped"} at http://localhost:{paths.ui_port}')
     print(f'Profile: {paths.config}\nLog: {paths.log}\nUI log: {paths.ui_log}')
-    return healthy and ui
+    return healthy and ui and (database.running() if managed else bool(url.startswith(('postgresql://', 'postgres://'))))
 
 
 def require_local():
@@ -507,6 +521,14 @@ def setup(args):
     ensure_copilot()
     if shared:
         configure_sharing(args, key)
+    if not remote:
+        from .postgres import setup_database
+        from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+        def stop_api():
+            if not DaemonEmbedManager().stop(PROFILE):
+                raise RuntimeError('Cannot stop Hindsight safely before database migration.')
+        config, paths = profile_config()
+        setup_database(home() / 'postgresql', config, paths.config, stop_api=stop_api)
     remove_project_registration(coding_config, previous.get('apiUrl', api_url), previous)
     # Authentication is passed on stdin, never in process arguments.
     integration('config', coding_config, api_url, data={'apiToken': key, 'provenloop': info})
@@ -557,7 +579,7 @@ def clients():
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,clients,ui,connectors,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,backup,clients,ui,connectors,copilot}')
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -574,7 +596,7 @@ def main(argv=None):
     setup_parser.add_argument('--api-key-env', help='Read the API key from this environment variable; otherwise prompt securely.')
     setup_parser.add_argument('--device-name', help='Machine display name for client activity.')
     setup_parser.add_argument('--replace-connection', action='store_true', help='Explicitly change this managed connection; preserve old memory.')
-    for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
+    for command in ['start', 'stop', 'status', 'check', 'backup', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -600,11 +622,34 @@ def main(argv=None):
             stop(home() / 'mail')
             run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
             run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+            from .postgres import Postgres, configured_url
+            config, _ = profile_config()
+            database = Postgres(home() / 'postgresql')
+            if database.state_path.is_file() and configured_url(config) == database.url:
+                database.stop()
         elif args.command == 'status':
             return 0 if status() else 1
         elif args.command == 'check':
             config = connection.load()
+            if not connection.client_mode(config):
+                from .postgres import Postgres, require_postgresql, check_external
+                profile, _ = profile_config()
+                url = require_postgresql(profile)
+                database = Postgres(home() / 'postgresql')
+                if database.state_path.is_file() and url == database.url:
+                    database.validate()
+                else:
+                    asyncio.run(check_external(url))
             asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
+        elif args.command == 'backup':
+            require_local()
+            from .postgres import Postgres, require_postgresql
+            config, _ = profile_config()
+            database = Postgres(home() / 'postgresql')
+            if not database.state_path.is_file() or require_postgresql(config) != database.url:
+                raise RuntimeError('Use the PostgreSQL administrator backup tools for this external database.')
+            database.start()
+            print(f'PostgreSQL backup: {database.backup()}')
         elif args.command == 'clients':
             clients()
         elif args.command == 'ui':
