@@ -93,12 +93,13 @@ def ensure_running(directory, api_url, hindsight_url, port):
 
 def stop(directory):
     info = read_service(directory)
-    if info and is_running(directory):
-        service_request(info, '/api/shutdown', post=True)
-        deadline = time.monotonic() + 15
-        while is_running(directory) and time.monotonic() < deadline:
-            time.sleep(0.1)
+    if info:
         if is_running(directory):
+            service_request(info, '/api/shutdown', post=True)
+        deadline = time.monotonic() + 60
+        while read_service(directory) == info and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if read_service(directory) == info:
             raise RuntimeError('Connector is still stopping; Hindsight was left running.')
 
 

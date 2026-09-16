@@ -59,7 +59,7 @@ class Source:
 
 class Client:
     def __init__(self):
-        self.operations = self.documents = self
+        self.operations = self.documents = self.banks = self
         self.jobs, self.docs = {}, {}
         self.submissions, self.deleted = [], []
         self.empty = False
@@ -75,6 +75,7 @@ class Client:
     async def acreate_bank(self, **kwargs): pass
     async def aupdate_bank_config(self, **kwargs): self.config = kwargs
     async def aclose(self): pass
+    async def trigger_consolidation(self, **kwargs): return {'operation_id':'consolidation'}
     async def aretain_batch(self, **kwargs):
         self.submissions.append(kwargs)
         operation = kwargs["operation_id"]
@@ -192,6 +193,10 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(turns[1]['reported_at'])
         self.assertTrue(turns[1]['previously_imported'])
         self.assertEqual(turns[1]['text'], earlier)
+        code = '\\' * 5000 + ' literal escaped payload'
+        encoded, _ = extraction_content(code, {'sender_name':'Author'})
+        self.assertTrue(all(len(line) < 4000 for line in encoded.splitlines()))
+        self.assertEqual(''.join(json.loads(line)['text'] for line in encoded.splitlines()).replace(' ', ''), code.replace(' ', ''))
 
     async def test_response_loss_recovers_same_operation_without_duplicate_submit(self):
         self.client.accept_then_fail = True

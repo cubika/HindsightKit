@@ -124,6 +124,8 @@ async def evaluate(args):
             save()
             await asyncio.sleep(5)
         report['consolidation_checked'] = stable >= 3
+        if not report['consolidation_checked']:
+            raise TimeoutError('Consolidation did not finish cleanly within the evaluation budget.')
         report['memories'] = (await client.alist_memories(bank_id=bank, limit=1000)).model_dump(mode='json')
         queries = [
             'What propagation time and consistency conditions apply to SPO proxy addresses, DSAPI and ADMIN API?',
@@ -143,10 +145,27 @@ async def evaluate(args):
             recall = await client.arecall(bank_id=bank, query=query, budget='mid', max_tokens=4096)
             report['focused_queries'].append({'query': query, 'recall': recall.model_dump(mode='json')})
             save()
+        if args.runner:
+            report['mail_tool_queries'] = []
+            for query in queries:
+                recall = await client.arecall(bank_id=bank, query=query, budget='mid', max_tokens=4096,
+                    types=['world','experience','observation'], prefer_observations=True,
+                    include_source_facts=True, max_source_facts_tokens=2048)
+                report['mail_tool_queries'].append({'query':query,'recall':recall.model_dump(mode='json')})
+                save()
         report['total_seconds'] = round(time.monotonic()-started,1)
         print(json.dumps({'stage':'review_ready','seconds':report['total_seconds'],'counts':[d.get('memory_count',0) for d in report['documents']],'consolidation_checked':report['consolidation_checked']}),flush=True)
     finally:
         try:
+            # Deleting a bank alone does not interrupt model calls already running.
+            operations = await client.operations.list_operations(bank_id=bank, limit=100)
+            for pending in operations.operations:
+                if pending.status in {'pending', 'processing'}:
+                    try:
+                        await client.operations.cancel_operation(bank_id=bank, operation_id=pending.id)
+                    except Exception as exc:
+                        if getattr(exc, 'status', None) not in {404, 409}:
+                            raise
             await client.adelete_bank(bank_id=bank)
             listing = await client.banks.list_banks(q=bank, limit=100)
             report['deleted'] = not listing.banks

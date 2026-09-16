@@ -3,13 +3,15 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp import types
 
-from provenloop import cli
+from provenloop import cli, connection, mcp as memory_mcp
 
 
 class McpTests(unittest.TestCase):
@@ -69,3 +71,55 @@ class McpTests(unittest.TestCase):
                 result = await session('vscode', root, [a], changed_roots=[b])
                 self.assertTrue(result.is_error)
         asyncio.run(asyncio.wait_for(check(), timeout=120))
+
+
+class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
+    async def call_tools(self, config, action, sdk_client):
+        server = memory_mcp.FastMCP("Mail connection fixture")
+        with patch.object(connection, "load", return_value=config), \
+             patch.object(connection, "Hindsight", return_value=sdk_client) as constructor, \
+             patch.object(connection, "report", new=AsyncMock()), \
+             patch.object(memory_mcp, "FastMCP", return_value=server), \
+             patch.object(server, "run"):
+            memory_mcp.serve("vscode")
+            result = await action(server)
+        return result, constructor
+
+    async def test_recall_mail_uses_server_endpoint_auth_and_source_fact_options(self):
+        secret = "synthetic-server-mail-secret"
+        config = {"apiUrl": "https://memory.example.invalid", "apiToken": secret,
+                  "provenloop": {"mode": "server"}}
+        client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
+            model_dump=lambda **kwargs: {"results": [], "source_facts": {}})), aclose=AsyncMock())
+        async def action(server):
+            tool = await server.get_tool("recall_mail")
+            self.assertNotIn("bank_id", tool.parameters.get("properties", {}))
+            return await tool.fn(query="Mail finding", max_tokens=1024)
+        result, constructor = await self.call_tools(config, action, client)
+        constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=90)
+        client.arecall.assert_awaited_once()
+        arguments = client.arecall.await_args.kwargs
+        self.assertEqual(arguments["bank_id"], "provenloop-mail")
+        self.assertTrue(arguments["include_source_facts"])
+        self.assertTrue(arguments["prefer_observations"])
+        self.assertEqual(arguments["max_source_facts_tokens"], 512)
+        self.assertNotIn(secret, str(result))
+        client.aclose.assert_awaited_once()
+
+    async def test_fixed_client_cannot_bypass_its_bank_through_recall_mail(self):
+        config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-mail-secret",
+                  "provenloop": {"mode": "client", "bank": "allowed-shared-bank"}}
+        client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
+            model_dump=lambda **kwargs: {"results": []})), aclose=AsyncMock())
+        async def action(server):
+            mail = await server.get_tool("recall_mail")
+            with self.assertRaisesRegex(ValueError, "local mail-import installation"):
+                await mail.fn(query="Mail finding")
+            client.arecall.assert_not_awaited()
+            normal = await server.get_tool("recall")
+            return await normal.fn(query="Allowed shared finding", ctx=None, max_tokens=1024)
+        result, constructor = await self.call_tools(config, action, client)
+        constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=config["apiToken"], timeout=330)
+        self.assertEqual([item["bank"] for item in result["memories"]], ["allowed-shared-bank"])
+        self.assertEqual(client.arecall.await_args.kwargs["bank_id"], "allowed-shared-bank")
+        client.aclose.assert_awaited_once()

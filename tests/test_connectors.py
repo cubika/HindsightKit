@@ -4,10 +4,11 @@ from pathlib import Path
 import socket
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
+from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
-from provenloop import connectors
+from provenloop import connection, connectors
 
 
 class FakeSync:
@@ -91,6 +92,56 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConnectorLifecycleTests(unittest.TestCase):
+    def test_stop_waits_when_http_was_already_closed(self):
+        info = {'port':19078,'token':'token','instance':'instance'}
+        with patch.object(connectors, 'read_service', side_effect=[info, info, None, None]), \
+             patch.object(connectors, 'is_running', return_value=False), \
+             patch.object(connectors.time, 'sleep') as sleep, \
+             patch.object(connectors, 'service_request') as request:
+            connectors.stop(Path('unused'))
+        sleep.assert_called_once()
+        request.assert_not_called()
+
+    def test_stop_waits_for_worker_state_removal_after_http_stops(self):
+        info = {"port": 19078, "token": "local-csrf", "instance": "worker-instance"}
+        with patch.object(connectors, "read_service", side_effect=[info, info, info, None, None]), \
+             patch.object(connectors, "is_running", return_value=True), \
+             patch.object(connectors, "service_request") as request, \
+             patch.object(connectors.time, "sleep") as sleep:
+            connectors.stop(Path("unused-fixture-directory"))
+        request.assert_called_once_with(info, "/api/shutdown", post=True)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_stop_reports_unfinished_worker_without_forcing_termination(self):
+        info = {"port": 19078, "token": "local-csrf", "instance": "worker-instance"}
+        with patch.object(connectors, "read_service", return_value=info), \
+             patch.object(connectors, "is_running", return_value=True), \
+             patch.object(connectors, "service_request"), \
+             patch.object(connectors.time, "monotonic", side_effect=[0, 61]), \
+             patch.object(connectors.subprocess, "Popen") as spawn:
+            with self.assertRaisesRegex(RuntimeError, "Hindsight was left running"):
+                connectors.stop(Path("unused-fixture-directory"))
+        spawn.assert_not_called()
+
+    def test_child_argv_contains_only_origin_and_no_api_credential(self):
+        secret = "synthetic-server-api-secret"
+        with tempfile.TemporaryDirectory() as temp, socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+            listener.close()
+            process = Mock()
+            process.poll.return_value = None
+            with patch.object(connectors, "is_running", side_effect=[False, True]), \
+                 patch.object(connectors.subprocess, "Popen", return_value=process) as spawn, \
+                 patch.object(connection, "load", return_value={"apiUrl": "http://127.0.0.1:9077", "apiToken": secret}) as load:
+                connectors.ensure_running(Path(temp), "http://127.0.0.1:9077", "http://localhost:19077", port)
+            argv = spawn.call_args.args[0]
+            self.assertNotIn(secret, repr(spawn.call_args))
+            self.assertNotIn("--api-token", argv)
+            self.assertEqual(argv[argv.index("--api-url") + 1], "http://127.0.0.1:9077")
+            load.assert_not_called()
+            process.terminate.assert_not_called()
+
     def test_occupied_port_never_launches_or_kills_another_service(self):
         with tempfile.TemporaryDirectory() as temp, socket.socket() as listener:
             listener.bind(('127.0.0.1', 0))
@@ -102,6 +153,63 @@ class ConnectorLifecycleTests(unittest.TestCase):
                 spawn.assert_not_called()
             with socket.create_connection(('127.0.0.1', port), timeout=2):
                 pass
+
+
+class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_server_loads_authenticated_sdk_without_exposing_api_key_in_state(self):
+        secret = "synthetic-server-api-secret"
+        config = {"apiUrl": "http://127.0.0.1:9077", "apiToken": secret, "provenloop": {"mode": "server"}}
+        sdk_client = Mock()
+        sync = FakeSync()
+        sync.boot, sync.close = AsyncMock(), AsyncMock()
+        with tempfile.TemporaryDirectory() as temp, socket.socket() as listener:
+            directory = Path(temp)
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+            listener.close()
+            with patch.object(connection, "load", return_value=config), \
+                 patch.object(connection, "sdk", wraps=connection.sdk) as sdk, \
+                 patch.object(connection, "Hindsight", return_value=sdk_client) as hindsight, \
+                 patch("provenloop.mail_sync.MailSync", return_value=sync) as make_sync:
+                service = asyncio.create_task(connectors.serve(directory, config["apiUrl"], "http://localhost:19077", port))
+                try:
+                    for _ in range(200):
+                        if (directory / "service.json").exists(): break
+                        if service.done(): await service
+                        await asyncio.sleep(0.01)
+                    record = connectors.read_service(directory)
+                    self.assertIsNotNone(record)
+                    sdk.assert_called_once_with(config, timeout=120)
+                    hindsight.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=120)
+                    make_sync.assert_called_once_with(directory, config["apiUrl"], client=sdk_client)
+                    self.assertNotIn(secret, (directory / "service.json").read_text())
+                    async with ClientSession() as client:
+                        async with client.get(f"http://127.0.0.1:{port}/api/status") as response:
+                            self.assertEqual(response.status, 200)
+                            self.assertNotIn(secret, await response.text())
+                        async with client.post(f"http://127.0.0.1:{port}/api/shutdown",
+                                               headers={"X-ProvenLoop-Token": record["token"]}) as response:
+                            self.assertEqual(response.status, 200)
+                    await asyncio.wait_for(service, 3)
+                    self.assertFalse((directory / "service.json").exists())
+                    sync.boot.assert_awaited_once()
+                    sync.close.assert_awaited_once()
+                finally:
+                    if not service.done(): service.cancel()
+                    await asyncio.gather(service, return_exceptions=True)
+
+    async def test_client_installation_rejected_before_sdk_or_mail_runner_created(self):
+        config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-secret",
+                  "provenloop": {"mode": "client", "bank": "shared-on-server"}}
+        with tempfile.TemporaryDirectory() as temp, \
+             patch.object(connection, "load", return_value=config), \
+             patch.object(connection, "sdk") as sdk, \
+             patch("provenloop.mail_sync.MailSync") as runner:
+            with self.assertRaisesRegex(RuntimeError, "local Hindsight server"):
+                await connectors.serve(Path(temp), config["apiUrl"], "http://localhost:19077", 19078)
+            sdk.assert_not_called()
+            runner.assert_not_called()
+            self.assertFalse((Path(temp) / "service.json").exists())
 
 
 if __name__ == '__main__':

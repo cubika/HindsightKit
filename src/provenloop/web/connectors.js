@@ -23,8 +23,15 @@
     "Candidate for Hindsight extraction": "待提取：由 Hindsight 判断是否保留记忆。",
     draft: "已跳过：草稿。",
     empty_or_courtesy: "已跳过：正文为空，或仅包含礼貌回复。",
+    review_request_only: "已跳过：仅请求审查，没有具体技术发现。",
     meeting_join_details: "已跳过：仅包含会议加入信息。",
     routine_monitor_notification: "已跳过：常规监控通知。",
+  };
+  const failureLabels = {
+    workiq_protected_body_unavailable: "邮件受保护或已加密，WorkIQ 无法读取正文。",
+    workiq_body_too_large: "正文过大，超出当前读取范围。",
+    workiq_complete_body_missing: "未能取得完整正文，暂未导入。",
+    workiq_mail_not_found: "未找到这封邮件，可能已被移动或删除。",
   };
   const numberFormat = new Intl.NumberFormat("zh-CN");
   const dateFormat = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
@@ -32,6 +39,7 @@
   let folders = [];
   let selected = new Set();
   let folderSignature = "";
+  let failureSignature = "";
   let dirty = false;
   let busy = false;
   let requestError = "";
@@ -139,6 +147,30 @@
     byId("warning-banner").hidden = !warnings.length;
   }
 
+  function renderFailures() {
+    const failures = Array.isArray(snapshot.failures) ? snapshot.failures.filter((item) => item && typeof item === "object").slice(0, 10) : [];
+    const signature = JSON.stringify(failures);
+    if (signature === failureSignature) return;
+    failureSignature = signature;
+    const panel = byId("failures-panel");
+    const fragment = document.createDocumentFragment();
+    for (const failure of failures) {
+      const item = document.createElement("li");
+      const subject = document.createElement("p");
+      subject.className = "failure-subject";
+      subject.textContent = plainText(failure.subject) || "无主题邮件";
+      const reason = document.createElement("p");
+      reason.className = "failure-reason";
+      reason.textContent = failureLabels[failure.reason] || "暂时无法读取正文，请稍后重试。";
+      item.append(subject, reason);
+      fragment.append(item);
+    }
+    byId("failures-list").replaceChildren(fragment);
+    byId("failures-count").textContent = `${failures.length} 封`;
+    panel.hidden = !failures.length;
+    if (!failures.length) panel.open = false;
+  }
+
   function renderTime(id, value, fallback) {
     const element = byId(id);
     const date = typeof value === "string" ? new Date(value) : null;
@@ -190,6 +222,7 @@
     byId("connection-status").textContent = "已连接本地服务 · 每 5 秒更新";
     renderErrors();
     renderWarnings();
+    renderFailures();
     updateControls();
   }
 

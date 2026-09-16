@@ -87,7 +87,9 @@
       <section class="panel activity-panel" aria-labelledby="activity-heading">
         <div class="panel-heading"><div><h2 id="activity-heading">同步状态</h2><span class="heading-caption">最近一次扫描</span></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>立即同步</span></button></div>
         <dl class="stats-grid"><div><dt>已扫描</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>已导入</dt><dd id="stat-imported">—</dd></div><div><dt>已跳过</dt><dd id="stat-skipped">—</dd></div><div><dt>失败</dt><dd id="stat-failed">—</dd></div><div><dt>待处理</dt><dd id="stat-pending">—</dd></div></dl>
+        <p class="field-help">已导入的内容可以搜索；Hindsight 会继续在后台归纳。</p>
         <div class="run-details"><p><span>上次成功</span><time id="last-success">尚未完成同步</time></p><p><span>下次同步</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>查看邮件记忆<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">（新窗口）</span></a></div>
+        <details id="failures-panel" class="mail-failures" hidden><summary>未能读取的邮件<span id="failures-count" class="count-tag"></span></summary><ul id="failures-list"></ul></details>
       </section>
 
       <section id="preview-panel" class="panel preview-panel" aria-labelledby="preview-heading" tabindex="-1" hidden>

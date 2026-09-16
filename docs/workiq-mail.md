@@ -4,11 +4,11 @@ ProvenLoop adds one optional mail importer around the official WorkIQ and Hindsi
 
 ## Configuration and lifecycle
 
-`provenloop connectors` opens a local settings page and starts its background process. Closing the browser leaves synchronization running. The page shows the current WorkIQ account without an account selector. A changed account pauses existing work until the mailbox is checked again. Credentials remain with WorkIQ.
+`provenloop connectors` opens a local settings page on the server installation and starts its background process. Closing the browser leaves synchronization running. The page shows the current WorkIQ account without an account selector. Each run checks the current account, then binds all reads to that account. A changed default account pauses the next run. Credentials remain with WorkIQ.
 
 The user selects folders, a historical lookback in days, and a future synchronization interval in minutes. Zero minutes means manual synchronization. The initial preferences select Inbox and the DSAPISOT subtree, excluding the Sev3 and PullRequests subtrees beneath DSAPISOT. Names are matched against the actual mailbox; unresolved names are shown rather than silently replaced.
 
-Starting a connection fixes its historical start date. Each scan has a fixed upper bound and resumes incomplete pages before beginning another window. Folder changes apply to future reads; they do not silently erase prior memory. A short overlap catches delayed mail. Delta is enabled only after the current WorkIQ path, pagination, and restart behavior have been verified; window polling must not claim deletion tracking. A missing message or a folder removal is not proof of permanent mailbox deletion.
+Starting a connection fixes its historical start date. Each scan has a fixed upper bound and resumes incomplete pages before beginning another window. Folder changes apply to future reads; they do not erase prior memory. Extending the lookback backfills the expanded range. A six-hour overlap catches delayed mail. This implementation uses window polling, not delta or deletion tracking. A missing message or a folder removal is not proof of permanent mailbox deletion.
 
 The process exposes only loopback HTTP, checks local requests, and never lets a model choose mailbox paths or tools. It uses the current account to discover identity, then binds reads to that verified account. It does not execute mail instructions, send mail, download attachments, or follow body links.
 
@@ -16,11 +16,13 @@ The process exposes only loopback HTTP, checks local requests, and never lets a 
 
 Fetch structured metadata before bodies. Skip unchanged content, drafts, excluded folders, and previously rejected source versions. Reuse the WorkIQ MCP session and bound body concurrency. Clean HTML deterministically, removing remote and executable markup, recipient headers, signatures, boilerplate, and repeated quoted material. Preserve actual findings, conditions, ownership, and dates. Attribution and source URLs are metadata, not a pasted From/To envelope. Never pass bodyPreview off as complete text.
 
-Evaluate complete threads and substantive short replies. Courtesy messages, event promotion, surveys, and routine notifications should yield no memory unless they contain an actual work finding. Treat plans, reported results, uncertainty, and later corrections distinctly. Use Hindsight bank extraction instructions first; add further screening only if actual samples show that it improves accuracy at an acceptable cost.
+Courtesy messages, event promotion, surveys, and routine notifications should yield no memory unless they contain an actual work finding. Treat plans, reported results, uncertainty, and later corrections distinctly. Hindsight receives bounded JSONL records that keep the current author/date separate from unknown historical quotation. A short current reply can qualify quoted evidence. Exact quotation hashes already imported in the same thread mark that text as context only. Only one message per thread is submitted in a batch. The ledger stores hashes, not a second copy of accepted text.
+
+The mail bank uses custom extraction instructions, 4,000-character chunks, and explicit consolidation after the scan, so extraction does not compete with consolidation throughout a backfill. Raw facts become searchable before consolidation completes. Recall uses native keyword and semantic retrieval, disables graph and temporal expansion for this bank, prefers observations over their supporting facts, and includes source facts for attribution. Precise log timestamps should be checked in the source text; Hindsight's structured event timestamps are not a lossless log index.
 
 Import into a dedicated mail bank with stable source document IDs and source metadata. Revisions replace the same document; duplicate retries reuse an operation UUID. The local operational ledger stores settings, versions, cursors, and bounded pending payloads, not a second searchable memory store. Commit a page checkpoint only after its work is durable. Mark a document imported only after the official operation completes without extraction errors. Track consolidation separately. Remove empty, noise-only test documents and retain no rejected mail body indefinitely.
 
-Make imported mail accessible through a read-only mail recall tool in the existing MCP server. Repository retain and shared memory routing stay intact. Link the settings page to the official Hindsight bank view.
+Imported mail is accessible through a read-only `recall_mail` tool in the local MCP server. Fixed-bank remote clients do not gain access to this separate mail bank. Repository retain and shared memory routing stay intact. The settings page links to the official Hindsight bank view.
 
 ## Interface
 

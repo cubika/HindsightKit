@@ -522,6 +522,13 @@ def normalize_message(raw, mailbox_id):
     source_text = html_to_text(body["content"]) if body["contentType"].casefold() == "html" else body["content"]
     content, quoted = clean_text(source_text)
     reason = "draft" if raw["isDraft"] else "empty_or_courtesy" if not content else None
+    # A short review request that merely repeats the PR title contains no finding.
+    # Comments explaining a defect, condition or decision must remain eligible.
+    if (not quoted and len(content) < 700 and
+            re.search(r'please review (?:the following|this) (?:PR|pull request)', content, re.I) and
+            re.search(r'(?:feedback and approval|when you have a chance)', content, re.I) and
+            not re.search(r'\b(?:because|if|unless|regression|fails?|bug|breaks?|tested|confirmed|decision|must|blocked)\b', content, re.I)):
+        reason = 'review_request_only'
     # A bare meeting transport block has no meeting notes or work evidence.
     if re.search(r"Microsoft Teams (?:meeting|会议)", content):
         remainder = [line for line in content.splitlines() if not _TEAMS.match(line)]

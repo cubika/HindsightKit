@@ -29,6 +29,12 @@ def mail(**changes):
 
 
 class CleaningTests(unittest.TestCase):
+    def test_bare_review_request_skipped_but_technical_reason_retained(self):
+        text = 'Could you please review the following PR when you have a chance? This change provisions a mailbox. Your feedback and approval would be appreciated.'
+        self.assertEqual(normalize_message(mail(body={'contentType':'text','content':text}), 'mailbox')['skip_reason'], 'review_request_only')
+        value = normalize_message(mail(body={'contentType':'text','content':text + ' This fixes a regression because clients fail.'}), 'mailbox')
+        self.assertIsNone(value['skip_reason'])
+
     def test_html_removes_hidden_and_executable_but_keeps_content(self):
         content = html_to_text("<head>hidden title</head><p>A &amp; B</p><div style='display: none'>tracking</div><script>bad()</script><p>Do not migrate unless ready.</p><img src='https://tracker.test'>")
         self.assertIn("A & B", content)
