@@ -10,7 +10,7 @@ from pathlib import Path
 import sqlite3
 import uuid
 
-MAIL_BANK = "provenloop-mail"
+MAIL_BANK = "hindsightkit-mail"
 PAGE_SIZE = 25
 BATCH_SIZE = 3
 MAX_PENDING = 50

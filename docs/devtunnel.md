@@ -1,6 +1,6 @@
 # Connect Dev Boxes with Dev Tunnels
 
-Use this when the coding machine cannot reach the memory server directly. Both machines connect out to Microsoft Dev Tunnels. ProvenLoop connects to the local port created on the coding machine; it does not need a tunnel ID in its settings.
+Use this when the coding machine cannot reach the memory server directly. Both machines connect out to Microsoft Dev Tunnels. HindsightKit connects to the local port created on the coding machine; it does not need a tunnel ID in its settings.
 
 This guide uses the default API port, 9077. Only the memory API is forwarded. The database and dashboard stay on the server.
 
@@ -17,14 +17,14 @@ Use the intended company account on both Dev Boxes. The default tunnel is privat
 
 ## 2. Start the memory server and tunnel
 
-On the machine that stores memory, run from the ProvenLoop checkout:
+On the machine that stores memory, run from the HindsightKit checkout:
 
 ```powershell
 .\setup.ps1
-provenloop status
+hindsightkit status
 ```
 
-Setup starts the server and reports the location of its connection key. The default key file is `%USERPROFILE%\.provenloop\server\connection-key.txt`. Share this value privately with your coding machine; it is the ProvenLoop key, separate from the Dev Tunnels login. Keep it out of Git and command-line arguments.
+Setup starts the server and reports the location of its connection key. The default key file is `%USERPROFILE%\.hindsightkit\server\connection-key.txt`. Share this value privately with your coding machine; it is the HindsightKit key, separate from the Dev Tunnels login. Keep it out of Git and command-line arguments.
 
 In a terminal on the server, run:
 
@@ -43,14 +43,14 @@ $tunnelId = 'ID-FROM-SERVER-OUTPUT'
 devtunnel connect $tunnelId
 ```
 
-Keep this process running. Check its output for the local forwarded port. For port 9077, open another terminal in the ProvenLoop checkout and run:
+Keep this process running. Check its output for the local forwarded port. For port 9077, open another terminal in the HindsightKit checkout and run:
 
 ```powershell
 .\setup.ps1 -Server http://127.0.0.1:9077
-provenloop status
+hindsightkit status
 ```
 
-Enter the server's ProvenLoop connection key at the hidden prompt. The machine name and memory routing are automatic. If the forwarded local port differs, use that port in the URL.
+Enter the server's HindsightKit connection key at the hidden prompt. The machine name and memory routing are automatic. If the forwarded local port differs, use that port in the URL.
 
 The `-Server` value is the local forwarded HTTP address. Do not use the tunnel ID, the server's private IP, or the browser forwarding URL ending in `devtunnels.ms` for this workflow. The Dev Tunnels CLI handles tunnel authentication before forwarding requests.
 
@@ -61,18 +61,18 @@ Reload VS Code and open a fresh Copilot CLI session after client setup. Clients 
 On the memory server:
 
 ```powershell
-provenloop clients
+hindsightkit clients
 ```
 
 The coding machine should appear with its registered integrations. After a successful memory query, its last-use time should update. This list reports recent use, not open windows or live tunnel connections.
 
-On the client, `provenloop check` performs a retain/recall check using a temporary bank, then removes it. It uses a small amount of the server's Copilot allowance.
+On the client, `hindsightkit check` performs a retain/recall check using a temporary bank, then removes it. It uses a small amount of the server's Copilot allowance.
 
 To check sharing between coding clients, start fresh sessions outside Git on both machines, save a unique test fact on one, and recall it on the other. For repository memory, use clones with the same Git origin. Remove the test document through the server dashboard afterward.
 
 ## Reconnect and troubleshoot
 
-The Hindsight server and both `devtunnel` processes must remain running. After a server reboot, run `provenloop start`, host the tunnel again, then reconnect the coding machine. The temporary host command may produce a new tunnel ID; the saved ProvenLoop URL remains usable if the forwarded local port stays the same.
+The Hindsight server and both `devtunnel` processes must remain running. After a server reboot, run `hindsightkit start`, host the tunnel again, then reconnect the coding machine. The temporary host command may produce a new tunnel ID; the saved HindsightKit URL remains usable if the forwarded local port stays the same.
 
 For a reusable tunnel ID, create a persistent tunnel once on the server:
 
@@ -87,12 +87,12 @@ Record the ID returned by `create`. On subsequent runs, use `devtunnel host YOUR
 | --- | --- |
 | Tunnel cannot connect | Both accounts match, the host process is running, and company policy permits the [required outbound domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains). |
 | Local port is occupied | Stop the conflicting local service or use the actual port reported by the forwarding CLI. Do not install a second Hindsight server on a client just to resolve this. |
-| ProvenLoop reports HTTP 401 | Enter the memory server's connection key, not a tunnel token. |
-| Memory connection is refused | Check both tunnel processes and run `provenloop status` on the server. |
+| HindsightKit reports HTTP 401 | Enter the memory server's connection key, not a tunnel token. |
+| Memory connection is refused | Check both tunnel processes and run `hindsightkit status` on the server. |
 | Forwarded port changes | Rerun client setup with the new `-Server` URL, then restart coding sessions. |
 
 ## Validation scope
 
-The commands were checked against [Microsoft's CLI documentation](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands). Automated ProvenLoop tests cover authenticated HTTP, local TCP forwarding, and client configuration. Real cross-Dev-Box relay access, company sign-in policy, and reconnect behaviour remain to be tested.
+The commands were checked against [Microsoft's CLI documentation](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands). Automated HindsightKit tests cover authenticated HTTP, local TCP forwarding, and client configuration. Real cross-Dev-Box relay access, company sign-in policy, and reconnect behaviour remain to be tested.
 
 Microsoft positions [Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/overview) for development and testing. See [server and client setup](shared-memory.md) for direct network access and the underlying installation behaviour.

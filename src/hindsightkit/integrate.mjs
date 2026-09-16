@@ -25,7 +25,7 @@ function edit(path, changes) {
   }
   if (text === original) return;
   mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path) && !existsSync(path + '.provenloop-backup')) copyFileSync(path, path + '.provenloop-backup');
+  if (existsSync(path) && !existsSync(path + '.hindsightkit-backup')) copyFileSync(path, path + '.hindsightkit-backup');
   writeFileSync(path, text, 'utf8');
 }
 
@@ -33,11 +33,11 @@ if (action === 'preflight') {
   const [mcpPath, cliPath, configPath, apiUrl, replace] = args;
   for (const path of [mcpPath, cliPath, configPath]) read(path);
   const vs = read(mcpPath).value.servers?.hindsight;
-  if (vs && !vs.args?.includes('provenloop.cli')) {
+  if (vs && !vs.args?.includes('hindsightkit.cli')) {
     throw new Error('Existing Hindsight endpoint differs in ' + mcpPath);
   }
   const cli = read(cliPath).value.mcpServers?.hindsight;
-  if (cli && !cli.args?.includes('provenloop.cli') && !cli.args?.some(a => typeof a === 'string' && /(?:coding-agents|hindsight-coding-agents)[\\/]dist[\\/]mcp-server\.js$/.test(a))) {
+  if (cli && !cli.args?.includes('hindsightkit.cli') && !cli.args?.some(a => typeof a === 'string' && /(?:coding-agents|hindsight-coding-agents)[\\/]dist[\\/]mcp-server\.js$/.test(a))) {
     throw new Error('Existing server named hindsight is not the official coding-agents integration: ' + cliPath);
   }
   const cfg = read(configPath).value;
@@ -45,19 +45,19 @@ if (action === 'preflight') {
     try { JSON.parse(readFileSync(configPath, 'utf8')); }
     catch { throw new Error('Official coding-agents requires strict JSON in ' + configPath + '. Remove comments/trailing commas/BOM before setup.'); }
   }
-  if (cfg.apiUrl && cfg.apiUrl.replace(/\/$/, '') !== apiUrl && !(replace === 'replace' && cfg.provenloop)) throw new Error('Hindsight already uses another endpoint in ' + configPath);
+  if (cfg.apiUrl && cfg.apiUrl.replace(/\/$/, '') !== apiUrl && !(replace === 'replace' && cfg.hindsightkit)) throw new Error('Hindsight already uses another endpoint in ' + configPath);
   if (cfg.serverMode && cfg.serverMode !== 'self-hosted') throw new Error('Existing Hindsight serverMode conflicts in ' + configPath);
-  if (cfg.disabled || cfg.retainSessions === false || (cfg.apiToken && !cfg.provenloop) || cfg.bankId ||
+  if (cfg.disabled || cfg.retainSessions === false || (cfg.apiToken && !cfg.hindsightkit) || cfg.bankId ||
       Object.keys(cfg.harnesses ?? {}).length || Object.keys(cfg.banks ?? {}).length) {
     throw new Error('Existing Hindsight overrides disable learning or change routing/authentication in ' + configPath);
   }
   for (const bank of Object.values(cfg.mapPathToBank ?? {})) {
-    if (!/^provenloop-[0-9a-f]{12}$/.test(bank)) throw new Error('An unrelated memory mapping exists in ' + configPath);
+    if (!/^hindsightkit-[0-9a-f]{12}$/.test(bank)) throw new Error('An unrelated memory mapping exists in ' + configPath);
   }
 } else if (action === 'vscode') {
   const [path, python, configPath] = args;
   edit(path, [[['servers', 'hindsight'], { type: 'stdio', command: python,
-    args: ['-m', 'provenloop.cli', 'mcp', '--context', 'vscode'],
+    args: ['-m', 'hindsightkit.cli', 'mcp', '--context', 'vscode'],
     ...(configPath ? { env: { HINDSIGHT_CONFIG: configPath } } : {}) }]]);
 } else if (action === 'config') {
   const [path, apiUrl] = args;
@@ -68,7 +68,7 @@ if (action === 'preflight') {
   const changes = Object.entries(defaults).filter(([key]) => !(key in cfg)).map(([key, value]) => [[key], value]);
   changes.push([['optInOnly'], false], [['mapPathToBank'], undefined], [['optInPaths'], undefined]);
   changes.push([['apiUrl'], apiUrl]);
-  for (const key of ['apiToken', 'provenloop']) if (key in settings) changes.push([[key], settings[key]]);
+  for (const key of ['apiToken', 'hindsightkit']) if (key in settings) changes.push([[key], settings[key]]);
   edit(path, changes);
 } else if (action === 'remove-project') {
   const [path, apiUrl, bank] = args;
@@ -92,7 +92,7 @@ if (action === 'preflight') {
   if (code) throw new Error('Official Copilot installer failed: ' + code);
   const entry = read(join(stage, '.copilot/mcp-config.json')).value.mcpServers.hindsight;
   entry.command = python;
-  entry.args = ['-m', 'provenloop.cli', 'mcp', '--context', 'cli'];
+  entry.args = ['-m', 'hindsightkit.cli', 'mcp', '--context', 'cli'];
   entry.env = { ...entry.env, HINDSIGHT_CONFIG: configPath };
   const hooksPath = join(stage, '.copilot/hooks/hindsight-coding-agents.json');
   const hooks = read(hooksPath).value;
@@ -104,7 +104,7 @@ if (action === 'preflight') {
       if (!match) throw new Error('Unexpected official Copilot hook command.');
       hook.type = 'command';
       hook.exec = python;
-      hook.args = ['-m', 'provenloop.cli', 'hook', event];
+      hook.args = ['-m', 'hindsightkit.cli', 'hook', event];
       hook.timeoutSec = hook.timeout;
       hook.env = { ...hook.env, HINDSIGHT_CONFIG: configPath };
       delete hook.command;
@@ -116,7 +116,7 @@ if (action === 'preflight') {
   for (const [event, additions] of Object.entries(hooks.hooks)) {
     const keep = (oldHooks[event] ?? []).filter(hook => {
       const script = hook.args?.[0] ?? hook.command ?? '';
-      return !/copilot-(?:sessionstart-|stop-)?hook\.js/.test(script) && !hook.args?.includes('provenloop.cli');
+      return !/copilot-(?:sessionstart-|stop-)?hook\.js/.test(script) && !hook.args?.includes('hindsightkit.cli');
     });
     mergedHooks[event] = [...keep, ...additions];
   }
@@ -133,7 +133,7 @@ if (action === 'preflight') {
   const [mcpPath, configPath, python] = args;
   const vs = read(mcpPath).value.servers?.hindsight;
   const cfg = read(configPath).value;
-  if (vs?.command !== python || !vs.args?.includes('provenloop.cli') ||
+  if (vs?.command !== python || !vs.args?.includes('hindsightkit.cli') ||
       cfg.optInOnly !== false || cfg.bankId || cfg.mapPathToBank) {
     throw new Error('Copilot is not configured for automatic repository routing.');
   }

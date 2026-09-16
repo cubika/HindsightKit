@@ -8,10 +8,10 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from provenloop import cli
-from provenloop.memory import scope_for, Scope, SHARED_BANK
-from provenloop.routing import repository_identity, seed_aliases, resolve
-from provenloop.server import ClientsExtension
+from hindsightkit import cli
+from hindsightkit.memory import scope_for, Scope, SHARED_BANK
+from hindsightkit.routing import repository_identity, seed_aliases, resolve
+from hindsightkit.server import ClientsExtension
 
 
 class RoutingTests(unittest.TestCase):
@@ -36,7 +36,7 @@ class RoutingTests(unittest.TestCase):
             selected = scope_for(root)
             sessions = root / 'sessions'
             sessions.mkdir()
-            for name, bank in [('old', selected.bank), ('new', 'provenloop-repo-new-identity')]:
+            for name, bank in [('old', selected.bank), ('new', 'hindsightkit-repo-new-identity')]:
                 (sessions / (name + '.json')).write_text(json.dumps({'_repository': str(root), 'bankId': bank}))
             aliases = root / 'repositories.json'
             seed_aliases(aliases, sessions, {}, 'device-one')
@@ -62,15 +62,15 @@ class RoutingTests(unittest.TestCase):
             app = FastAPI()
             app.include_router(ext.get_router(None), prefix='/ext')
             with patch.dict(os.environ, {'HINDSIGHT_API_TENANT_API_KEY': 'test-key'}), TestClient(app) as client:
-                self.assertEqual(client.get('/ext/provenloop/connection').status_code, 401)
+                self.assertEqual(client.get('/ext/hindsightkit/connection').status_code, 401)
                 headers = {'Authorization': 'Bearer test-key'}
-                discovery = client.get('/ext/provenloop/connection', headers=headers).json()
+                discovery = client.get('/ext/hindsightkit/connection', headers=headers).json()
                 self.assertEqual(discovery['routing'], 'repository')
                 for selected in [first, second]:
-                    result = client.post('/ext/provenloop/scope', headers=headers, json={'repository': repository_identity(selected)})
+                    result = client.post('/ext/hindsightkit/scope', headers=headers, json={'repository': repository_identity(selected)})
                     self.assertEqual(result.json(), {'bank': first.bank, 'sharedBank': SHARED_BANK})
-                self.assertEqual(client.post('/ext/provenloop/scope', headers=headers, json={}).json()['bank'], SHARED_BANK)
-                self.assertEqual(client.post('/ext/provenloop/scope', headers=headers, json={'repository': '../../other'}).status_code, 422)
+                self.assertEqual(client.post('/ext/hindsightkit/scope', headers=headers, json={}).json()['bank'], SHARED_BANK)
+                self.assertEqual(client.post('/ext/hindsightkit/scope', headers=headers, json={'repository': '../../other'}).status_code, 422)
             self.assertEqual(json.loads(aliases.read_text())[repository_identity(first)], first.bank)
 
     def test_no_origin_repositories_stay_device_scoped_and_nonrepo_uses_shared(self):
@@ -81,10 +81,10 @@ class RoutingTests(unittest.TestCase):
             async def request(config, method, path, body):
                 requests.append(body)
                 return {'bank': 'repo-test' if body['repository'] else SHARED_BANK, 'sharedBank': SHARED_BANK}
-            with patch('provenloop.connection.request', request):
+            with patch('hindsightkit.connection.request', request):
                 for device in ['one', 'two']:
-                    asyncio.run(resolve({'provenloop': {'routing': 'repository', 'deviceId': device}}, scope_for(root)))
-                shared = asyncio.run(resolve({'provenloop': {'routing': 'repository'}}, Scope(SHARED_BANK)))
+                    asyncio.run(resolve({'hindsightkit': {'routing': 'repository', 'deviceId': device}}, scope_for(root)))
+                shared = asyncio.run(resolve({'hindsightkit': {'routing': 'repository'}}, Scope(SHARED_BANK)))
             self.assertNotEqual(requests[0]['repository'], requests[1]['repository'])
             self.assertIsNone(requests[2]['repository'])
             self.assertEqual(shared.readable_banks, (SHARED_BANK,))

@@ -1,10 +1,10 @@
 # WorkIQ mail
 
-ProvenLoop's optional WorkIQ adapter implements the [connector contract](connectors.md). Hindsight continues to own memory extraction, consolidation, storage, and recall. The adapter owns mailbox scope, text cleanup, reliable delivery, and its local settings page. WorkIQ must already be installed before the adapter can run. It does not modify the official Hindsight UI.
+HindsightKit's optional WorkIQ adapter implements the [connector contract](connectors.md). Hindsight continues to own memory extraction, consolidation, storage, and recall. The adapter owns mailbox scope, text cleanup, reliable delivery, and its local settings page. WorkIQ must already be installed before the adapter can run. It does not modify the official Hindsight UI.
 
 ## Configuration and lifecycle
 
-`provenloop connectors` opens a local settings page on the server installation and starts its background process. Closing the browser leaves synchronization running. The page shows the current WorkIQ account without an account selector. Each run checks the current account, then binds all reads to that account. A changed default account pauses the next run. Credentials remain with WorkIQ.
+`hindsightkit connectors` opens a local settings page on the server installation and starts its background process. Closing the browser leaves synchronization running. The page shows the current WorkIQ account without an account selector. Each run checks the current account, then binds all reads to that account. A changed default account pauses the next run. Credentials remain with WorkIQ.
 
 The user selects folders, a historical lookback in days, and a future synchronization interval in minutes. Zero minutes means manual synchronization. The initial preferences select Inbox and the DSAPISOT subtree, excluding the Sev3 and PullRequests subtrees beneath DSAPISOT. Names are matched against the actual mailbox; unresolved names are shown rather than silently replaced.
 
@@ -54,6 +54,6 @@ Model latency remains the main constraint. This test establishes useful extracti
 
 A separate one-day scan through the real source and a recording test receiver processed 49 emails: 39 candidates, two deterministic skips, and eight protected bodies. After fixing a metadata/body revision race, repeating the scan submitted no unchanged content and kept the eight protected items visible for retry. This check did not call a model.
 
-### Retained demonstration, September 17, 2026
+### Demonstration, September 17, 2026
 
-At the user's request to inspect actual imported data, a new bounded selection of nine real messages was processed through the production WorkIQ reader and durable mail queue into `provenloop-mail`. Five source documents remain, containing 11 source facts and nine observations; four messages were skipped and no pending or failed deliveries remained. Extraction took 161.7 seconds. Official API reads confirmed completed consolidation, preserved Outlook source links, and useful recall for API propagation, payload compatibility, and queue diagnostics. These successful records are deliberately retained for the user, unlike the disposable test banks above. The scan covered a selected sample, not the full configured seven-day range. Automatic synchronization remains off.
+A bounded selection of nine real messages was processed through the production WorkIQ reader and durable mail queue. Five source documents contained 11 source facts and nine observations; four messages were skipped and no pending or failed deliveries remained. Extraction took 161.7 seconds. Official API reads confirmed completed consolidation, preserved Outlook source links, and useful recall for API propagation, payload compatibility, and queue diagnostics. The scan covered a selected sample, not the full configured seven-day range. This was test data; the project rename resets the local installation instead of carrying it forward. Automatic synchronization remains off.

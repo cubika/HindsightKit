@@ -76,7 +76,7 @@ try {
     if (-not $clientOnly -or $hadServer) { $syncArgs += @('--extra', 'server') }
     Invoke-Checked $uvBinary $syncArgs
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
-    $setupArgs = @('-m', 'provenloop.cli', 'setup')
+    $setupArgs = @('-m', 'hindsightkit.cli', 'setup')
     if ($Model) { $setupArgs += @('--model', $Model) }
     if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }
@@ -85,10 +85,10 @@ try {
     if ($ApiKeyEnv) { $setupArgs += @('--api-key-env', $ApiKeyEnv) }
     if ($NoOpen) { $setupArgs += '--no-open' }
     Invoke-Checked $python $setupArgs
-    $commandRoot = if ($env:PROVENLOOP_HOME) { $env:PROVENLOOP_HOME } else { Join-Path $env:USERPROFILE '.provenloop' }
+    $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
     $commandDirectory = Join-Path $commandRoot 'bin'
     $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
-    Invoke-Checked 'provenloop' @('--help')
+    Invoke-Checked 'hindsightkit' @('--help')
 } catch {
     Write-Error $_
     exit 1

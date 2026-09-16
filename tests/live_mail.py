@@ -12,9 +12,9 @@ import time
 import uuid
 
 from hindsight_client import Hindsight
-from provenloop.cli import profile_config
-from provenloop.mail_source import normalize_message
-from provenloop.mail_sync import RETAIN_MISSION, RETAIN_INSTRUCTIONS, OBSERVATIONS_MISSION, MailSync
+from hindsightkit.cli import profile_config
+from hindsightkit.mail_source import normalize_message
+from hindsightkit.mail_sync import RETAIN_MISSION, RETAIN_INSTRUCTIONS, OBSERVATIONS_MISSION, MailSync
 
 
 async def evaluate(args):
@@ -23,7 +23,7 @@ async def evaluate(args):
     output.mkdir(parents=True, exist_ok=True)
     _, paths = profile_config()
     client = Hindsight(base_url=f'http://127.0.0.1:{paths.port}', timeout=180)
-    bank = 'provenloop-mail-test-' + uuid.uuid4().hex[:12]
+    bank = 'hindsightkit-mail-test-' + uuid.uuid4().hex[:12]
     report = {'bank': bank, 'documents': [], 'queries': [], 'deleted': False}
     started = time.monotonic()
 

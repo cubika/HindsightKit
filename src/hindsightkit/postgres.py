@@ -146,7 +146,7 @@ class Postgres:
                      '--data-checksums', '--pwfile', password_file], sensitive=(state['admin_password'],))
             with (stage / 'postgresql.conf').open('a', encoding='utf-8') as config:
                 config.write(
-                    "\n# ProvenLoop standalone PostgreSQL\nlisten_addresses = '127.0.0.1'\n"
+                    "\n# HindsightKit standalone PostgreSQL\nlisten_addresses = '127.0.0.1'\n"
                     f"port = {int(state['port'])}\npassword_encryption = 'scram-sha-256'\n"
                     "shared_preload_libraries = 'pg_stat_statements'\ncompute_query_id = auto\n"
                 )
@@ -164,7 +164,7 @@ class Postgres:
     def start(self):
         reject_links(self.data)
         if not self.state_path.is_file() or not self.data.is_dir():
-            raise RuntimeError('Standalone PostgreSQL is not configured. Run provenloop setup.')
+            raise RuntimeError('Standalone PostgreSQL is not configured. Run hindsightkit setup.')
         if not self.running():
             with socket.socket() as listener:
                 try:
@@ -239,7 +239,7 @@ def configured_url(config):
 def require_postgresql(config):
     value = configured_url(config)
     if urlsplit(value).scheme not in ('postgresql', 'postgres'):
-        raise RuntimeError('A PostgreSQL connection is required. Run provenloop setup to configure it.')
+        raise RuntimeError('A PostgreSQL connection is required. Run hindsightkit setup to configure it.')
     return value
 
 

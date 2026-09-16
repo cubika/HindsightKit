@@ -29,7 +29,7 @@ def serve(context: str, directory: str | None = None):
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
                     'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
-    server = FastMCP('ProvenLoop', instructions=instructions)
+    server = FastMCP('HindsightKit', instructions=instructions)
     # A CLI process inherits the agent's launch cwd. VS Code supplies MCP roots.
     scope = Scope(connection.fixed_bank(config)) if connection.fixed_bank(config) else None
     if context == 'cli' and scope is None:

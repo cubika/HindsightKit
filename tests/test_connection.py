@@ -18,13 +18,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hindsight_client_api.exceptions import ApiException
 
-from provenloop import connection
-from provenloop.server import Activity, ClientsExtension, Inventory, MAX_DEVICES
+from hindsightkit import connection
+from hindsightkit.server import Activity, ClientsExtension, Inventory, MAX_DEVICES
 
 
 TOKEN = "synthetic-test-key"
 HEADERS = {"Authorization": "Bearer " + TOKEN}
-CLIENTS_PATH = "/ext/provenloop/clients"
+CLIENTS_PATH = "/ext/hindsightkit/clients"
 
 
 def activity(device=None, **changes):
@@ -290,14 +290,14 @@ class ConnectionTests(unittest.TestCase):
 
     def test_optional_activity_failure_does_not_fail_memory_caller(self):
         config = {"apiUrl": "http://127.0.0.1:1", "apiToken": TOKEN,
-                  "provenloop": {"activity": True, "deviceId": str(uuid4()), "name": "Dev Box"}}
+                  "hindsightkit": {"activity": True, "deviceId": str(uuid4()), "name": "Dev Box"}}
         for error in [aiohttp.ClientConnectionError(), TimeoutError(), RuntimeError("HTTP 503")]:
             with self.subTest(error=type(error).__name__), patch.object(connection, "request",
                                                                        new=AsyncMock(side_effect=error)):
                 asyncio.run(connection.report(config, "vscode"))
         with patch.object(connection, "request", new=AsyncMock()) as request:
-            asyncio.run(connection.register({"provenloop": {"activity": False}}))
-            asyncio.run(connection.report({"provenloop": {"activity": False}}, "vscode"))
+            asyncio.run(connection.register({"hindsightkit": {"activity": False}}))
+            asyncio.run(connection.report({"hindsightkit": {"activity": False}}, "vscode"))
             request.assert_not_awaited()
 
 

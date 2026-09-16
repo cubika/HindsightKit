@@ -6,10 +6,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from provenloop import cli
-from provenloop.hooks import session_config
-from provenloop.memory import Memory, Scope, SHARED_BANK, scope_for
-from provenloop.mcp import scope_from_roots
+from hindsightkit import cli
+from hindsightkit.hooks import session_config
+from hindsightkit.memory import Memory, Scope, SHARED_BANK, scope_for
+from hindsightkit.mcp import scope_from_roots
 
 
 class Result:
@@ -72,7 +72,7 @@ class MemoryTests(unittest.TestCase):
             a, b = root / 'a', root / 'b'
             a.mkdir(); b.mkdir()
             cli.run(['git', 'init', a], capture=True)
-            with patch('provenloop.hooks.home', return_value=root):
+            with patch('hindsightkit.hooks.home', return_value=root):
                 first = session_config({'sessionId': 'session', 'cwd': str(a)}, {'apiUrl': 'local'})
                 second = session_config({'sessionId': 'session', 'cwd': str(b)}, {'apiUrl': 'local'})
                 self.assertEqual(first, second)
@@ -93,6 +93,6 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(scope_from_roots([SimpleNamespace(uri=a.as_uri())]), scope_for(a))
 
     def test_git_failure_does_not_route_repo_memory_into_shared(self):
-        with patch('provenloop.memory.subprocess.run', return_value=SimpleNamespace(returncode=128, stdout='', stderr='fatal: dubious ownership')):
+        with patch('hindsightkit.memory.subprocess.run', return_value=SimpleNamespace(returncode=128, stdout='', stderr='fatal: dubious ownership')):
             with self.assertRaisesRegex(RuntimeError, 'Cannot determine'):
                 scope_for(Path.cwd())

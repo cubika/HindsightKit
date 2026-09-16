@@ -394,7 +394,7 @@
       const headers = { Accept: "application/json" };
       if (method === "POST") {
         headers["Content-Type"] = "application/json";
-        headers["X-ProvenLoop-Token"] = token;
+        headers["X-HindsightKit-Token"] = token;
       }
       const response = await fetch(path, { method, headers, body: method === "POST" ? JSON.stringify(body ?? {}) : undefined, signal: controller.signal, credentials: "same-origin", cache: "no-store" });
       let data;
@@ -406,7 +406,7 @@
         if (signal?.aborted) throw error;
         throw new Error("The request timed out. It may still be running; refresh the status before trying again.");
       }
-      if (error instanceof TypeError) throw new Error("Cannot reach the local service. Check that the ProvenLoop connector service is running, then refresh the status.");
+      if (error instanceof TypeError) throw new Error("Cannot reach the local service. Check that the HindsightKit connector service is running, then refresh the status.");
       throw error;
     } finally {
       clearTimeout(timer);

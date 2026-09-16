@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import uuid
 
-SHARED_BANK = 'provenloop-shared'
+SHARED_BANK = 'hindsightkit-shared'
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def scope_for(directory: str | Path) -> Scope:
     common = Path(result.stdout.strip()).resolve()
     root = common.parent if common.name == '.git' else common
     digest = hashlib.sha256(os.path.normcase(str(root)).encode()).hexdigest()[:12]
-    return Scope('provenloop-' + digest, str(root))
+    return Scope('hindsightkit-' + digest, str(root))
 
 
 class Memory:

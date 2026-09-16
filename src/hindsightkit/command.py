@@ -20,8 +20,8 @@ def install(directory: Path) -> Path:
         raise RuntimeError('Command registration currently supports Windows only.')
     import winreg
 
-    source = Path(sys.executable).parent / 'provenloop.exe'
-    target = directory / 'provenloop.exe'
+    source = Path(sys.executable).parent / 'hindsightkit.exe'
+    target = directory / 'hindsightkit.exe'
     directory.mkdir(parents=True, exist_ok=True)
     if not target.is_file() or source.read_bytes() != target.read_bytes():
         shutil.copy2(source, target)

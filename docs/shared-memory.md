@@ -30,9 +30,9 @@ To use memory on the server machine, install the client there too:
 
 The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Running plain setup always prepares the server and leaves existing client settings alone. Running setup with a server address changes only the managed client connection after validation.
 
-IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same command. For an established tunnel, use its local forwarded address as the server URL. ProvenLoop does not manage tunnel IDs, accounts, or processes. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
+IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same command. For an established tunnel, use its local forwarded address as the server URL. HindsightKit does not manage tunnel IDs, accounts, or processes. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
 
-The server starts listening during setup. After reboot, run provenloop start; stop and ui manage only the local server. No login task or Windows service is installed. The status command reports installed roles. Client-only installations never launch a replacement local server when their connection is unavailable.
+The server starts listening during setup. After reboot, run hindsightkit start; stop and ui manage only the local server. No login task or Windows service is installed. The status command reports installed roles. Client-only installations never launch a replacement local server when their connection is unavailable.
 
 ## Client activity
 

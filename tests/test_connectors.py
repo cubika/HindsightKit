@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
-from provenloop import connection, connectors
-from provenloop.connector_registry import ConnectorHost
-from provenloop.workiq_connector import Adapter
+from hindsightkit import connection, connectors
+from hindsightkit.connector_registry import ConnectorHost
+from hindsightkit.workiq_connector import Adapter
 
 
 class FakeSync:
-    bank = 'provenloop-mail'
+    bank = 'hindsightkit-mail'
 
     def __init__(self):
         self.calls = []
@@ -47,7 +47,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
             hindsight_url='http://localhost:19077', shutdown=self.stopped)))
         await self.client.start_server()
         self.headers = {'Host': '127.0.0.1:19078'}
-        self.write_headers = {**self.headers, 'X-ProvenLoop-Token': 'test-token'}
+        self.write_headers = {**self.headers, 'X-HindsightKit-Token': 'test-token'}
 
     async def asyncTearDown(self):
         await self.client.close()
@@ -65,7 +65,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/api/connectors/workiq', headers=self.headers)
         self.assertEqual(response.status, 200)
         value = await response.json()
-        self.assertEqual(value['hindsight_url'], 'http://localhost:19077/en/banks/provenloop-mail')
+        self.assertEqual(value['hindsight_url'], 'http://localhost:19077/en/banks/hindsightkit-mail')
         self.assertNotIn('test-token', json.dumps(value))
         self.assertIn("frame-ancestors 'none'", response.headers['Content-Security-Policy'])
         self.assertEqual(response.headers['Cache-Control'], 'no-store')
@@ -123,7 +123,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
 class ConnectorLifecycleTests(unittest.TestCase):
     def test_open_reuses_healthy_api_without_triggering_database_setup(self):
-        from provenloop import cli
+        from hindsightkit import cli
         from types import SimpleNamespace
         with patch.object(cli, 'prepare_env'), patch.object(cli, 'require_local'), \
              patch.object(cli, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
@@ -202,7 +202,7 @@ class ConnectorLifecycleTests(unittest.TestCase):
 class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_loads_authenticated_sdk_without_exposing_api_key_in_state(self):
         secret = "synthetic-server-api-secret"
-        config = {"apiUrl": "http://127.0.0.1:9077", "apiToken": secret, "provenloop": {"mode": "server"}}
+        config = {"apiUrl": "http://127.0.0.1:9077", "apiToken": secret, "hindsightkit": {"mode": "server"}}
         sdk_client = Mock()
         sync = FakeSync()
         sync.boot, sync.close, sync.discover = AsyncMock(), AsyncMock(), AsyncMock()
@@ -215,7 +215,7 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(connection, "sdk", wraps=connection.sdk) as sdk, \
                  patch.object(connection, "Hindsight", return_value=sdk_client) as hindsight, \
                  patch.object(Adapter, "availability", return_value={"ready": True, "message": "Installed fixture"}), \
-                 patch("provenloop.mail_sync.MailSync", return_value=sync) as make_sync:
+                 patch("hindsightkit.mail_sync.MailSync", return_value=sync) as make_sync:
                 service = asyncio.create_task(connectors.serve(directory, config["apiUrl"], "http://localhost:19077", port))
                 try:
                     for _ in range(200):
@@ -239,14 +239,14 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
                         make_sync.assert_not_called()
                         self.assertFalse((directory / 'sync.sqlite3').exists())
                         async with client.post(f"http://127.0.0.1:{port}/api/connectors/workiq/discover",
-                                               headers={"X-ProvenLoop-Token": record["token"]}) as response:
+                                               headers={"X-HindsightKit-Token": record["token"]}) as response:
                             self.assertEqual(response.status, 200)
                             self.assertNotIn(secret, await response.text())
                         sdk.assert_called_once_with(config, timeout=120)
                         hindsight.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=120)
                         make_sync.assert_called_once_with(directory, config["apiUrl"], client=sdk_client)
                         async with client.post(f"http://127.0.0.1:{port}/api/shutdown",
-                                               headers={"X-ProvenLoop-Token": record["token"]}) as response:
+                                               headers={"X-HindsightKit-Token": record["token"]}) as response:
                             self.assertEqual(response.status, 200)
                     await asyncio.wait_for(service, 3)
                     self.assertFalse((directory / "service.json").exists())
@@ -259,11 +259,11 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_client_installation_rejected_before_sdk_or_mail_runner_created(self):
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-secret",
-                  "provenloop": {"mode": "client", "bank": "shared-on-server"}}
+                  "hindsightkit": {"mode": "client", "bank": "shared-on-server"}}
         with tempfile.TemporaryDirectory() as temp, \
              patch.object(connection, "server_load", side_effect=RuntimeError('No local Hindsight server')), \
              patch.object(connection, "sdk") as sdk, \
-             patch("provenloop.mail_sync.MailSync") as runner:
+             patch("hindsightkit.mail_sync.MailSync") as runner:
             with self.assertRaisesRegex(RuntimeError, "local Hindsight server"):
                 await connectors.serve(Path(temp), config["apiUrl"], "http://localhost:19077", 19078)
             sdk.assert_not_called()

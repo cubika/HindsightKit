@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from provenloop.mail_sync import MailSync, quote_segments, extraction_content, QUOTE_MARKER, KNOWN_QUOTE
+from hindsightkit.mail_sync import MailSync, quote_segments, extraction_content, QUOTE_MARKER, KNOWN_QUOTE
 import json
-from provenloop.mail_source import WorkIQError, source_key, source_version
+from hindsightkit.mail_source import WorkIQError, source_key, source_version
 
 
 class Missing(Exception):

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from provenloop import cli, connection
+from hindsightkit import cli, connection
 
 
 def options(**values):
@@ -47,7 +47,7 @@ class RemoteSetupTests(unittest.TestCase):
 
             integrate = stack.enter_context(patch.object(cli, 'integrate', side_effect=integration))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
-            request.return_value = {'protocol': 1, 'routing': 'repository', 'sharedBank': 'provenloop-shared'}
+            request.return_value = {'protocol': 1, 'routing': 'repository', 'sharedBank': 'hindsightkit-shared'}
             register = stack.enter_context(patch.object(connection, 'register', new_callable=AsyncMock))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield SimpleNamespace(path=path, profile_path=profile_path, packages=packages,
@@ -76,10 +76,10 @@ class RemoteSetupTests(unittest.TestCase):
             stack.enter_context(patch.object(cli, 'ensure_bank', new_callable=AsyncMock))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
             register = stack.enter_context(patch.object(connection, 'register', new_callable=AsyncMock))
-            stack.enter_context(patch('provenloop.postgres.setup_database'))
-            stack.enter_context(patch('provenloop.routing.seed_aliases'))
-            stack.enter_context(patch('provenloop.postgres.private_directory', side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)))
-            stack.enter_context(patch('provenloop.postgres.restrict_access'))
+            stack.enter_context(patch('hindsightkit.postgres.setup_database'))
+            stack.enter_context(patch('hindsightkit.routing.seed_aliases'))
+            stack.enter_context(patch('hindsightkit.postgres.private_directory', side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)))
+            stack.enter_context(patch('hindsightkit.postgres.restrict_access'))
             integrate = stack.enter_context(patch.object(cli, 'integrate'))
             hosts = stack.enter_context(patch.object(cli, 'vscode_user_directories'))
             cleanup = stack.enter_context(patch.object(cli, 'remove_project_registration'))
@@ -106,11 +106,11 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             path = root / 'coding-agent.json'
-            path.write_text(json.dumps({'apiUrl': 'https://remote.invalid', 'provenloop': {'mode': 'client'}}))
+            path.write_text(json.dumps({'apiUrl': 'https://remote.invalid', 'hindsightkit': {'mode': 'client'}}))
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path)}), \
                  patch.object(cli, 'setup_server') as server, patch.object(cli, 'setup_client') as client, \
                  patch.object(cli, 'home', return_value=root), \
-                 patch('provenloop.command.install', return_value='provenloop.exe'), \
+                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 cli.setup(options())
                 server.assert_called_once()
@@ -141,7 +141,7 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             with self.server_environment(root, {'HINDSIGHT_API_TENANT_API_KEY': 'server-key'}) as fixture:
                 fixture.path.write_text(json.dumps({'apiUrl': 'https://remote.invalid', 'apiToken': 'client-key',
-                    'provenloop': {'mode': 'client'}}), encoding='utf-8')
+                    'hindsightkit': {'mode': 'client'}}), encoding='utf-8')
                 original = fixture.path.read_bytes()
                 cli.setup_server(options())
                 self.assertEqual(fixture.path.read_bytes(), original)
@@ -170,13 +170,13 @@ class RemoteSetupTests(unittest.TestCase):
                 fixture.packages.assert_called_once_with(client=True)
                 self.assertEqual(fixture.profile_path.read_bytes(), before)
                 paths = [item.args[2] for item in fixture.request.call_args_list]
-                self.assertIn('/ext/provenloop/connection', paths)
+                self.assertIn('/ext/hindsightkit/connection', paths)
                 config = fixture.register.call_args.args[0]
                 self.assertEqual(config['apiToken'], 'client-key')
-                self.assertEqual(config['provenloop']['name'], 'Automatic-Hostname')
-                self.assertNotIn('bank', config['provenloop'])
-                self.assertEqual(config['provenloop']['mode'], 'client')
-                self.assertTrue(config['provenloop']['deviceId'])
+                self.assertEqual(config['hindsightkit']['name'], 'Automatic-Hostname')
+                self.assertNotIn('bank', config['hindsightkit'])
+                self.assertEqual(config['hindsightkit']['mode'], 'client')
+                self.assertTrue(config['hindsightkit']['deviceId'])
                 for item in fixture.integrate.call_args_list:
                     self.assertNotIn('client-key', str(item.args))
 
@@ -184,23 +184,23 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with self.client_environment(Path(temp)) as fixture:
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://127.0.0.1:19078', 'apiToken': 'saved-key',
-                    'logLevel': 'warn', 'provenloop': {'mode': 'client', 'bank': 'previous-bank',
+                    'logLevel': 'warn', 'hindsightkit': {'mode': 'client', 'bank': 'previous-bank',
                     'deviceId': '39c07d23-4f04-4e57-a4b3-e80f9f2229cc', 'name': 'Old hostname'}}))
                 with patch.object(cli.getpass, 'getpass') as prompt:
                     cli.setup_client(options(server='http://127.0.0.1:19078'))
                 prompt.assert_not_called()
                 config = json.loads(fixture.path.read_text())
                 self.assertEqual(config['apiToken'], 'saved-key')
-                self.assertEqual(config['provenloop']['deviceId'], '39c07d23-4f04-4e57-a4b3-e80f9f2229cc')
-                self.assertEqual(config['provenloop']['name'], 'Automatic-Hostname')
-                self.assertNotIn('bank', config['provenloop'])
+                self.assertEqual(config['hindsightkit']['deviceId'], '39c07d23-4f04-4e57-a4b3-e80f9f2229cc')
+                self.assertEqual(config['hindsightkit']['name'], 'Automatic-Hostname')
+                self.assertNotIn('bank', config['hindsightkit'])
                 self.assertEqual(config['logLevel'], 'warn')
 
     def test_new_destination_does_not_receive_old_saved_key(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.client_environment(Path(temp)) as fixture:
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://old.invalid', 'apiToken': 'old-server-key',
-                    'provenloop': {'mode': 'client'}}))
+                    'hindsightkit': {'mode': 'client'}}))
                 with patch.object(cli.getpass, 'getpass', return_value='new-server-key') as prompt:
                     cli.setup_client(options(server='http://new.invalid'))
                 prompt.assert_called_once()
@@ -228,7 +228,7 @@ class RemoteSetupTests(unittest.TestCase):
     def test_local_management_does_not_follow_same_machine_remote_client(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'coding-agent.json'
-            client = {'apiUrl': 'https://remote.invalid', 'apiToken': 'remote-key', 'provenloop': {'mode': 'client'}}
+            client = {'apiUrl': 'https://remote.invalid', 'apiToken': 'remote-key', 'hindsightkit': {'mode': 'client'}}
             path.write_text(json.dumps(client))
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path)}), \
                  patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_API_TENANT_API_KEY': 'server-key'},

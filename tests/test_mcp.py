@@ -11,14 +11,14 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp import types
 
-from provenloop import cli, connection, mcp as memory_mcp
+from hindsightkit import cli, connection, mcp as memory_mcp
 
 
 class McpTests(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.TemporaryDirectory()
         self.addCleanup(self.home.cleanup)
-        environment = patch.dict(os.environ, {'PROVENLOOP_HOME': self.home.name})
+        environment = patch.dict(os.environ, {'HINDSIGHTKIT_HOME': self.home.name})
         environment.start()
         self.addCleanup(environment.stop)
 
@@ -83,7 +83,7 @@ class McpTests(unittest.TestCase):
 class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_advertised_mail_is_available_without_local_import_state(self):
         config = {'apiUrl': 'https://memory.example.invalid', 'apiToken': 'synthetic-key',
-                  'provenloop': {'mode': 'client', 'routing': 'repository', 'connectors': ['workiq']}}
+                  'hindsightkit': {'mode': 'client', 'routing': 'repository', 'connectors': ['workiq']}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
             model_dump=lambda **kwargs: {'results': []})), aclose=AsyncMock())
         async def action(server):
@@ -91,13 +91,13 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(tool)
             return await tool.fn(query='shared mail')
         result, constructor = await self.call_tools(config, action, client, saved_mail=False)
-        self.assertEqual(result['bank'], 'provenloop-mail')
+        self.assertEqual(result['bank'], 'hindsightkit-mail')
         constructor.assert_called_once_with(base_url=config['apiUrl'], api_key='synthetic-key', timeout=90)
 
     async def call_tools(self, config, action, sdk_client, *, saved_mail=True):
         server = memory_mcp.FastMCP("Mail connection fixture")
         with tempfile.TemporaryDirectory() as temp, \
-             patch.dict(os.environ, {'PROVENLOOP_HOME': temp}), \
+             patch.dict(os.environ, {'HINDSIGHTKIT_HOME': temp}), \
              patch.object(connection, "load", return_value=config), \
              patch.object(connection, "Hindsight", return_value=sdk_client) as constructor, \
              patch.object(connection, "report", new=AsyncMock()), \
@@ -114,7 +114,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_recall_mail_uses_server_endpoint_auth_and_source_fact_options(self):
         secret = "synthetic-server-mail-secret"
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": secret,
-                  "provenloop": {"mode": "server"}}
+                  "hindsightkit": {"mode": "server"}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
             model_dump=lambda **kwargs: {"results": [], "source_facts": {}})), aclose=AsyncMock())
         async def action(server):
@@ -125,7 +125,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=90)
         client.arecall.assert_awaited_once()
         arguments = client.arecall.await_args.kwargs
-        self.assertEqual(arguments["bank_id"], "provenloop-mail")
+        self.assertEqual(arguments["bank_id"], "hindsightkit-mail")
         self.assertTrue(arguments["include_source_facts"])
         self.assertTrue(arguments["prefer_observations"])
         self.assertEqual(arguments["max_source_facts_tokens"], 512)
@@ -134,7 +134,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_fixed_client_cannot_bypass_its_bank_through_recall_mail(self):
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-mail-secret",
-                  "provenloop": {"mode": "client", "bank": "allowed-shared-bank"}}
+                  "hindsightkit": {"mode": "client", "bank": "allowed-shared-bank"}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
             model_dump=lambda **kwargs: {"results": []})), aclose=AsyncMock())
         async def action(server):
@@ -155,7 +155,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await server.get_tool('recall_mail'))
             for name in ['retain', 'recall', 'reflect']:
                 self.assertIsNotNone(await server.get_tool(name))
-            self.assertFalse((Path(os.environ['PROVENLOOP_HOME']) / 'mail').exists())
+            self.assertFalse((Path(os.environ['HINDSIGHTKIT_HOME']) / 'mail').exists())
         _, constructor = await self.call_tools(config, action, client, saved_mail=False)
         constructor.assert_not_called()
         client.arecall.assert_not_awaited()

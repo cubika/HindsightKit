@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch, AsyncMock
 
-from provenloop import postgres
+from hindsightkit import postgres
 
 
 class PostgresTests(unittest.TestCase):

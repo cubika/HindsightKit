@@ -49,14 +49,14 @@ class Adapter:
                 find_workiq()
                 self._check = {'ready': True, 'message': 'WorkIQ is installed'}
             except (WorkIQError, OSError):
-                self._check = {'ready': False, 'message': 'Install the supported WorkIQ 1.0.0 package, then refresh. ProvenLoop does not install or launch it automatically.'}
+                self._check = {'ready': False, 'message': 'Install the supported WorkIQ 1.0.0 package, then refresh. HindsightKit does not install or launch it automatically.'}
         return self._check
 
     def status(self):
         value = self.sync.status() if self.sync else saved_status(self.directory)
         if self.error:
             value['run']['error'] = self.error
-        return {**value, 'availability': self.availability(), 'bank': 'provenloop-mail'}
+        return {**value, 'availability': self.availability(), 'bank': 'hindsightkit-mail'}
 
     async def _load(self):
         if self.sync is None:
@@ -112,7 +112,7 @@ class Adapter:
 
 def register_tools(server, config, directory):
     from . import connection
-    advertised = 'workiq' in config.get('provenloop', {}).get('connectors', [])
+    advertised = 'workiq' in config.get('hindsightkit', {}).get('connectors', [])
     if connection.fixed_bank(config) or (not advertised and
             (connection.client_mode(config) or not (Path(directory) / 'sync.sqlite3').is_file())):
         return
@@ -124,13 +124,13 @@ def register_tools(server, config, directory):
             raise ValueError('Provide a query and max_tokens between 256 and 16384.')
         client = connection.sdk(config, timeout=90)
         try:
-            result = await client.arecall(bank_id='provenloop-mail', query=query, max_tokens=max_tokens,
+            result = await client.arecall(bank_id='hindsightkit-mail', query=query, max_tokens=max_tokens,
                 budget='mid', types=['world', 'experience', 'observation'], prefer_observations=True,
                 include_source_facts=True, max_source_facts_tokens=max_tokens // 2)
-            return {'bank': 'provenloop-mail', 'result': result.model_dump(mode='json')}
+            return {'bank': 'hindsightkit-mail', 'result': result.model_dump(mode='json')}
         except Exception as exc:
             if getattr(exc, 'status', None) == 404:
-                return {'bank': 'provenloop-mail', 'result': {}, 'message': 'No email has been imported.'}
+                return {'bank': 'hindsightkit-mail', 'result': {}, 'message': 'No email has been imported.'}
             raise
         finally:
             await client.aclose()

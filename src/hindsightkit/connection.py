@@ -39,11 +39,11 @@ def server_load() -> dict:
     from .cli import profile_config
     profile, paths = profile_config()
     return {'apiUrl': f'http://127.0.0.1:{paths.port}',
-            'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY'), 'provenloop': {'mode': 'server'}}
+            'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY'), 'hindsightkit': {'mode': 'server'}}
 
 
 def has_server() -> bool:
-    return (Path.home() / '.hindsight/profiles/provenloop.env').is_file()
+    return (Path.home() / '.hindsight/profiles/hindsightkit.env').is_file()
 
 
 def management() -> dict:
@@ -69,11 +69,11 @@ def validate_bank(value: str) -> str:
 
 
 def client_mode(config: dict) -> bool:
-    return config.get('provenloop', {}).get('mode') == 'client'
+    return config.get('hindsightkit', {}).get('mode') == 'client'
 
 
 def fixed_bank(config: dict) -> str | None:
-    return config.get('provenloop', {}).get('bank')
+    return config.get('hindsightkit', {}).get('bank')
 
 
 def sdk(config: dict, **options) -> Hindsight:
@@ -91,21 +91,21 @@ async def request(config, method, path, *, body=None, timeout=10):
 
 
 async def register(config):
-    info = config.get('provenloop', {})
+    info = config.get('hindsightkit', {})
     if not info.get('activity'):
         return
-    await request(config, 'POST', '/ext/provenloop/clients', body={
+    await request(config, 'POST', '/ext/hindsightkit/clients', body={
         'deviceId': info['deviceId'], 'name': info['name'],
         'clients': ['vscode', 'copilot-cli'], 'used': False,
     })
 
 
 async def report(config, kind):
-    info = config.get('provenloop', {})
+    info = config.get('hindsightkit', {})
     if not info.get('activity'):
         return
     try:
-        await request(config, 'POST', '/ext/provenloop/clients', timeout=2, body={
+        await request(config, 'POST', '/ext/hindsightkit/clients', timeout=2, body={
             'deviceId': info['deviceId'], 'name': info['name'], 'clients': [kind], 'used': True,
         })
     except (aiohttp.ClientError, TimeoutError, RuntimeError, ValueError):

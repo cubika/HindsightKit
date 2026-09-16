@@ -46,13 +46,13 @@ def repository_identity(scope):
 
 async def resolve(config, scope):
     from . import connection
-    if config.get('provenloop', {}).get('routing') != 'repository':
+    if config.get('hindsightkit', {}).get('routing') != 'repository':
         return scope
     identity = await asyncio.to_thread(repository_identity, scope)
     if scope.repository and identity is None:
         # Unpublished repositories remain separate on each device.
-        identity = hashlib.sha256((config['provenloop']['deviceId'] + ':' + scope.bank).encode()).hexdigest()
-    result = await connection.request(config, 'POST', '/ext/provenloop/scope', body={'repository': identity})
+        identity = hashlib.sha256((config['hindsightkit']['deviceId'] + ':' + scope.bank).encode()).hexdigest()
+    result = await connection.request(config, 'POST', '/ext/hindsightkit/scope', body={'repository': identity})
     return Scope(connection.validate_bank(result['bank']), scope.repository,
                  connection.validate_bank(result['sharedBank']))
 

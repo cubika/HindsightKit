@@ -10,21 +10,21 @@ import sys
 import time
 from unittest.mock import Mock, patch
 
-from provenloop.postgres import Postgres, require_postgresql, available_port, setup_database, DATABASE_KEY
+from hindsightkit.postgres import Postgres, require_postgresql, available_port, setup_database, DATABASE_KEY
 
 
 def check_hindsight(server, root):
     """Run the unmodified official API against the disposable non-superuser DB."""
     import aiohttp
-    from provenloop import cli
+    from hindsightkit import cli
     from hindsight_embed.profile_manager import ProfileManager
-    config = ProfileManager().load_profile_config('provenloop')
+    config = ProfileManager().load_profile_config('hindsightkit')
     port = available_port(0)
     env = os.environ.copy()
     env.update(config)
     env.update(HINDSIGHT_API_DATABASE_URL=server.url, HINDSIGHT_API_DATABASE_SCHEMA='public',
                HINDSIGHT_API_HOST='127.0.0.1', HINDSIGHT_API_PORT=str(port),
-               HINDSIGHT_API_WORKER_ID='provenloop-postgres-validation', PYTHONUTF8='1')
+               HINDSIGHT_API_WORKER_ID='hindsightkit-postgres-validation', PYTHONUTF8='1')
     log_path = root / 'hindsight-api.log'
     with log_path.open('wb') as log:
         process = subprocess.Popen([sys.executable, '-m', 'hindsight_api.main'], env=env,
@@ -64,7 +64,7 @@ def main():
     parser.add_argument('--distribution', type=Path, required=True)
     parser.add_argument('--hindsight', action='store_true', help='Also make a real Copilot retain/recall call.')
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='provenloop postgres ') as directory:
+    with tempfile.TemporaryDirectory(prefix='hindsightkit postgres ') as directory:
         root = Path(directory)
         profile = root / 'profile.env'
         profile.write_text('# custom comment\nHINDSIGHT_API_LLM_MODEL=custom\n', encoding='utf-8')

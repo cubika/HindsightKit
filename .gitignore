@@ -7,6 +7,6 @@ __pycache__/
 build/
 dist/
 node_modules/
-*.provenloop-backup
+*.hindsightkit-backup
 .vscode/mcp.json
 .github/copilot-instructions.md

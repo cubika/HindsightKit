@@ -16,7 +16,7 @@ class Connector:
 
 
 CONNECTORS = (Connector('workiq', 'WorkIQ email', 'Save useful email findings with links to their sources.',
-                        'provenloop.workiq_connector', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
+                        'hindsightkit.workiq_connector', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
 
 
 class ConnectorHost:
@@ -92,7 +92,7 @@ def enabled_connectors(root, registry=CONNECTORS):
 def register_tools(server, config, root, registry=CONNECTORS):
     for spec in registry:
         directory = Path(root) / spec.directory
-        if directory.exists() or spec.id in config.get('provenloop', {}).get('connectors', []):
+        if directory.exists() or spec.id in config.get('hindsightkit', {}).get('connectors', []):
             try:
                 import_module(spec.module).register_tools(server, config, directory)
             except ImportError:

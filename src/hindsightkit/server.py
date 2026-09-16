@@ -81,7 +81,7 @@ class ClientsExtension(HttpExtension):
             if not key or not hmac.compare_digest((authorization or '').encode(), ('Bearer ' + key).encode()):
                 raise HTTPException(401, 'Invalid API key')
 
-        @router.get('/provenloop/connection')
+        @router.get('/hindsightkit/connection')
         def connection(authorization: str | None = Header(default=None)):
             authorize(authorization)
             from .connection import validate_bank
@@ -91,22 +91,22 @@ class ClientsExtension(HttpExtension):
                     'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK)),
                     'connectors': enabled_connectors(inventory.path.parent)}
 
-        @router.post('/provenloop/scope')
+        @router.post('/hindsightkit/scope')
         def scope(body: RepositoryScope, authorization: str | None = Header(default=None)):
             authorize(authorization)
             from .connection import validate_bank
             from .memory import SHARED_BANK
             shared = validate_bank(self.config.get('memory_bank', SHARED_BANK))
             aliases = Inventory(self.config.get('aliases_file', str(inventory.path.with_name('repositories.json')))).read()
-            bank = aliases.get(body.repository, 'provenloop-repo-' + body.repository) if body.repository else shared
+            bank = aliases.get(body.repository, 'hindsightkit-repo-' + body.repository) if body.repository else shared
             return {'bank': validate_bank(bank), 'sharedBank': shared}
 
-        @router.get('/provenloop/clients')
+        @router.get('/hindsightkit/clients')
         def clients(authorization: str | None = Header(default=None)):
             authorize(authorization)
             return inventory.snapshot()
 
-        @router.post('/provenloop/clients')
+        @router.post('/hindsightkit/clients')
         def activity(body: Activity, authorization: str | None = Header(default=None)):
             authorize(authorization)
             inventory.update(body)

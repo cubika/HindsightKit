@@ -15,7 +15,7 @@ $PostgresUrl = 'https://get.enterprisedb.com/postgresql/postgresql-18.6-1-window
 $PostgresSha256 = 'FBE23DA234EE31547BF8A36D29DFD81E82B849DF2D2B78D2EECB43D360252F8C'
 $VectorUrl = 'https://github.com/pgvector/pgvector/archive/refs/tags/v0.8.6.zip'
 $VectorSha256 = 'E93A1567219C9CE523CA16473F6C41CC80E01345B2D91CCDEE40B473B7C5DD0A'
-$ManifestName = 'provenloop-postgres.json'
+$ManifestName = 'hindsightkit-postgres.json'
 $RequiredExtensions = @('vector', 'pg_trgm', 'btree_gin', 'btree_gist', 'pg_stat_statements', 'unaccent', 'pgcrypto', 'uuid-ossp')
 
 function Get-AbsoluteDirectory([string]$Path) {
@@ -193,7 +193,7 @@ function Install-CppRuntime([string]$Installation, [string]$PgRoot) {
 
 function Build-Vector([string]$Installation, [string]$PgRoot, [string]$SourceRoot, [string]$StageRoot) {
     $batch = Assert-ChildPath $StageRoot (Join-Path $StageRoot 'build-vector.cmd')
-    [IO.File]::WriteAllText($batch, "@echo off`r`ncall `"%PROVENLOOP_VCVARS%`" >nul`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win install`r`nexit /b %errorlevel%`r`n", [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText($batch, "@echo off`r`ncall `"%HINDSIGHTKIT_VCVARS%`" >nul`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win install`r`nexit /b %errorlevel%`r`n", [Text.Encoding]::ASCII)
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $env:ComSpec
     $start.Arguments = '/d /v:off /s /c ""' + $batch + '""'
@@ -203,7 +203,7 @@ function Build-Vector([string]$Installation, [string]$PgRoot, [string]$SourceRoo
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.EnvironmentVariables['PGROOT'] = $PgRoot
-    $start.EnvironmentVariables['PROVENLOOP_VCVARS'] = Join-Path $Installation 'VC\Auxiliary\Build\vcvars64.bat'
+    $start.EnvironmentVariables['HINDSIGHTKIT_VCVARS'] = Join-Path $Installation 'VC\Auxiliary\Build\vcvars64.bat'
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     Write-Host "Compiling pgvector $VectorVersion against PostgreSQL $PostgresVersion with Microsoft C++..."
@@ -298,7 +298,7 @@ if (Test-Path -LiteralPath $Destination) {
     New-Item -ItemType Directory -Path $CacheDirectory -Force | Out-Null
     $parent = [IO.Path]::GetDirectoryName($Destination)
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    $stageRoot = Assert-ChildPath $parent (Join-Path $parent ('.provenloop-postgres-' + [guid]::NewGuid().ToString('N')))
+    $stageRoot = Assert-ChildPath $parent (Join-Path $parent ('.hindsightkit-postgres-' + [guid]::NewGuid().ToString('N')))
     New-Item -ItemType Directory -Path $stageRoot | Out-Null
     try {
         $postgresArchive = Get-VerifiedArchive $PostgresUrl 'postgresql-18.6-1-windows-x64-binaries.zip' $PostgresSha256
@@ -320,7 +320,7 @@ if (Test-Path -LiteralPath $Destination) {
     } finally {
         if (Test-Path -LiteralPath $stageRoot) {
             $checkedStage = Assert-ChildPath $parent $stageRoot
-            if ((Split-Path -Leaf $checkedStage) -notmatch '^\.provenloop-postgres-[a-f0-9]{32}$') { throw 'Refusing to clean an unexpected staging path.' }
+            if ((Split-Path -Leaf $checkedStage) -notmatch '^\.hindsightkit-postgres-[a-f0-9]{32}$') { throw 'Refusing to clean an unexpected staging path.' }
             Assert-OrdinaryTree $checkedStage
             Remove-Item -LiteralPath $checkedStage -Recurse -Force
         }

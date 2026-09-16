@@ -8,14 +8,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from provenloop import cli
-from provenloop.command import prepend_path
-from provenloop.memory import scope_for, SHARED_BANK
+from hindsightkit import cli
+from hindsightkit.command import prepend_path
+from hindsightkit.memory import scope_for, SHARED_BANK
 
 
 class SetupTests(unittest.TestCase):
     def test_command_path_registration_is_idempotent_and_preserves_others(self):
-        directory = Path(tempfile.gettempdir()) / 'ProvenLoop command'
+        directory = Path(tempfile.gettempdir()) / 'HindsightKit command'
         original = os.pathsep.join(['first', str(directory), 'last'])
         updated = prepend_path(original, directory)
         self.assertEqual(updated, os.pathsep.join([str(directory), 'first', 'last']))
@@ -26,7 +26,7 @@ class SetupTests(unittest.TestCase):
         args = argparse.Namespace(port=0, model=None, model_dir=None, reasoning_effort=None)
         with patch.object(ProfileManager, 'load_profile_config', return_value={}), \
              patch.object(ProfileManager, 'create_profile') as create, \
-             patch('provenloop.cli.socket.socket'):
+             patch('hindsightkit.cli.socket.socket'):
             cli.configure_profile(args)
             config = create.call_args.args[2]
             self.assertEqual(config['HINDSIGHT_API_LLM_MODEL'], 'gpt-6-astra')
@@ -69,7 +69,7 @@ class SetupTests(unittest.TestCase):
             first = mcp.read_bytes()
             cli.integrate('vscode', mcp, 'python.exe')
             self.assertEqual(first, mcp.read_bytes())
-            self.assertEqual(original, Path(str(mcp) + '.provenloop-backup').read_text())
+            self.assertEqual(original, Path(str(mcp) + '.hindsightkit-backup').read_text())
 
     def test_conflicting_endpoint_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -118,7 +118,7 @@ class SetupTests(unittest.TestCase):
                     if hook.get('command') == 'echo user-hook':
                         continue
                     self.assertTrue(Path(hook['exec']).is_absolute())
-                    self.assertEqual(hook['args'][:3], ['-m', 'provenloop.cli', 'hook'])
+                    self.assertEqual(hook['args'][:3], ['-m', 'hindsightkit.cli', 'hook'])
             self.assertEqual(json.loads(config.read_text())['optInOnly'], False)
 
 

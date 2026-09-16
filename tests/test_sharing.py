@@ -16,13 +16,13 @@ from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.models import RequestContext
 from hindsight_embed.profile_manager import ProfileManager
 
-from provenloop import cli
-from provenloop.server import ClientsExtension
+from hindsightkit import cli
+from hindsightkit.server import ClientsExtension
 
 
 TOKEN = "synthetic-sharing-key"
 TENANT_EXTENSION = "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
-HTTP_EXTENSION = "provenloop.server:ClientsExtension"
+HTTP_EXTENSION = "hindsightkit.server:ClientsExtension"
 
 
 class SharingConfigurationTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class SharingConfigurationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.path = self.root / "provenloop.env"
+        self.path = self.root / "hindsightkit.env"
         self.paths = SimpleNamespace(config=self.path)
         self.path.write_text("# Keep this comment.\nHINDSIGHT_API_PORT=9077\n"
                              "HINDSIGHT_API_HOST=127.0.0.1\nHINDSIGHT_API_LLM_MODEL=existing-model\n"
@@ -56,7 +56,7 @@ class SharingConfigurationTests(unittest.TestCase):
 
     def test_sharing_preserves_profile_and_enables_official_extensions(self):
         original = self.path.read_bytes()
-        cli.configure_sharing(TOKEN, "provenloop-shared")
+        cli.configure_sharing(TOKEN, "hindsightkit-shared")
         config, _ = self.profile()
         self.assertEqual(config["HINDSIGHT_API_HOST"], "0.0.0.0")
         self.assertEqual(config["HINDSIGHT_API_TENANT_EXTENSION"], TENANT_EXTENSION)
@@ -67,7 +67,7 @@ class SharingConfigurationTests(unittest.TestCase):
         self.assertEqual(config["CUSTOM_SETTING"], "keep=this-value")
         self.assertEqual(config["HINDSIGHT_API_PORT"], "9077")
         self.assertTrue(self.path.read_text(encoding="utf-8").startswith("# Keep this comment.\n"))
-        self.assertEqual(self.path.with_name("provenloop.env.provenloop-backup").read_bytes(), original)
+        self.assertEqual(self.path.with_name("hindsightkit.env.hindsightkit-backup").read_bytes(), original)
         self.assertEqual(self.run.call_args_list, [
             call(["fixture-hindsight-embed", "--profile", cli.PROFILE, "ui", "stop"]),
             call(["fixture-hindsight-embed", "--profile", cli.PROFILE, "daemon", "stop"]),
@@ -75,12 +75,12 @@ class SharingConfigurationTests(unittest.TestCase):
         self.assertFalse((self.root / "clients.json").exists())
 
     def test_repeating_sharing_does_not_stop_services_or_rewrite_config(self):
-        cli.configure_sharing(TOKEN, "provenloop-shared")
+        cli.configure_sharing(TOKEN, "hindsightkit-shared")
         original = self.path.read_bytes()
         self.manager.reset_mock()
         self.run.reset_mock()
         with patch.object(cli, "backup") as backup:
-            cli.configure_sharing(TOKEN, "provenloop-shared")
+            cli.configure_sharing(TOKEN, "hindsightkit-shared")
         self.manager.assert_not_called()
         self.run.assert_not_called()
         backup.assert_not_called()
@@ -89,7 +89,7 @@ class SharingConfigurationTests(unittest.TestCase):
     def test_stopped_services_are_not_stopped_again(self):
         self.manager.return_value.is_ui_running.return_value = False
         self.manager.return_value.is_running.return_value = False
-        cli.configure_sharing(TOKEN, "provenloop-shared")
+        cli.configure_sharing(TOKEN, "hindsightkit-shared")
         self.run.assert_not_called()
         self.assertEqual(self.profile()[0]["HINDSIGHT_API_HOST"], "0.0.0.0")
 
@@ -106,11 +106,11 @@ class SharingConfigurationTests(unittest.TestCase):
                 self.path.write_text(original + name + "=" + value + "\n", encoding="utf-8")
                 before = self.path.read_bytes()
                 with self.assertRaises(RuntimeError):
-                    cli.configure_sharing(TOKEN, "provenloop-shared")
+                    cli.configure_sharing(TOKEN, "hindsightkit-shared")
                 self.assertEqual(self.path.read_bytes(), before)
         self.manager.assert_not_called()
         self.run.assert_not_called()
-        self.assertFalse(self.path.with_name("provenloop.env.provenloop-backup").exists())
+        self.assertFalse(self.path.with_name("hindsightkit.env.hindsightkit-backup").exists())
 
 class OfficialExtensionTests(unittest.TestCase):
     def test_official_api_key_extension_authenticates_rest_and_mcp_with_same_key(self):
@@ -143,12 +143,12 @@ class OfficialExtensionTests(unittest.TestCase):
                 app = FastAPI()
                 app.include_router(extension.get_router(None), prefix="/ext")
                 with TestClient(app) as client:
-                    self.assertEqual(client.get("/ext/provenloop/clients").status_code, 401)
+                    self.assertEqual(client.get("/ext/hindsightkit/clients").status_code, 401)
                     headers = {"Authorization": "Bearer " + TOKEN}
-                    result = client.post("/ext/provenloop/clients", headers=headers, json={
+                    result = client.post("/ext/hindsightkit/clients", headers=headers, json={
                         "deviceId": str(uuid4()), "name": "Loader fixture", "clients": ["vscode"]})
                     self.assertEqual(result.status_code, 200)
-                    result = client.get("/ext/provenloop/clients", headers=headers)
+                    result = client.get("/ext/hindsightkit/clients", headers=headers)
                     self.assertEqual(result.status_code, 200)
                     self.assertEqual(result.json()["devices"][0]["name"], "Loader fixture")
             self.assertTrue(path.is_file())

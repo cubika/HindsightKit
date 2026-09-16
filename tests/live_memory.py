@@ -15,8 +15,8 @@ from hindsight_client import Hindsight
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
-from provenloop import cli, hooks, connection
-from provenloop.memory import SHARED_BANK, scope_for
+from hindsightkit import cli, hooks, connection
+from hindsightkit.memory import SHARED_BANK, scope_for
 
 
 async def main():
@@ -39,13 +39,13 @@ async def main():
         config = base / 'coding-agent.json'
         config.write_text(json.dumps({'apiUrl': url, 'apiToken':key, 'serverMode':'self-hosted','optInOnly':False}))
         env = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src'),
-               'HINDSIGHT_CONFIG': str(config), 'PROVENLOOP_HOME': str(base / 'state')}
+               'HINDSIGHT_CONFIG': str(config), 'HINDSIGHTKIT_HOME': str(base / 'state')}
 
         async def mcp(directory, operation, arguments, roots=False):
             async def list_roots(_):
                 return types.ListRootsResult(roots=[types.Root(uri=directory.as_uri())])
             params = StdioServerParameters(command=sys.executable,
-                args=['-m','provenloop.cli','mcp','--context','vscode' if roots else 'cli'],
+                args=['-m','hindsightkit.cli','mcp','--context','vscode' if roots else 'cli'],
                 cwd=outside if roots else directory, env=env)
             async with stdio_client(params) as (reader, writer):
                 async with ClientSession(reader, writer, list_roots_callback=list_roots if roots else None) as session:
@@ -55,7 +55,7 @@ async def main():
                     return response.structured_content
 
         def hook(event, payload):
-            with patch.dict(os.environ, env), patch('provenloop.hooks.runtime', return_value=runtime), \
+            with patch.dict(os.environ, env), patch('hindsightkit.hooks.runtime', return_value=runtime), \
                  patch('sys.stdin', StringIO(json.dumps(payload))), patch('sys.stdout', new_callable=StringIO) as output:
                 hooks.run(event)
                 return output.getvalue()

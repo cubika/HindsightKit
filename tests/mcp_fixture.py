@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import sys
 import os
-from provenloop.mcp import serve
+from hindsightkit.mcp import serve
 
 class Client:
     def __init__(self, **kwargs): pass
@@ -13,8 +13,8 @@ class Client:
 
 config = {'apiUrl': 'http://127.0.0.1:9077'}
 if os.environ.get('TEST_FIXED_BANK'):
-    config['provenloop'] = {'bank': os.environ['TEST_FIXED_BANK']}
+    config['hindsightkit'] = {'bank': os.environ['TEST_FIXED_BANK']}
 
-with patch('provenloop.connection.sdk', lambda *args, **kwargs: Client()), \
-     patch('provenloop.connection.load', return_value=config):
+with patch('hindsightkit.connection.sdk', lambda *args, **kwargs: Client()), \
+     patch('hindsightkit.connection.load', return_value=config):
     serve(sys.argv[1])

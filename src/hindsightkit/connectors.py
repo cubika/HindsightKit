@@ -35,7 +35,7 @@ def read_service(directory):
 def service_request(info, path='/health', *, post=False):
     request = Request(f"http://127.0.0.1:{info['port']}{path}",
                       data=b'{}' if post else None,
-                      headers={'X-ProvenLoop-Token': info['token'], 'Content-Type': 'application/json'})
+                      headers={'X-HindsightKit-Token': info['token'], 'Content-Type': 'application/json'})
     with urlopen(request, timeout=3) as response:
         result = json.load(response)
     if result.get('instance') != info['instance']:
@@ -73,7 +73,7 @@ def ensure_running(directory, api_url, hindsight_url, port):
                      if os.name == 'nt' else {'start_new_session': True})
             with (directory / 'service.log').open('ab') as log:
                 process = subprocess.Popen(
-                    [sys.executable, '-m', 'provenloop.connectors', '--directory', str(directory),
+                    [sys.executable, '-m', 'hindsightkit.connectors', '--directory', str(directory),
                      '--port', str(port), '--api-url', api_url, '--hindsight-url', hindsight_url],
                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, close_fds=True, **flags,
                 )
@@ -116,7 +116,7 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
         if request.headers.get('Sec-Fetch-Site') == 'cross-site':
             raise web.HTTPForbidden(text='Cross-site requests are not allowed.')
         if request.method != 'GET' and not hmac.compare_digest(
-                request.headers.get('X-ProvenLoop-Token', ''), token):
+                request.headers.get('X-HindsightKit-Token', ''), token):
             raise web.HTTPForbidden(text='Refresh this page before changing settings.')
         try:
             response = await handler(request)
@@ -163,7 +163,7 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
         return web.json_response({'connectors': host.catalog()})
 
     async def health(request):
-        return web.json_response({'instance': instance, 'service': 'provenloop-connectors'})
+        return web.json_response({'instance': instance, 'service': 'hindsightkit-connectors'})
 
     async def action(request):
         name = request.match_info['action']

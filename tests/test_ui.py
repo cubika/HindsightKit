@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-from provenloop import cli
+from hindsightkit import cli
 
 
 class UiTests(unittest.TestCase):
@@ -95,7 +95,7 @@ class UiTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'win32', 'Windows console behavior')
     def test_windows_server_has_no_console_and_survives_launcher_exit(self):
         # A small HTTP fixture verifies actual process flags and inherited handles.
-        with tempfile.TemporaryDirectory(prefix='provenloop ui ') as temp, socket.socket() as listener:
+        with tempfile.TemporaryDirectory(prefix='hindsightkit ui ') as temp, socket.socket() as listener:
             root = Path(temp)
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]
@@ -121,7 +121,7 @@ HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()
             launcher = root / 'launch.py'
             launcher.write_text('''import argparse, sys
 from pathlib import Path
-from provenloop import cli
+from hindsightkit import cli
 root, port = Path(sys.argv[1]), int(sys.argv[2])
 cli.home = lambda: root
 cli.connection.server_load = lambda: {'apiUrl': 'http://127.0.0.1:9077'}

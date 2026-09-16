@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from provenloop.mail_source import (
+from hindsightkit.mail_source import (
     METADATA_FIELDS, WorkIQError, WorkIQMailSource, _unpack, clean_text,
     html_to_text, normalize_message, recommended_folders, source_key,
     source_version, validate_next_link,
@@ -161,7 +161,7 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
                 callers.append(asyncio.current_task())
                 return {"structuredContent": {"results": [{"statusCode": 200, "data": {"id": "account", "mail": "a@example.com", "userPrincipalName": "a@example.com"}}]}}
         self_test = self
-        with patch("provenloop.mail_source.find_workiq", return_value="workiq.exe"), patch("mcp.client.stdio.stdio_client", transport), patch("mcp.ClientSession", Session):
+        with patch("hindsightkit.mail_source.find_workiq", return_value="workiq.exe"), patch("mcp.client.stdio.stdio_client", transport), patch("mcp.ClientSession", Session):
             source = WorkIQMailSource()
             await asyncio.create_task(source.__aenter__())
             await asyncio.create_task(source.account())

@@ -1,9 +1,10 @@
 {
-  "name": "provenloop-client-runtime",
+  "name": "hindsightkit-runtime",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
     "@vectorize-io/hindsight-coding-agents": "0.6.1",
+    "@vectorize-io/hindsight-control-plane": "0.10.0",
     "jsonc-parser": "3.3.1"
   }
 }
