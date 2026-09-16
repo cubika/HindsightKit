@@ -2,6 +2,8 @@
 param(
     [string]$Project = (Get-Location).Path,
     [string]$Model,
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
+    [string]$ReasoningEffort,
     [string]$ModelDir,
     [int]$Port = 0,
     [switch]$NoOpen
@@ -60,10 +62,15 @@ try {
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
     $setupArgs = @('-m', 'provenloop.cli', 'setup', '--project', $projectPath)
     if ($Model) { $setupArgs += @('--model', $Model) }
+    if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }
     if ($Port) { $setupArgs += @('--port', "$Port") }
     if ($NoOpen) { $setupArgs += '--no-open' }
     Invoke-Checked $python $setupArgs
+    $commandRoot = if ($env:PROVENLOOP_HOME) { $env:PROVENLOOP_HOME } else { Join-Path $env:USERPROFILE '.provenloop' }
+    $commandDirectory = Join-Path $commandRoot 'bin'
+    $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
+    Invoke-Checked 'provenloop' @('--help')
 } catch {
     Write-Error $_
     exit 1

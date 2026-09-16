@@ -9,9 +9,28 @@ import unittest
 from unittest.mock import patch
 
 from provenloop import cli
+from provenloop.command import prepend_path
 
 
 class SetupTests(unittest.TestCase):
+    def test_command_path_registration_is_idempotent_and_preserves_others(self):
+        directory = Path(tempfile.gettempdir()) / 'ProvenLoop command'
+        original = os.pathsep.join(['first', str(directory), 'last'])
+        updated = prepend_path(original, directory)
+        self.assertEqual(updated, os.pathsep.join([str(directory), 'first', 'last']))
+        self.assertEqual(updated, prepend_path(updated, directory))
+
+    def test_new_profile_uses_requested_reasoning_defaults(self):
+        from hindsight_embed.profile_manager import ProfileManager
+        args = argparse.Namespace(port=0, model=None, model_dir=None, reasoning_effort=None)
+        with patch.object(ProfileManager, 'load_profile_config', return_value={}), \
+             patch.object(ProfileManager, 'create_profile') as create, \
+             patch('provenloop.cli.socket.socket'):
+            cli.configure_profile(args)
+            config = create.call_args.args[2]
+            self.assertEqual(config['HINDSIGHT_API_LLM_MODEL'], 'gpt-6-astra')
+            self.assertEqual(config['HINDSIGHT_API_LLM_REASONING_EFFORT'], 'xhigh')
+
     def test_worktree_and_main_share_bank_but_siblings_do_not(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)

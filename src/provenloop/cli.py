@@ -15,6 +15,8 @@ import uuid
 import webbrowser
 
 VERSION = '0.10.0'
+DEFAULT_MODEL = 'gpt-6-astra'
+DEFAULT_REASONING_EFFORT = 'xhigh'
 PROFILE = 'provenloop'
 PACKAGE = Path(__file__).parent
 
@@ -187,6 +189,8 @@ def configure_profile(args):
             raise RuntimeError('The profile uses another port. Stop and edit the official profile before changing it.')
         if args.model and existing.get('HINDSIGHT_API_LLM_MODEL') != args.model:
             raise RuntimeError('The profile uses another model. Edit the official profile and restart.')
+        if getattr(args, 'reasoning_effort', None) and existing.get('HINDSIGHT_API_LLM_REASONING_EFFORT') != args.reasoning_effort:
+            raise RuntimeError('The profile uses another reasoning effort. Edit HINDSIGHT_API_LLM_REASONING_EFFORT in the official profile and restart.')
         if getattr(args, 'model_dir', None):
             selected = str(Path(args.model_dir).resolve(strict=True) / 'onnx/model.onnx')
             if existing.get('HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH') != selected:
@@ -194,6 +198,8 @@ def configure_profile(args):
         return
     config = {
         'HINDSIGHT_API_LLM_PROVIDER': 'github-copilot',
+        'HINDSIGHT_API_LLM_MODEL': args.model or DEFAULT_MODEL,
+        'HINDSIGHT_API_LLM_REASONING_EFFORT': getattr(args, 'reasoning_effort', None) or DEFAULT_REASONING_EFFORT,
         'HINDSIGHT_API_DATABASE_SCHEMA': 'public',
         'HINDSIGHT_API_HOST': '127.0.0.1',
         'HINDSIGHT_API_EMBEDDINGS_PROVIDER': 'onnx',
@@ -205,8 +211,6 @@ def configure_profile(args):
         'HINDSIGHT_EMBED_CP_VERSION': VERSION,
         'HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT': '0',
     }
-    if args.model:
-        config['HINDSIGHT_API_LLM_MODEL'] = args.model
     if args.model_dir:
         directory = Path(args.model_dir).resolve(strict=True)
         graph = directory / 'onnx/model.onnx'
@@ -324,7 +328,10 @@ def setup(args):
     backup(instructions)
     write_rule(instructions)
     integrate('check', mcp, coding_config, root, bank, api_url)
+    from .command import install
+    launcher = install(home() / 'bin')
     print(f'\nSetup complete. Project: {project}\nMemory bank: {bank}\nUI: {ui_url}')
+    print(f'Command installed: {launcher}. Open a new terminal to use provenloop.')
     print('Reload VS Code and enable its Hindsight MCP server. Start a new Copilot CLI session.')
     if not args.no_open:
         webbrowser.open(ui_url)
@@ -337,7 +344,9 @@ def main(argv=None):
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--project', default=os.getcwd())
     setup_parser.add_argument('--port', type=int)
-    setup_parser.add_argument('--model', help='Copilot model; defaults to the official provider default.')
+    setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
+    setup_parser.add_argument('--reasoning-effort', choices=['low', 'medium', 'high', 'xhigh', 'max'],
+                              help=f'Reasoning effort for new profiles (default: {DEFAULT_REASONING_EFFORT}).')
     setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
     setup_parser.add_argument('--no-open', action='store_true')
     for command in ['start', 'stop', 'status', 'check', 'ui']:

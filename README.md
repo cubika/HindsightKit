@@ -18,16 +18,18 @@ To connect another project:
 
 The command installs missing uv/Node prerequisites, a pinned Python environment, Hindsight, its local database, multilingual embeddings, the official UI, and both Copilot integrations. It checks Copilot authentication and starts Copilot's own login flow when needed. A Copilot entitlement and internet access are required. No Hindsight Cloud account or API key is needed.
 
+Setup adds the native provenloop command to your user PATH. It works immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
+
 Setup starts the services and checks a temporary memory by storing and recalling it through the real model provider. The test bank is removed afterward. This uses a small amount of Copilot allowance. Memory stays in the local Hindsight database; extraction and reflection use Copilot's hosted models.
 
-Copilot Chat and CLI keep the model selected for the user's task. Hindsight makes separate calls through the official Copilot SDK using the signed-in account's allowance. Its model is configured independently: `-Model` sets `HINDSIGHT_API_LLM_MODEL` during first setup; without it, Hindsight 0.10.0 defaults to `gpt-5.6-terra`. Changing the model in Copilot Chat does not change Hindsight's model. For an existing installation, edit that setting in `~/.hindsight/profiles/provenloop.env` and restart ProvenLoop.
+Copilot Chat and CLI keep the model selected for the user's task. Hindsight makes separate calls through the official Copilot SDK using the signed-in account's allowance. New ProvenLoop profiles use `gpt-6-astra` with `xhigh` reasoning. `-Model` and `-ReasoningEffort` set `HINDSIGHT_API_LLM_MODEL` and `HINDSIGHT_API_LLM_REASONING_EFFORT`. Changing the model in Copilot Chat does not change Hindsight's model. For an existing installation, edit these settings in `~/.hindsight/profiles/provenloop.env` and restart ProvenLoop. Rerunning setup preserves existing profile settings.
 
 After setup, reload VS Code, use Copilot Chat in agent mode, and allow the Hindsight MCP server when VS Code asks. Start a fresh Copilot CLI session. VS Code controls its own workspace trust and MCP consent.
 
 Optional settings:
 
 ```powershell
-.\setup.ps1 -Model gpt-5.6-terra -Port 9077 -NoOpen
+.\setup.ps1 -Model gpt-6-astra -ReasoningEffort xhigh -Port 9077 -NoOpen
 # Reuse an already downloaded official multilingual-e5-small model:
 .\setup.ps1 -ModelDir C:\models\e5
 ```
@@ -37,12 +39,12 @@ The model directory must contain the official E5 ONNX graph at `onnx/model.onnx`
 ## Daily use
 
 ```powershell
-.\.venv\Scripts\provenloop.exe status
-.\.venv\Scripts\provenloop.exe start
-.\.venv\Scripts\provenloop.exe ui
-.\.venv\Scripts\provenloop.exe check
-.\.venv\Scripts\provenloop.exe stop
-.\.venv\Scripts\provenloop.exe copilot
+provenloop status
+provenloop start
+provenloop ui
+provenloop check
+provenloop stop
+provenloop copilot
 ```
 
 Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. Services keep running when setup exits. Run `start` after restarting Windows; no login task or system service is installed.
@@ -56,6 +58,7 @@ Use the official Hindsight UI to inspect memories, correct facts, or invalidate 
 | Location | Contents |
 | --- | --- |
 | This checkout's .venv | Pinned Python runtime packages |
+| ~/.provenloop/bin | Native provenloop command registered on the user PATH |
 | ~/.provenloop/runtime | Official npm components |
 | ~/.hindsight/profiles/provenloop.env | Official Hindsight configuration |
 | ~/.hindsight/profiles/provenloop.log | API log |
