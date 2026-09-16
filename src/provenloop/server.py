@@ -23,6 +23,10 @@ class Activity(BaseModel):
     used: bool = False
 
 
+class RepositoryScope(BaseModel):
+    repository: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+
+
 class Inventory:
     def __init__(self, path):
         self.path = Path(path)
@@ -76,6 +80,24 @@ class ClientsExtension(HttpExtension):
             key = os.environ.get('HINDSIGHT_API_TENANT_API_KEY', '')
             if not key or not hmac.compare_digest((authorization or '').encode(), ('Bearer ' + key).encode()):
                 raise HTTPException(401, 'Invalid API key')
+
+        @router.get('/provenloop/connection')
+        def connection(authorization: str | None = Header(default=None)):
+            authorize(authorization)
+            from .connection import validate_bank
+            from .memory import SHARED_BANK
+            return {'protocol': 1, 'routing': 'repository',
+                    'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK))}
+
+        @router.post('/provenloop/scope')
+        def scope(body: RepositoryScope, authorization: str | None = Header(default=None)):
+            authorize(authorization)
+            from .connection import validate_bank
+            from .memory import SHARED_BANK
+            shared = validate_bank(self.config.get('memory_bank', SHARED_BANK))
+            aliases = Inventory(self.config.get('aliases_file', str(inventory.path.with_name('repositories.json')))).read()
+            bank = aliases.get(body.repository, 'provenloop-repo-' + body.repository) if body.repository else shared
+            return {'bank': validate_bank(bank), 'sharedBank': shared}
 
         @router.get('/provenloop/clients')
         def clients(authorization: str | None = Header(default=None)):

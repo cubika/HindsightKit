@@ -1,57 +1,45 @@
-# Shared memory setup
+# Server and client setup
 
-Local installation remains the default. Shared setup adds an authenticated API and a client activity list.
-
-ProvenLoop connects clients to an HTTP(S) API address. IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same configuration. Tunnel accounts, IDs, and processes stay outside ProvenLoop. Memory remains in one official Hindsight server.
-
-## Installation
-
-The default `./setup.ps1` installs the local server, dashboard, and Copilot integrations. A shared server additionally enables API authentication and selects its listening address. Existing memory and unrelated configuration are preserved. Changing an existing managed connection is explicit.
-
-Client installation accepts a server URL and an explicit bank ID. A new client installs the Python client runtime, Node, and Copilot integrations, without Hindsight server packages, a database, embedding models, or a dashboard. Switching an existing server installation to a client preserves its installed server components and data. Credentials come from a hidden prompt or an environment variable, never a command-line token argument. The local official configuration stores the credential and must stay out of Git.
-
-Clients use the same bank ID even when their checkout paths differ. An explicit bank applies to both MCP tools and automatic session capture. Ordinary local installation retains repository/shared routing. Selecting a different bank does not copy or merge existing memories.
-
-## Network and lifecycle
-
-On the server, choose the existing bank to share, or create one with this setup. The API key prompt is hidden. Use the same key when installing clients. For private IPv4 access:
+Install the server on the machine that stores memory:
 
 ```powershell
-.\setup.ps1 -Share -Listen 0.0.0.0 -Bank provenloop-shared -NoOpen
+.\setup.ps1
 ```
 
-An existing managed installation changing its bank needs `-ReplaceConnection`. For tunnels, use `-Listen 127.0.0.1` and forward API port 9077 using your chosen network tool. Direct access also requires a network/firewall rule allowing the selected API port; setup does not change firewall rules.
+Setup installs and starts Hindsight, PostgreSQL, and the local dashboard. The authenticated API listens on IPv4 port 9077. It generates a connection key on first installation and saves it in a private local file; setup reports that file's location. Server setup does not register editor MCP servers, hooks, or client activity. The server still needs a Copilot login for its model calls.
 
-On another machine, copy or clone this checkout, then run:
+Install a client on each machine used for coding:
 
 ```powershell
-.\setup.ps1 -ApiUrl http://10.0.0.20:9077 -Bank provenloop-shared -DeviceName DevBox-West
-# For an already established local port forward:
-.\setup.ps1 -ApiUrl http://127.0.0.1:9077 -Bank provenloop-shared -DeviceName DevBox-West
+.\setup.ps1 -Server http://memory-host:9077
 ```
 
-These are alternative addresses, not sequential setup steps. Use the actual forwarding port and keep it free of any local Hindsight server. After installation, reload VS Code and open a fresh Copilot CLI session. A bare `provenloop setup` keeps the saved mode, address, bank, and device identity. To change a managed address or bank, rerun setup with `--replace-connection`; to return to the full local installation, run `./setup.ps1 -Local -ReplaceConnection` from this checkout. Existing services are not stopped by client setup.
+Enter the server's connection key at the hidden prompt. The machine name comes from the local hostname. No bank, device name, listening address, or tunnel ID is required. Client setup installs coding integrations without a database, models, dashboard, or server processes.
 
-For scripted setup, `-ApiKeyEnv NAME` reads an existing environment variable named `NAME`; the value is not passed as an argument. Model calls use the server's Copilot account. Clients keep their own Copilot login for coding work.
+Bank selection is internal. Repository sessions keep their own memory and read shared memory; sessions outside Git use shared memory. Clones with the same Git origin share repository memory across machines, even when their local paths differ. Repositories without an origin stay device-local. Setup does not combine unrelated repository memories.
 
-The shared API supports both direct access and an authenticated tunnel. Direct HTTP is suitable only on a trusted private network; use HTTPS through an existing reverse proxy on other networks. HTTPS clients verify certificates. Configure the final API origin, without a login redirect or URL rewrite: the official SDK and transcript hook retain their upstream redirect behaviour. Connection checks and inventory requests reject redirects. The server dashboard remains local.
+## Local use and network transport
 
-Client `status` checks its configured API and bank. `check` exercises retain and recall in a disposable bank and removes it. Client `start`, `stop`, and `ui` explain that service management belongs on the server; they never start a replacement local database. Network failures do not change the configured destination.
+To use memory on the server machine, install the client there too:
+
+```powershell
+.\setup.ps1 -Server http://127.0.0.1:9077
+```
+
+The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Running plain setup always prepares the server and leaves existing client settings alone. Running setup with a server address changes only the managed client connection after validation.
+
+IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same command. For an established tunnel, use its local forwarded address as the server URL. ProvenLoop does not manage tunnel IDs, accounts, or processes. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
+
+The server starts listening during setup. After reboot, run provenloop start; stop and ui manage only the local server. No login task or Windows service is installed. The status command reports installed roles. Client-only installations never launch a replacement local server when their connection is unavailable.
 
 ## Client activity
 
-The optional shared-server extension stores a small, bounded inventory outside the memory database. Each installation generates a device ID and a display name. VS Code and Copilot CLI are separate registered clients on that device. Repeated setup updates the same records.
+The clients command lists registered machines and coding integrations, with last use and activity within five minutes. It counts configured integrations, not open windows or sessions. Registration is idempotent; the hostname is refreshed during setup. The list contains no memory content and does not implement per-device permissions.
 
-`provenloop clients` groups registered clients by device and shows their last reported successful MCP call or CLI prompt recall. Transcript writeback alone does not update this timestamp because the upstream hook can return success after logging a failed submission. Activity in the last five minutes is labelled recent; this is not a count of open windows, live sockets, or online sessions. Timestamps update at most once per client per 30 seconds. There are no heartbeats or background client service. Display names and activity are self-reported under the shared API credential; this inventory does not provide per-device permissions or revocation.
+## Upgrade and validation
 
-The extension uses the official Hindsight HTTP extension interface and shared API authentication. It does not change memory extraction, retrieval, or storage. A reporting failure must not discard a successful memory operation.
+Existing databases, memory banks, model configuration, and unrelated editor settings are preserved. Setup recognizes old repository mappings from local CLI session records and reuses their banks. Conflicting mappings stop setup rather than choosing one silently. Old banks with no surviving session or mapping record remain in Hindsight; their association cannot be reconstructed automatically. They can still be inspected in the server dashboard. Rerun client setup after upgrading the server. Server setup does not remove an already installed client. When both roles share this checkout, the Python environment retains server dependencies. A fresh client installation excludes them.
 
-## Validation
+Advanced server model and port settings remain available through setup help. Automated deployment can supply an API key through -ApiKeyEnv NAME; secret values are never command-line arguments. A new server normally generates its own key.
 
-Automated checks cover local defaults, a client-only installation path, authenticated SDK calls, fixed-bank routing, duplicate registration, bounded activity records, configuration conflicts, unavailable servers, and direct HTTP plus local TCP forwarding. Tests use isolated configuration and synthetic data.
-
-On 2026-09-16, 49 tests passed using the existing Python environment, including real stdio MCP sessions and Windows background-process checks. The dependency lock passed offline consistency validation and the client dependency export excludes Hindsight API, embed, PostgreSQL, and model packages. A fresh client environment and wheel build could not finish because downloads from files.pythonhosted.org failed with TLS HandshakeFailure. These download/install paths still need verification on a clean machine. No production memory was used for these checks.
-
-Actual Dev Box networking, company login policy, and Microsoft relay reconnect behaviour require the two-machine check. On the first machine, retain a unique test fact; on the second, recall it from the same bank. Check both VS Code and CLI, inspect the client list, interrupt and restore the network, and remove the test document afterward.
-
-Sources: [Hindsight configuration](https://hindsight.vectorize.io/developer/configuration), [Dev Tunnels connections](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands), [Dev Tunnels network requirements](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security).
+Tests use temporary profiles, synthetic keys, HTTP fixtures, local TCP forwarding, and real stdio MCP sessions. Actual Dev Box networking, company login policy, and tunnel reconnect behaviour require a two-machine check. A fresh dependency download was previously blocked by files.pythonhosted.org TLS HandshakeFailure; this is separate from local runtime tests.

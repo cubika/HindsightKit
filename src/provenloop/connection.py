@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -13,14 +14,40 @@ def config_path() -> Path:
     return Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
 
 
+def device_id(previous=None):
+    from .cli import home
+    from filelock import FileLock
+    path = home() / 'device-id'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(path) + '.lock', timeout=5):
+        if path.is_file():
+            return str(uuid.UUID(path.read_text(encoding='utf-8').strip()))
+        identity = str(uuid.UUID(previous)) if previous else str(uuid.uuid4())
+        path.write_text(identity, encoding='utf-8')
+        return identity
+
+
 def load() -> dict:
     path = config_path()
     if path.is_file():
         return json.loads(path.read_text(encoding='utf-8'))
+    return server_load()
+
+
+def server_load() -> dict:
+    """Server processes never inherit a coding client's remote destination or key."""
     from .cli import profile_config
     profile, paths = profile_config()
     return {'apiUrl': f'http://127.0.0.1:{paths.port}',
-            'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY')}
+            'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY'), 'provenloop': {'mode': 'server'}}
+
+
+def has_server() -> bool:
+    return (Path.home() / '.hindsight/profiles/provenloop.env').is_file()
+
+
+def management() -> dict:
+    return server_load() if has_server() else load()
 
 
 def validate_url(value: str) -> str:

@@ -97,7 +97,7 @@ class ConnectorLifecycleTests(unittest.TestCase):
         from types import SimpleNamespace
         with patch.object(cli, 'prepare_env'), patch.object(cli, 'require_local'), \
              patch.object(cli, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
-             patch.object(cli.connection, 'load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
+             patch.object(cli.connection, 'server_load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
              patch.object(cli.connection, 'request', new_callable=AsyncMock), \
              patch.object(cli, 'start') as start, \
              patch.object(connectors, 'ensure_running', return_value='http://127.0.0.1:19078'), \
@@ -181,7 +181,7 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
             listener.close()
-            with patch.object(connection, "load", return_value=config), \
+            with patch.object(connection, "server_load", return_value=config), \
                  patch.object(connection, "sdk", wraps=connection.sdk) as sdk, \
                  patch.object(connection, "Hindsight", return_value=sdk_client) as hindsight, \
                  patch("provenloop.mail_sync.MailSync", return_value=sync) as make_sync:
@@ -216,7 +216,7 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-secret",
                   "provenloop": {"mode": "client", "bank": "shared-on-server"}}
         with tempfile.TemporaryDirectory() as temp, \
-             patch.object(connection, "load", return_value=config), \
+             patch.object(connection, "server_load", side_effect=RuntimeError('No local Hindsight server')), \
              patch.object(connection, "sdk") as sdk, \
              patch("provenloop.mail_sync.MailSync") as runner:
             with self.assertRaisesRegex(RuntimeError, "local Hindsight server"):

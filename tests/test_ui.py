@@ -57,6 +57,7 @@ class UiTests(unittest.TestCase):
             for error, expected in [(TimeoutError('dashboard unavailable'), RuntimeError),
                                     (KeyboardInterrupt(), KeyboardInterrupt)]:
                 with self.subTest(error=type(error).__name__), \
+                     patch.object(cli.connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
                      patch.object(Path, 'is_file', return_value=True), \
                      patch.object(cli, 'node', return_value='node'), \
                      patch.object(cli.subprocess, 'Popen', return_value=process), \
@@ -99,7 +100,7 @@ class UiTests(unittest.TestCase):
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]
             listener.close()
-            server = root / 'node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js'
+            server = root / 'runtime/node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js'
             server.parent.mkdir(parents=True)
             server.write_text('''import ctypes, json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -122,7 +123,8 @@ HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()
 from pathlib import Path
 from provenloop import cli
 root, port = Path(sys.argv[1]), int(sys.argv[2])
-cli.runtime = lambda: root
+cli.home = lambda: root
+cli.connection.server_load = lambda: {'apiUrl': 'http://127.0.0.1:9077'}
 cli.node = lambda: sys._base_executable
 paths = argparse.Namespace(port=9077, ui_port=port, ui_log=root / 'ui.log')
 cli.launch_ui(paths, f'http://localhost:{port}')

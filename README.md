@@ -1,32 +1,31 @@
 # ProvenLoop
 
-Set up local [Hindsight](https://github.com/vectorize-io/hindsight) memory for GitHub Copilot Chat and Copilot CLI. Install once for your Windows user. Each session selects its repository memory automatically; sessions outside Git use shared memory. Hindsight owns storage, extraction, recall, and consolidation.
+Run a [Hindsight](https://github.com/vectorize-io/hindsight) memory server and connect GitHub Copilot clients to it. Each session selects its repository memory automatically; sessions outside Git use shared memory. Hindsight owns storage, extraction, recall, and consolidation.
 
 ## Setup on Windows
 
-From this checkout, run:
+Install and start the server:
 
 ```powershell
 .\setup.ps1
 ```
 
-After installation, setup can be run again from any directory:
+Install a client on a coding machine:
 
 ```powershell
-provenloop setup
+.\setup.ps1 -Server http://memory-host:9077
 ```
 
-To share memory between machines, keep one server and install clients using its API URL. Direct IP/DNS access and local ports forwarded by Dev Tunnels or SSH use the same client configuration. Client installations have no dashboard. See [shared memory setup](docs/shared-memory.md) for server/client commands, authentication, and the simple machine activity list. Local installation remains the default.
+For entirely local use, run both commands on the same machine, using http://127.0.0.1:9077 for the client. Server setup starts the API listening automatically. Client setup asks for the server connection key once; the hostname and memory routing are automatic. See [server and client setup](docs/shared-memory.md) for keys, tunnels, upgrades, and client activity.
 
-Local setup installs missing uv/Node prerequisites, a pinned Python environment, Hindsight, standalone PostgreSQL, multilingual embeddings, the official UI, and both Copilot integrations. It checks Copilot authentication and starts Copilot's own login flow when needed. A Copilot entitlement and internet access are required. No Hindsight Cloud account or API key is needed for local-only use.
-
+Server setup installs Hindsight, standalone PostgreSQL, embeddings, and the dashboard. It does not register coding integrations. Client setup installs the coding integrations without a database, models, or dashboard. Each role keeps its own settings, including when both run on one machine. The server uses its Copilot account for model calls; coding clients use their own Copilot login.
 Setup adds the native provenloop command to your user PATH. It works immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
 
 Setup starts the services and checks a temporary memory by storing and recalling it through the real model provider. The test bank is removed afterward. This uses a small amount of Copilot allowance. Memory stays in the local Hindsight database; extraction and reflection use Copilot's hosted models.
 
 Copilot Chat and CLI keep the model selected for the user's task. Hindsight makes separate calls through the official Copilot SDK using the signed-in account's allowance. New ProvenLoop profiles use `gpt-6-astra` with `xhigh` reasoning. `-Model` and `-ReasoningEffort` set `HINDSIGHT_API_LLM_MODEL` and `HINDSIGHT_API_LLM_REASONING_EFFORT`. Changing the model in Copilot Chat does not change Hindsight's model. For an existing installation, edit these settings in `~/.hindsight/profiles/provenloop.env` and restart ProvenLoop. Rerunning setup preserves existing profile settings.
 
-After setup, reload VS Code, use Copilot Chat in agent mode, and allow the Hindsight MCP server when VS Code asks. Start a fresh Copilot CLI session. VS Code controls its own workspace trust and MCP consent.
+After client setup, reload VS Code, use Copilot Chat in agent mode, and allow the Hindsight MCP server when VS Code asks. Start a fresh Copilot CLI session. VS Code controls its own workspace trust and MCP consent.
 
 Optional settings:
 
@@ -72,7 +71,7 @@ The Git common directory identifies a repository: subdirectories and worktrees s
 
 The CLI prompt hook runs bounded, parallel recall requests for the allowed banks. Session writeback uses the unmodified official Copilot transcript hook. Both clients expose retain, recall, and reflect through a small MCP adapter that selects banks itself; the agent cannot supply a different bank ID. Reflect also reads only the permitted banks. Token budgets are split across the results.
 
-VS Code uses user-level MCP configuration and global Copilot instructions. Its workspace roots determine the repository. Open one repository per VS Code window; a multi-root workspace spanning different repositories is rejected, and missing workspace information never silently writes to shared memory. A window with no folders uses shared memory when VS Code reports an empty root list. Existing default/named VS Code profiles and Insiders are configured; future independent profiles need to inherit MCP settings or rerun setup. Remote machines and containers need their own client installation or local setup. An explicitly selected bank overrides repository routing, as described in [shared memory setup](docs/shared-memory.md).
+VS Code uses user-level MCP configuration and global Copilot instructions. Its workspace roots determine the repository. Open one repository per VS Code window; a multi-root workspace spanning different repositories is rejected, and missing workspace information never silently writes to shared memory. A window with no folders uses shared memory when VS Code reports an empty root list. Existing default/named VS Code profiles and Insiders are configured; future independent profiles need to inherit MCP settings or rerun setup. Remote machines and containers need their own client installation or local setup. Clients sharing the same Git origin use the same repository memory across machines. Bank selection is internal; see [server and client setup](docs/shared-memory.md).
 
 No per-repository enable step is needed. Initial git-history import and the automatic codebase survey remain disabled. Upgrading removes only known ProvenLoop workspace registrations, preserving unrelated settings and all existing banks.
 
@@ -96,6 +95,8 @@ Configuration and the delivery ledger live in `~/.provenloop/mail`. Credentials 
 | ~/.provenloop/bin | Native provenloop command registered on the user PATH |
 | ~/.provenloop/runtime | Official npm components |
 | ~/.provenloop/client-runtime | Official npm integration for client installations |
+| ~/.provenloop/server/connection-key.txt | Private server connection key |
+| ~/.provenloop/repositories.json | Legacy repository aliases; no memory content |
 | ~/.provenloop/clients.json | Shared server device inventory; no memory content |
 | ~/.hindsight/profiles/provenloop.env | Official Hindsight configuration |
 | ~/.hindsight/profiles/provenloop.log | API log |

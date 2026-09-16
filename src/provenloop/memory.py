@@ -16,10 +16,11 @@ SHARED_BANK = 'provenloop-shared'
 class Scope:
     bank: str
     repository: str | None = None
+    shared_bank: str = SHARED_BANK
 
     @property
     def readable_banks(self) -> tuple[str, ...]:
-        return (self.bank, SHARED_BANK) if self.repository else (self.bank,)
+        return tuple(dict.fromkeys((self.bank, self.shared_bank))) if self.repository else (self.bank,)
 
 
 def scope_for(directory: str | Path) -> Scope:

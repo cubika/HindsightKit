@@ -9,6 +9,7 @@ from urllib.request import url2pathname
 from fastmcp import Context, FastMCP
 from . import connection
 from .memory import Memory, Scope, SHARED_BANK, scope_for
+from .routing import resolve
 
 
 def scope_from_roots(roots) -> Scope:
@@ -38,9 +39,9 @@ def serve(context: str, directory: str | None = None):
             path = Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
             config = json.loads(path.read_text(encoding='utf-8'))
             _, pinned = session_config({'sessionId': session_id, 'cwd': directory or os.getcwd()}, config)
-            scope = Scope(pinned['bankId'], pinned['_repository'])
+            scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', SHARED_BANK))
         else:
-            scope = scope_for(directory or os.getcwd())
+            scope = asyncio.run(resolve(config, scope_for(directory or os.getcwd())))
     lock = asyncio.Lock()
     root_uris = None
 
@@ -56,7 +57,7 @@ def serve(context: str, directory: str | None = None):
                 if root_uris is not None and current != root_uris:
                     raise ValueError('The workspace changed. Restart the Hindsight MCP server before using memory.')
                 if scope is None:
-                    scope = await asyncio.to_thread(scope_from_roots, roots.roots)
+                    scope = await resolve(config, await asyncio.to_thread(scope_from_roots, roots.roots))
                     root_uris = current
         return scope
 
@@ -91,7 +92,7 @@ def serve(context: str, directory: str | None = None):
         """Search imported work email for decisions and findings, with source links. Read only."""
         if not query.strip() or not 256 <= max_tokens <= 16384:
             raise ValueError('Provide a query and max_tokens between 256 and 16384.')
-        if connection.client_mode(config):
+        if connection.fixed_bank(config):
             raise ValueError('Email memory is available on the local mail-import installation.')
         client = connection.sdk(config, timeout=90)
         try:

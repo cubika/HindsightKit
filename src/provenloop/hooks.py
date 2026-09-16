@@ -12,6 +12,7 @@ from filelock import FileLock
 from . import connection
 from .cli import home, node, runtime
 from .memory import Memory, Scope, scope_for
+from .routing import resolve
 
 
 def session_config(event: dict, config: dict) -> tuple[Path, dict]:
@@ -19,7 +20,7 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
     if not isinstance(session_id, str) or not session_id:
         raise ValueError('Copilot did not provide a session ID; skipping memory to avoid mixing sessions.')
     bank = connection.fixed_bank(config)
-    destination = json.dumps((config.get('apiUrl', ''), bank)) if bank else ''
+    destination = json.dumps((config.get('apiUrl', ''), bank, config.get('provenloop', {}).get('routing'))) if config.get('provenloop') else ''
     name = hashlib.sha256((session_id + destination).encode()).hexdigest()
     path = home() / 'sessions' / (name + '.json')
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,13 +28,14 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
         if path.is_file():
             pinned = json.loads(path.read_text(encoding='utf-8'))
             directory = pinned['_directory']
-            scope = Scope(pinned['bankId'], pinned['_repository'])
+            scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', 'provenloop-shared'))
         else:
             directory = str(Path(event.get('cwd') or os.getcwd()).resolve(strict=True))
             bank = connection.fixed_bank(config)
-            scope = Scope(bank) if bank else scope_for(directory)
+            scope = Scope(bank) if bank else asyncio.run(resolve(config, scope_for(directory)))
         resolved = {**config, 'bankId': scope.bank, 'dynamicBankId': False, 'optInOnly': False,
                     '_directory': directory, '_repository': scope.repository,
+                    '_shared_bank': scope.shared_bank,
                     'autoSeed': False, 'codebaseSurvey': False, 'manageBankConfig': False}
         for key in ['mapPathToBank', 'optInPaths', 'harnesses', 'banks']:
             resolved.pop(key, None)
@@ -48,7 +50,7 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
 async def prompt_memory(config, event):
     client = connection.sdk(config, timeout=6, max_attempts=1)
     try:
-        service = Memory(client, Scope(config['bankId'], config['_repository']))
+        service = Memory(client, Scope(config['bankId'], config['_repository'], config.get('_shared_bank', 'provenloop-shared')))
         result = await asyncio.wait_for(service.read('recall', event.get('prompt') or '', 2048), timeout=7)
         await connection.report(config, 'copilot-cli')
         return result

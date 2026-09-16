@@ -56,7 +56,7 @@ class SharingConfigurationTests(unittest.TestCase):
 
     def test_sharing_preserves_profile_and_enables_official_extensions(self):
         original = self.path.read_bytes()
-        cli.configure_sharing(argparse.Namespace(listen="0.0.0.0"), TOKEN)
+        cli.configure_sharing(TOKEN, "provenloop-shared")
         config, _ = self.profile()
         self.assertEqual(config["HINDSIGHT_API_HOST"], "0.0.0.0")
         self.assertEqual(config["HINDSIGHT_API_TENANT_EXTENSION"], TENANT_EXTENSION)
@@ -75,12 +75,12 @@ class SharingConfigurationTests(unittest.TestCase):
         self.assertFalse((self.root / "clients.json").exists())
 
     def test_repeating_sharing_does_not_stop_services_or_rewrite_config(self):
-        cli.configure_sharing(argparse.Namespace(listen="0.0.0.0"), TOKEN)
+        cli.configure_sharing(TOKEN, "provenloop-shared")
         original = self.path.read_bytes()
         self.manager.reset_mock()
         self.run.reset_mock()
         with patch.object(cli, "backup") as backup:
-            cli.configure_sharing(argparse.Namespace(listen=None), TOKEN)
+            cli.configure_sharing(TOKEN, "provenloop-shared")
         self.manager.assert_not_called()
         self.run.assert_not_called()
         backup.assert_not_called()
@@ -89,9 +89,9 @@ class SharingConfigurationTests(unittest.TestCase):
     def test_stopped_services_are_not_stopped_again(self):
         self.manager.return_value.is_ui_running.return_value = False
         self.manager.return_value.is_running.return_value = False
-        cli.configure_sharing(argparse.Namespace(listen=None), TOKEN)
+        cli.configure_sharing(TOKEN, "provenloop-shared")
         self.run.assert_not_called()
-        self.assertEqual(self.profile()[0]["HINDSIGHT_API_HOST"], "127.0.0.1")
+        self.assertEqual(self.profile()[0]["HINDSIGHT_API_HOST"], "0.0.0.0")
 
     def test_conflicting_extensions_and_mcp_auth_reject_before_service_changes(self):
         original = self.path.read_text(encoding="utf-8")
@@ -106,22 +106,11 @@ class SharingConfigurationTests(unittest.TestCase):
                 self.path.write_text(original + name + "=" + value + "\n", encoding="utf-8")
                 before = self.path.read_bytes()
                 with self.assertRaises(RuntimeError):
-                    cli.configure_sharing(argparse.Namespace(listen=None), TOKEN)
+                    cli.configure_sharing(TOKEN, "provenloop-shared")
                 self.assertEqual(self.path.read_bytes(), before)
         self.manager.assert_not_called()
         self.run.assert_not_called()
         self.assertFalse(self.path.with_name("provenloop.env.provenloop-backup").exists())
-
-    def test_unsupported_listening_address_rejects_before_service_changes(self):
-        before = self.path.read_bytes()
-        for listen in ["192.0.2.10", "::1", "::", "localhost", "not-an-address"]:
-            with self.subTest(listen=listen), self.assertRaises(ValueError):
-                cli.configure_sharing(argparse.Namespace(listen=listen), TOKEN)
-        self.manager.assert_not_called()
-        self.run.assert_not_called()
-        self.assertEqual(self.path.read_bytes(), before)
-        self.assertFalse(self.path.with_name("provenloop.env.provenloop-backup").exists())
-
 
 class OfficialExtensionTests(unittest.TestCase):
     def test_official_api_key_extension_authenticates_rest_and_mcp_with_same_key(self):
