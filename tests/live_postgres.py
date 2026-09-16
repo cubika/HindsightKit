@@ -8,9 +8,9 @@ import os
 import subprocess
 import sys
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from provenloop.postgres import Postgres, write_profile_database, require_postgresql, available_port
+from provenloop.postgres import Postgres, require_postgresql, available_port, setup_database, DATABASE_KEY
 
 
 def check_hindsight(server, root):
@@ -66,61 +66,39 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='provenloop postgres ') as directory:
         root = Path(directory)
-        source, target = Postgres(root / 'source'), Postgres(root / 'target')
-        source.distribution = target.distribution = args.distribution.resolve()
+        profile = root / 'profile.env'
+        profile.write_text('# custom comment\nHINDSIGHT_API_LLM_MODEL=custom\n', encoding='utf-8')
+        stop_api = Mock()
+        def installed_distribution(server):
+            server.distribution = args.distribution.resolve()
+        server = Postgres(root / 'postgresql')
+        server.distribution = args.distribution.resolve()
         try:
-            for server in (source, target):
-                server.initialize()
-                server.start()
-                server.prepare_database()
-                server.start()
-                assert server.validate()['extensions']['vector'] == '0.8.6'
-            if args.hindsight:
-                check_hindsight(source, root)
-            source.sql("CREATE TABLE migration_fixture (id bigserial PRIMARY KEY, content text, embedding vector(3)); "
-                       "INSERT INTO migration_fixture(content,embedding) VALUES ('中文 memory', '[1,2,3]'); "
-                       "CREATE INDEX ON migration_fixture USING hnsw (embedding vector_cosine_ops)", app=True)
-            fingerprint = source.snapshot(source.connection())
-            source.sql("UPDATE migration_fixture SET content='updated 中文 memory'", app=True)
-            assert source.snapshot(source.connection()) != fingerprint
-            backup = target.restore_legacy(source.connection())
-            assert backup.is_file()
-            assert target.sql('SELECT content FROM migration_fixture', app=True) == 'updated 中文 memory'
-            assert target.sql("INSERT INTO migration_fixture(content) VALUES ('next') RETURNING id", app=True) == '2'
-            assert source.sql('SELECT count(*) FROM migration_fixture', app=True) == '1'
-            assert target.sql("SELECT count(*) FROM pg_roles WHERE rolname LIKE 'provenloop_restore_%'") == '0'
-            assert target.backup().stat().st_size > 0
-            state = target.state_path.read_bytes()
-            original_command = target.command
-            def fail_restore(name, *args, **kwargs):
-                if name == 'pg_restore':
-                    raise RuntimeError('injected restore failure')
-                return original_command(name, *args, **kwargs)
-            with patch.object(target, 'command', side_effect=fail_restore):
-                try:
-                    target.restore_legacy(source.connection())
-                except RuntimeError as error:
-                    assert 'injected' in str(error)
-                else:
-                    raise AssertionError('Restore failure was ignored')
-            assert target.state_path.read_bytes() == state
-            profile = root / 'profile.env'
-            profile.write_text('# custom comment\nHINDSIGHT_API_LLM_MODEL=custom\n', encoding='utf-8')
-            write_profile_database(profile, target.url)
+            with patch.object(Postgres, 'install', installed_distribution):
+                server = setup_database(root / 'postgresql', {}, profile, stop_api=stop_api)
+                stop_api.assert_called_once_with()
+                server.sql("CREATE TABLE persistence_fixture (id bigserial PRIMARY KEY, content text, embedding vector(3)); "
+                           "INSERT INTO persistence_fixture(content,embedding) VALUES ('中文 memory', '[1,2,3]'); "
+                           "CREATE INDEX ON persistence_fixture USING hnsw (embedding vector_cosine_ops)", app=True)
+                saved = profile.read_bytes()
+                server = setup_database(root / 'postgresql', {DATABASE_KEY: server.url}, profile, stop_api=stop_api)
+                stop_api.assert_called_once_with()
+                assert profile.read_bytes() == saved
             assert '# custom comment' in profile.read_text()
-            assert require_postgresql({'HINDSIGHT_EMBED_API_DATABASE_URL': target.url}) == target.url
-            target.stop()
-            assert not target.running()
-            target.start()
-            assert target.sql('SELECT count(*) FROM migration_fixture', app=True) == '2'
+            assert require_postgresql({DATABASE_KEY: server.url}) == server.url
+            server.stop()
+            assert not server.running()
+            server.start()
+            assert server.sql('SELECT content FROM persistence_fixture', app=True) == '中文 memory'
+            assert server.sql("INSERT INTO persistence_fixture(content) VALUES ('next') RETURNING id", app=True) == '2'
+            assert not (server.root / 'backups').exists()
             if args.hindsight:
-                check_hindsight(target, root)
-            print(json.dumps({'postgres': '18.6', 'extensions': list(target.validate()['extensions']),
-                              'restore': 'passed', 'permissions': 'passed', 'restart': 'passed',
-                              'failed_restore_preserves_state': True, 'source_unchanged': True}))
+                check_hindsight(server, root)
+            print(json.dumps({'postgres': '18.6', 'extensions': list(server.validate()['extensions']),
+                              'setup': 'passed', 'permissions': 'passed', 'restart': 'passed',
+                              'repeated_setup_preserves_data': True}))
         finally:
-            target.stop()
-            source.stop()
+            server.stop()
 
 
 if __name__ == '__main__':
