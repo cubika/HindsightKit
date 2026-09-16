@@ -422,7 +422,7 @@ def setup(args):
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True)
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,ui,copilot}')
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -434,9 +434,9 @@ def main(argv=None):
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
-    mcp_parser = sub.add_parser('mcp', help=argparse.SUPPRESS)
+    mcp_parser = sub.add_parser('mcp')
     mcp_parser.add_argument('--context', choices=['cli', 'vscode'], required=True)
-    hook_parser = sub.add_parser('hook', help=argparse.SUPPRESS)
+    hook_parser = sub.add_parser('hook')
     hook_parser.add_argument('event', choices=['sessionStart', 'userPromptTransformed', 'agentStop'])
     args = parser.parse_args(argv)
     try:
