@@ -16,7 +16,9 @@ After installation, setup can be run again from any directory:
 provenloop setup
 ```
 
-The command installs missing uv/Node prerequisites, a pinned Python environment, Hindsight, its local database, multilingual embeddings, the official UI, and both Copilot integrations. It checks Copilot authentication and starts Copilot's own login flow when needed. A Copilot entitlement and internet access are required. No Hindsight Cloud account or API key is needed.
+To share memory between machines, keep one server and install clients using its API URL. Direct IP/DNS access and local ports forwarded by Dev Tunnels or SSH use the same client configuration. Client installations have no dashboard. See [shared memory setup](docs/shared-memory.md) for server/client commands, authentication, and the simple machine activity list. Local installation remains the default.
+
+Local setup installs missing uv/Node prerequisites, a pinned Python environment, Hindsight, its local database, multilingual embeddings, the official UI, and both Copilot integrations. It checks Copilot authentication and starts Copilot's own login flow when needed. A Copilot entitlement and internet access are required. No Hindsight Cloud account or API key is needed for local-only use.
 
 Setup adds the native provenloop command to your user PATH. It works immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
 
@@ -61,7 +63,7 @@ The Git common directory identifies a repository: subdirectories and worktrees s
 
 The CLI prompt hook runs bounded, parallel recall requests for the allowed banks. Session writeback uses the unmodified official Copilot transcript hook. Both clients expose retain, recall, and reflect through a small MCP adapter that selects banks itself; the agent cannot supply a different bank ID. Reflect also reads only the permitted banks. Token budgets are split across the results.
 
-VS Code uses user-level MCP configuration and global Copilot instructions. Its workspace roots determine the repository. Open one repository per VS Code window; a multi-root workspace spanning different repositories is rejected, and missing workspace information never silently writes to shared memory. A window with no folders uses shared memory when VS Code reports an empty root list. Existing default/named VS Code profiles and Insiders are configured; future independent profiles need to inherit MCP settings or rerun setup. Remote machines and containers need their own local setup.
+VS Code uses user-level MCP configuration and global Copilot instructions. Its workspace roots determine the repository. Open one repository per VS Code window; a multi-root workspace spanning different repositories is rejected, and missing workspace information never silently writes to shared memory. A window with no folders uses shared memory when VS Code reports an empty root list. Existing default/named VS Code profiles and Insiders are configured; future independent profiles need to inherit MCP settings or rerun setup. Remote machines and containers need their own client installation or local setup. An explicitly selected bank overrides repository routing, as described in [shared memory setup](docs/shared-memory.md).
 
 No per-repository enable step is needed. Initial git-history import and the automatic codebase survey remain disabled. Upgrading removes only known ProvenLoop workspace registrations, preserving unrelated settings and all existing banks.
 
@@ -74,6 +76,8 @@ Use the official Hindsight UI to inspect memories, correct facts, or invalidate 
 | This checkout's .venv | Pinned Python runtime packages |
 | ~/.provenloop/bin | Native provenloop command registered on the user PATH |
 | ~/.provenloop/runtime | Official npm components |
+| ~/.provenloop/client-runtime | Official npm integration for client installations |
+| ~/.provenloop/clients.json | Shared server device inventory; no memory content |
 | ~/.hindsight/profiles/provenloop.env | Official Hindsight configuration |
 | ~/.hindsight/profiles/provenloop.log | API log |
 | ~/.hindsight/profiles/provenloop.ui.log | UI server log |
@@ -91,7 +95,7 @@ Pinned components: Hindsight 0.10.0, coding-agents 0.6.1, hindsight-copilot 0.1.
 ## Development
 
 ```powershell
-uv sync --frozen --python 3.12
+uv sync --frozen --python 3.12 --extra server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 # Explicit live access-matrix test; uses Copilot calls and cleans its synthetic data:
 .\.venv\Scripts\python.exe tests/live_memory.py
