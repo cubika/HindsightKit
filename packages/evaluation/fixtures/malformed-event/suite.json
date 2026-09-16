@@ -1,0 +1,37 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "EVENT-SCHEMA-002",
+    "milestone": "M0",
+    "statement": "Malformed events remain visible and fail validation.",
+    "scope": "workflow",
+    "replaySpecIds": ["malformed-event"],
+    "verifierIds": ["event-schema-source-version"],
+    "requiredEvidence": ["event.invalid"],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "malformed-event",
+    "requirementId": "EVENT-SCHEMA-002",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": ["event.invalid"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "malformed-event",
+    "events": [
+      {
+        "schemaVersion": 1,
+        "adapter": "copilot-cli",
+        "adapterVersion": "1.0.82-0",
+        "eventType": "prompt.submitted",
+        "timestamp": "not-a-timestamp",
+        "trust": "user"
+      }
+    ]
+  }
+}

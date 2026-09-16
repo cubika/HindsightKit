@@ -1,0 +1,49 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "QUEUE-RECOVERY-001",
+    "milestone": "M0",
+    "statement": "Interrupted claimed items return to a recoverable state.",
+    "scope": "workflow",
+    "replaySpecIds": ["queue-interruption-recovery"],
+    "verifierIds": ["queue-recovery"],
+    "requiredEvidence": [
+      "queue.recovered",
+      "queue.recovery.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "queue-interruption-recovery",
+    "requirementId": "QUEUE-RECOVERY-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "pass",
+    "expectedEvidence": ["queue.recovery.checked"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "queue-interruption-recovery",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "queue-recovery-1",
+        "runId": "fixture",
+        "status": "queue.recovered",
+        "outputDigest": "7cdcebf7c0e5e78a4022717540dfabbb7d635ff88d3908bce0303b3b65a09ef6",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "queueAssertions": [
+      {
+        "evidenceId": "queue-recovery-1",
+        "itemId": "queue-item-1",
+        "interruptedState": "claimed",
+        "recoveredState": "pending",
+        "lost": false
+      }
+    ]
+  }
+}

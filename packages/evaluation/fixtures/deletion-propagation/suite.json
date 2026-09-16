@@ -1,0 +1,60 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "DELETION-001",
+    "milestone": "M0",
+    "statement": "Source deletion removes canonical and dependent records before success.",
+    "scope": "workflow",
+    "replaySpecIds": [
+      "deletion-propagation"
+    ],
+    "verifierIds": [
+      "deletion-propagation"
+    ],
+    "requiredEvidence": [
+      "deletion.completed",
+      "deletion.propagation.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "deletion-propagation",
+    "requirementId": "DELETION-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "pass",
+    "expectedEvidence": [
+      "deletion.completed",
+      "deletion.propagation.checked"
+    ]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "deletion-propagation",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "deletion-completed-1",
+        "runId": "fixture",
+        "status": "deletion.completed",
+        "outputDigest": "ede746555ee761244f86f23a9150eb1a276f08557e2afc562304310b601b81fb",
+        "timestamp": "2026-08-30T00:00:00.000Z"
+      }
+    ],
+    "deletionAssertions": [
+      {
+        "evidenceId": "deletion-completed-1",
+        "supported": true,
+        "sourceIds": [
+          "source-1"
+        ],
+        "dependentIds": [
+          "dependent-1"
+        ],
+        "remainingIds": []
+      }
+    ]
+  }
+}

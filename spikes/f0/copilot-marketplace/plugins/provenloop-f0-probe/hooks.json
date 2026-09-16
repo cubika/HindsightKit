@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/sessionStart",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/userPromptSubmitted",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/preToolUse",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/postToolUse",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/postToolUseFailure",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/agentStop",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:43119/hooks/sessionEnd",
+        "headers": {
+          "X-ProvenLoop-Internal": "${PROVENLOOP_INTERNAL}"
+        },
+        "allowedEnvVars": [
+          "PROVENLOOP_INTERNAL"
+        ],
+        "timeoutSec": 1
+      }
+    ]
+  }
+}

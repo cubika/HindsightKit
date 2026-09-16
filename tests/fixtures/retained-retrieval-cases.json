@@ -1,0 +1,619 @@
+[
+  {
+    "id": "mixed-convention",
+    "events": [
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T07:49:04.928Z",
+        "content": {
+          "message": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+        },
+        "deduplicationKey": "52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+          "eventType": "prompt.submitted",
+          "repoId": "synthetic-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "mixed-convention",
+          "timestamp": "2026-09-11T07:48:49.920Z",
+          "trust": "user",
+          "worktree": "C:/synthetic/distillation"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "e28a1ff3e1c0a6f607cf3661d40d2bcdd517d8b513286ec8db1de612997ed97d",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "mixed-convention-0"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T07:49:04.932Z",
+        "content": {
+          "toolResult": "Updated API examples. No commit created."
+        },
+        "deduplicationKey": "206d2f32732a639141db654433bd479e6864d6e3a405f0c749a326f4e3a0b1cb",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-206d2f32732a639141db654433bd479e6864d6e3a405f0c749a326f4e3a0b1cb",
+          "eventType": "tool.completed",
+          "repoId": "synthetic-repo",
+          "repositoryState": "known_repo",
+          "resultDigest": "f2d79780ed51239628cae916009ab8ed2e39777c2809a41dbd08b1c4c49bfb44",
+          "sessionId": "mixed-convention",
+          "timestamp": "2026-09-11T07:48:50.920Z",
+          "trust": "tool",
+          "worktree": "C:/synthetic/distillation"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "2d847d561f20a1c4e615301f6b0ea3c1732dcf2eef5c4eaddfc6108f0e2a6d60",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "mixed-convention-1"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T07:49:04.933Z",
+        "content": {
+          "message": "示例已修复。仓库文档使用英文，聊天使用中文，原始引文和标识符不翻译。"
+        },
+        "deduplicationKey": "87262912beecbf35379200cb421d81e77efa011306d5f5068f6a8a2c479187a3",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-87262912beecbf35379200cb421d81e77efa011306d5f5068f6a8a2c479187a3",
+          "eventType": "agent.message",
+          "repoId": "synthetic-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "mixed-convention",
+          "timestamp": "2026-09-11T07:48:51.920Z",
+          "trust": "model",
+          "worktree": "C:/synthetic/distillation"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "9ae477b7efab720a30249e970bfcc7ad590a10d3a5985d6f7f95a4495d695ec4",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "mixed-convention-2"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T07:49:04.933Z",
+        "deduplicationKey": "86779617e3d941c84b7dfc1cb97f7162f303a5f7d2311366be1f1ac311719ee2",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-86779617e3d941c84b7dfc1cb97f7162f303a5f7d2311366be1f1ac311719ee2",
+          "eventType": "agent.turn_completed",
+          "repoId": "synthetic-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "mixed-convention",
+          "timestamp": "2026-09-11T07:48:52.920Z",
+          "trust": "model",
+          "worktree": "C:/synthetic/distillation"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "mixed-convention-3"
+      }
+    ],
+    "window": {
+      "schemaVersion": 1,
+      "windowId": "learning-window-ca42a22f826cf084f2fd5b7c",
+      "revision": "a30352bb51d134d4d9b94eca326acee3f324626ce2273f26aeb213f2bcbff641",
+      "sessionId": "mixed-convention",
+      "repoId": "synthetic-repo",
+      "worktree": "C:/synthetic/distillation",
+      "createdAt": "2026-09-11T07:48:49.920Z",
+      "sources": [
+        {
+          "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+          "digest": "9091e1b7b5d4658dd8d4aa077b3b72445a661c2cca2ffde54ec814bc72a79b57"
+        },
+        {
+          "eventId": "event-206d2f32732a639141db654433bd479e6864d6e3a405f0c749a326f4e3a0b1cb",
+          "digest": "0cef95e494629f9ab4fc8e663d3f028ed84fde4519f6d3e38af12cfe8dba5732"
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "capturedAt": "2026-09-11T07:49:04.928Z",
+          "content": {
+            "message": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+          },
+          "deduplicationKey": "52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+          "event": {
+            "schemaVersion": 1,
+            "adapter": "copilot-cli",
+            "adapterVersion": "1.0.84-1",
+            "branch": "main",
+            "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+            "eventType": "prompt.submitted",
+            "repoId": "synthetic-repo",
+            "repositoryState": "known_repo",
+            "sessionId": "mixed-convention",
+            "timestamp": "2026-09-11T07:48:49.920Z",
+            "trust": "user",
+            "worktree": "C:/synthetic/distillation"
+          },
+          "redaction": {
+            "appliedRules": [],
+            "contentDigest": "e28a1ff3e1c0a6f607cf3661d40d2bcdd517d8b513286ec8db1de612997ed97d",
+            "droppedPaths": [],
+            "redactedPaths": [],
+            "ruleVersion": 1,
+            "truncatedPaths": []
+          },
+          "sourceEventId": "mixed-convention-0"
+        },
+        {
+          "schemaVersion": 1,
+          "capturedAt": "2026-09-11T07:49:04.932Z",
+          "content": {
+            "toolResult": "Updated API examples. No commit created."
+          },
+          "deduplicationKey": "206d2f32732a639141db654433bd479e6864d6e3a405f0c749a326f4e3a0b1cb",
+          "event": {
+            "schemaVersion": 1,
+            "adapter": "copilot-cli",
+            "adapterVersion": "1.0.84-1",
+            "branch": "main",
+            "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "eventId": "event-206d2f32732a639141db654433bd479e6864d6e3a405f0c749a326f4e3a0b1cb",
+            "eventType": "tool.completed",
+            "repoId": "synthetic-repo",
+            "repositoryState": "known_repo",
+            "resultDigest": "f2d79780ed51239628cae916009ab8ed2e39777c2809a41dbd08b1c4c49bfb44",
+            "sessionId": "mixed-convention",
+            "timestamp": "2026-09-11T07:48:50.920Z",
+            "trust": "tool",
+            "worktree": "C:/synthetic/distillation"
+          },
+          "redaction": {
+            "appliedRules": [],
+            "contentDigest": "2d847d561f20a1c4e615301f6b0ea3c1732dcf2eef5c4eaddfc6108f0e2a6d60",
+            "droppedPaths": [],
+            "redactedPaths": [],
+            "ruleVersion": 1,
+            "truncatedPaths": []
+          },
+          "sourceEventId": "mixed-convention-1"
+        }
+      ]
+    },
+    "output": {
+      "schemaVersion": 1,
+      "proposals": [
+        {
+          "rule": "Write repository documentation in English, while preserving source quotations and executable identifiers verbatim.",
+          "trigger": "When creating or editing documentation in this repository.",
+          "exclusions": [
+            "Do not translate original source quotations.",
+            "Do not translate or alter executable identifiers.",
+            "This does not require chat responses to be in English."
+          ],
+          "distillation": {
+            "criteria": {
+              "supported": true,
+              "scoped": true,
+              "reusable": true,
+              "actionable": true,
+              "concise": true,
+              "nonredundant": true
+            },
+            "rationale": "The user explicitly requires repository documentation to be in English while preserving original quotations and executable identifiers unchanged. The rule, exclusions, future use, and canonical key accurately capture that durable repository convention without extending it to chat.",
+            "schemaVersion": 1,
+            "inputDigest": "9148819c80b06f846b810216920e6940a785b3c3d19d59cd719b261e7ed7b3b5",
+            "reviewDigest": "ae5996d37f2a3c83c9e0558b660f88262223dab96b59f708ccd1b7d004e125cd",
+            "comparisonBasis": "provided_material",
+            "reviewer": {
+              "provider": "github-copilot",
+              "model": "host-default",
+              "version": "copilot-distillation-review-v2"
+            },
+            "reviewedAt": "2026-09-11T07:50:01.960Z"
+          },
+          "retention": {
+            "kind": "convention",
+            "lifetime": "durable",
+            "rationale": "This establishes the repository's documentation language and protects exact evidence and executable text from meaning-changing translation.",
+            "futureUse": "Apply when authoring later README files, guides, reference documentation, and repository instructions.",
+            "targetRepository": {
+              "status": "captured",
+              "repoId": "synthetic-repo"
+            }
+          },
+          "supportingSources": [
+            {
+              "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+              "quote": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+            }
+          ],
+          "canonicalKey": "Repository documentation must be English, except source quotations and executable identifiers remain verbatim",
+          "userSource": {
+            "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+            "quote": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+          }
+        },
+        {
+          "rule": "Use Chinese for chat communication.",
+          "trigger": "When responding conversationally to the user while working in this repository.",
+          "exclusions": [
+            "Repository documentation must still be written in English.",
+            "Preserve original quotations and executable identifiers verbatim rather than translating them to Chinese."
+          ],
+          "distillation": {
+            "criteria": {
+              "supported": true,
+              "scoped": true,
+              "reusable": true,
+              "actionable": true,
+              "concise": true,
+              "nonredundant": true
+            },
+            "rationale": "The user explicitly states that chat should remain in Chinese, alongside the separate English-documentation requirement and verbatim-preservation exceptions. The proposal is repository-scoped, directly actionable for future communication, and distinct from the documentation-language convention.",
+            "schemaVersion": 1,
+            "inputDigest": "a82a59036547c916d79f4223dda0fd4d45db2c80c18692695f7d54695afe0e74",
+            "reviewDigest": "ffca4bde577dd311cc95bf16fc4bb6429ba563bb2930b0265ab5c252fe45ecb2",
+            "comparisonBasis": "provided_material",
+            "reviewer": {
+              "provider": "github-copilot",
+              "model": "host-default",
+              "version": "copilot-distillation-review-v2"
+            },
+            "reviewedAt": "2026-09-11T07:50:01.963Z"
+          },
+          "retention": {
+            "kind": "convention",
+            "lifetime": "durable",
+            "rationale": "This preserves the user's preferred interaction language independently of the repository's English documentation requirement.",
+            "futureUse": "Use Chinese in later conversational updates, explanations, and completion messages for this repository.",
+            "targetRepository": {
+              "status": "captured",
+              "repoId": "synthetic-repo"
+            }
+          },
+          "supportingSources": [
+            {
+              "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+              "quote": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+            }
+          ],
+          "canonicalKey": "Use Chinese for repository-related chat while keeping repository documentation in English",
+          "userSource": {
+            "eventId": "event-52af095b6d8944ef0c3a1e7194c64afadacf0d2df98850cd8f29cff6e22c8ed0",
+            "quote": "这次先修复示例，不要提交。另外，仓库文档必须用英文，聊天仍然用中文；原始引文和可执行标识符保留原样。"
+          }
+        }
+      ],
+      "distillation": {
+        "proposed": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "reasons": []
+      }
+    }
+  },
+  {
+    "id": "repository-policy",
+    "events": [
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T08:09:27.155Z",
+        "content": {
+          "message": "以后修改这个仓库的包代码，先运行对应包的单元测试，不要默认跑整个仓库。集成测试仍然使用单独的测试环境，这条单元测试规则不适用于集成测试。"
+        },
+        "deduplicationKey": "fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+          "eventType": "prompt.submitted",
+          "repoId": "review-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "repository-policy",
+          "timestamp": "2026-09-11T08:09:12.075Z",
+          "trust": "user",
+          "worktree": "C:/synthetic/review-current"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "7da26fbdef8aca28c8d4b4e730aa71f7c06d7278040350455bb2e7f1a4cf8b04",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "repository-policy-0"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T08:09:27.157Z",
+        "content": {
+          "toolResult": "No command executed; the user stated a workflow convention."
+        },
+        "deduplicationKey": "c8d1e7cf206a8c5bace15fbe9e9668cb8737f2e9a31d9579f5d97f1f2bdec554",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-c8d1e7cf206a8c5bace15fbe9e9668cb8737f2e9a31d9579f5d97f1f2bdec554",
+          "eventType": "tool.completed",
+          "repoId": "review-repo",
+          "repositoryState": "known_repo",
+          "resultDigest": "9b26110339300a11429984ea88ca22d56090bea7e3f46983a2348ccb55901d34",
+          "sessionId": "repository-policy",
+          "timestamp": "2026-09-11T08:09:13.075Z",
+          "trust": "tool",
+          "worktree": "C:/synthetic/review-current"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "6b1fdccc620e450ba617c7bc031876291d20fb7c683d2b718ce75de47add9e0e",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "repository-policy-1"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T08:09:27.159Z",
+        "content": {
+          "message": "The unit-test rule is package-scoped and excludes integration tests."
+        },
+        "deduplicationKey": "86cb42993f10ed43b2c82362eb4f658d035bff51a88e4ed1e694931bfacfcc31",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-86cb42993f10ed43b2c82362eb4f658d035bff51a88e4ed1e694931bfacfcc31",
+          "eventType": "agent.message",
+          "repoId": "review-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "repository-policy",
+          "timestamp": "2026-09-11T08:09:14.075Z",
+          "trust": "model",
+          "worktree": "C:/synthetic/review-current"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "d0b79c0b0afd74d15d421d49840a8298ffa62502a4ee04c69747a83c1b495d19",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "repository-policy-2"
+      },
+      {
+        "schemaVersion": 1,
+        "capturedAt": "2026-09-11T08:09:27.161Z",
+        "deduplicationKey": "9c1b7d72da6eb4a004f4c388e03c75e97fd48c4c2ee652a9ce1fd2ab6d663897",
+        "event": {
+          "schemaVersion": 1,
+          "adapter": "copilot-cli",
+          "adapterVersion": "1.0.84-1",
+          "branch": "main",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eventId": "event-9c1b7d72da6eb4a004f4c388e03c75e97fd48c4c2ee652a9ce1fd2ab6d663897",
+          "eventType": "agent.turn_completed",
+          "repoId": "review-repo",
+          "repositoryState": "known_repo",
+          "sessionId": "repository-policy",
+          "timestamp": "2026-09-11T08:09:15.075Z",
+          "trust": "model",
+          "worktree": "C:/synthetic/review-current"
+        },
+        "redaction": {
+          "appliedRules": [],
+          "contentDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "droppedPaths": [],
+          "redactedPaths": [],
+          "ruleVersion": 1,
+          "truncatedPaths": []
+        },
+        "sourceEventId": "repository-policy-3"
+      }
+    ],
+    "window": {
+      "schemaVersion": 1,
+      "windowId": "learning-window-4a130667ca10f66c5316330e",
+      "revision": "2bb1a685e284d54949c2fba496c1b99d2e6a1498ec952493dd66d8e5169f0d06",
+      "sessionId": "repository-policy",
+      "repoId": "review-repo",
+      "worktree": "C:/synthetic/review-current",
+      "createdAt": "2026-09-11T08:09:12.075Z",
+      "sources": [
+        {
+          "eventId": "event-fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+          "digest": "b35d67444e765764139217144400629e2c69fe48d62ed40af489dccb14ebbbae"
+        },
+        {
+          "eventId": "event-c8d1e7cf206a8c5bace15fbe9e9668cb8737f2e9a31d9579f5d97f1f2bdec554",
+          "digest": "1cc5e276e73b5f22895edbb4d902d7fafff6c216af0a3648d7983c9726e7705f"
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "capturedAt": "2026-09-11T08:09:27.155Z",
+          "content": {
+            "message": "以后修改这个仓库的包代码，先运行对应包的单元测试，不要默认跑整个仓库。集成测试仍然使用单独的测试环境，这条单元测试规则不适用于集成测试。"
+          },
+          "deduplicationKey": "fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+          "event": {
+            "schemaVersion": 1,
+            "adapter": "copilot-cli",
+            "adapterVersion": "1.0.84-1",
+            "branch": "main",
+            "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "eventId": "event-fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+            "eventType": "prompt.submitted",
+            "repoId": "review-repo",
+            "repositoryState": "known_repo",
+            "sessionId": "repository-policy",
+            "timestamp": "2026-09-11T08:09:12.075Z",
+            "trust": "user",
+            "worktree": "C:/synthetic/review-current"
+          },
+          "redaction": {
+            "appliedRules": [],
+            "contentDigest": "7da26fbdef8aca28c8d4b4e730aa71f7c06d7278040350455bb2e7f1a4cf8b04",
+            "droppedPaths": [],
+            "redactedPaths": [],
+            "ruleVersion": 1,
+            "truncatedPaths": []
+          },
+          "sourceEventId": "repository-policy-0"
+        },
+        {
+          "schemaVersion": 1,
+          "capturedAt": "2026-09-11T08:09:27.157Z",
+          "content": {
+            "toolResult": "No command executed; the user stated a workflow convention."
+          },
+          "deduplicationKey": "c8d1e7cf206a8c5bace15fbe9e9668cb8737f2e9a31d9579f5d97f1f2bdec554",
+          "event": {
+            "schemaVersion": 1,
+            "adapter": "copilot-cli",
+            "adapterVersion": "1.0.84-1",
+            "branch": "main",
+            "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "eventId": "event-c8d1e7cf206a8c5bace15fbe9e9668cb8737f2e9a31d9579f5d97f1f2bdec554",
+            "eventType": "tool.completed",
+            "repoId": "review-repo",
+            "repositoryState": "known_repo",
+            "resultDigest": "9b26110339300a11429984ea88ca22d56090bea7e3f46983a2348ccb55901d34",
+            "sessionId": "repository-policy",
+            "timestamp": "2026-09-11T08:09:13.075Z",
+            "trust": "tool",
+            "worktree": "C:/synthetic/review-current"
+          },
+          "redaction": {
+            "appliedRules": [],
+            "contentDigest": "6b1fdccc620e450ba617c7bc031876291d20fb7c683d2b718ce75de47add9e0e",
+            "droppedPaths": [],
+            "redactedPaths": [],
+            "ruleVersion": 1,
+            "truncatedPaths": []
+          },
+          "sourceEventId": "repository-policy-1"
+        }
+      ]
+    },
+    "output": {
+      "schemaVersion": 1,
+      "proposals": [
+        {
+          "rule": "When modifying package code in this repository, run the corresponding package's unit tests first instead of defaulting to the entire repository test suite.",
+          "trigger": "A later change modifies code within a package in this repository and requires test validation.",
+          "exclusions": [
+            "Do not apply this unit-test rule to integration tests; integration tests must continue to use their separate test environment."
+          ],
+          "queryTerms": {
+            "include": [
+              "修改这个仓库的包代码",
+              "先运行对应包的单元测试",
+              "不要默认跑整个仓库"
+            ],
+            "exclude": [
+              "集成测试仍然使用单独的测试环境",
+              "这条单元测试规则不适用于集成测试"
+            ]
+          },
+          "distillation": {
+            "criteria": {
+              "supported": true,
+              "scoped": true,
+              "reusable": true,
+              "actionable": true,
+              "concise": true,
+              "nonredundant": true
+            },
+            "rationale": "The English lesson accurately preserves the user’s repository-specific package-test workflow and explicit integration-test exception. The canonical key and query terms match the same trigger and scope, all phrases occur in the source, and the convention is durable, specific, actionable, concise, and distinct within this batch.",
+            "schemaVersion": 1,
+            "inputDigest": "f8c911d57d29fb236cfb6b79e0f50099394fa964273eb429816a4bba0c600875",
+            "reviewDigest": "0fec0fc9619d9ee7b6e115e3bbc40448b332d65bfc1b4976e27f8e336cce4d24",
+            "comparisonBasis": "provided_material",
+            "reviewer": {
+              "provider": "github-copilot",
+              "model": "host-default",
+              "version": "copilot-distillation-review-v2"
+            },
+            "reviewedAt": "2026-09-11T08:11:37.499Z"
+          },
+          "retention": {
+            "kind": "convention",
+            "lifetime": "durable",
+            "rationale": "This preserves the repository's intended package-focused validation workflow while preventing the unit-test convention from changing the distinct integration-test environment and process.",
+            "futureUse": "Use this to select the validation scope whenever package code is changed, and to keep integration-test execution separate.",
+            "targetRepository": {
+              "status": "captured",
+              "repoId": "review-repo"
+            }
+          },
+          "supportingSources": [
+            {
+              "eventId": "event-fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+              "quote": "以后修改这个仓库的包代码，先运行对应包的单元测试，不要默认跑整个仓库。集成测试仍然使用单独的测试环境，这条单元测试规则不适用于集成测试。"
+            }
+          ],
+          "canonicalKey": "For package code changes, run the corresponding package unit tests first rather than the full repository suite; exclude integration tests, which use a separate environment.",
+          "userSource": {
+            "eventId": "event-fc8c001f80823b23e01b4e47f5270e0a03c2af80b46660802abfa8df4d1e67cb",
+            "quote": "以后修改这个仓库的包代码，先运行对应包的单元测试，不要默认跑整个仓库。集成测试仍然使用单独的测试环境，这条单元测试规则不适用于集成测试。"
+          }
+        }
+      ],
+      "distillation": {
+        "proposed": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "reasons": []
+      }
+    }
+  }
+]

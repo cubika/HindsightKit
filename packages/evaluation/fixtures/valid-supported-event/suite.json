@@ -1,0 +1,39 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "EVENT-SCHEMA-001",
+    "milestone": "M0",
+    "statement": "Supported events are accepted through the canonical schema.",
+    "scope": "workflow",
+    "replaySpecIds": ["valid-supported-event"],
+    "verifierIds": ["event-schema-source-version"],
+    "requiredEvidence": ["event.supported"],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "valid-supported-event",
+    "requirementId": "EVENT-SCHEMA-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "pass",
+    "expectedEvidence": ["event.supported"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "valid-supported-event",
+    "events": [
+      {
+        "schemaVersion": 1,
+        "eventId": "event-valid-1",
+        "adapter": "copilot-cli",
+        "adapterVersion": "1.0.82-0",
+        "eventType": "prompt.submitted",
+        "sessionId": "session-1",
+        "timestamp": "2026-08-29T00:00:00.000Z",
+        "trust": "user"
+      }
+    ]
+  }
+}

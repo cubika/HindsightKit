@@ -1,0 +1,49 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "DELETION-001",
+    "milestone": "M0",
+    "statement": "Deletion propagation has a deterministic verifier contract.",
+    "scope": "workflow",
+    "replaySpecIds": ["deletion-propagation-unavailable"],
+    "verifierIds": ["deletion-propagation"],
+    "requiredEvidence": [
+      "deletion.unsupported",
+      "deletion.propagation.checked"
+    ],
+    "releaseGate": "conditional"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "deletion-propagation-unavailable",
+    "requirementId": "DELETION-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "inconclusive",
+    "expectedEvidence": ["deletion.unsupported"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "deletion-propagation-unavailable",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "deletion-contract-1",
+        "runId": "fixture",
+        "status": "deletion.unsupported",
+        "outputDigest": "5d7e75fd8b9defe3a4f64259d035fc8f2dddbd9d1e96fe354e4788d6096a0f50",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "deletionAssertions": [
+      {
+        "evidenceId": "deletion-contract-1",
+        "supported": false,
+        "sourceIds": ["source-1"],
+        "dependentIds": ["derived-1"],
+        "remainingIds": []
+      }
+    ]
+  }
+}

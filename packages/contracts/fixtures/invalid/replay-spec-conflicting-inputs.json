@@ -1,0 +1,18 @@
+{
+  "fixtureVersion": 1,
+  "fixtureId": "replay-spec-conflicting-inputs",
+  "schemaName": "replaySpec",
+  "expectedStatus": "invalid",
+  "input": {
+    "schemaVersion": 1,
+    "specId": "spec-1",
+    "requirementId": "requirement-1",
+    "inputRef": "fixture://one",
+    "inputEvents": [
+      "fixture://two"
+    ],
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": []
+  }
+}

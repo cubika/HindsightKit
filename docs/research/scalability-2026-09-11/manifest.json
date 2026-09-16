@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-09-11",
+  "sourceReviewCommit": "798afd7f881f6763d31ef0d035a50f63c185c532",
+  "originalProbeCommit": null,
+  "provenance": "Results copied byte-for-byte from the isolated diagnostic runs performed earlier in this task. Those runs used the then-current working tree with uncommitted changes and did not record an immutable source digest. The source review commit identifies the later code review only; it is not retroactive version binding for the measurements.",
+  "runtime": {
+    "node": "v22.18.0",
+    "platform": "win32",
+    "hardware": "Not recorded"
+  },
+  "classification": "Synthetic diagnostic evidence; not release acceptance or a production capacity claim",
+  "files": [
+    {
+      "path": "results.json",
+      "sha256": "bf4a4d6771f244fc5e6b0bf1eda328882c5564689daf03596df91ab529b852a9"
+    },
+    {
+      "path": "event-results.json",
+      "sha256": "cb58874c080f90c60ee8a142d1f50694d73bd07a1ebe92970d725b5076a851d6"
+    },
+    {
+      "path": "lock-results.json",
+      "sha256": "f3da44c665eb13cd12fcb22a12fc58c7ff789cc991e57f30e8b88c77d611beba"
+    },
+    {
+      "path": "quality-results.json",
+      "sha256": "d6cb0bb0d2892b3a50237e93118cd0475d17197bbb8ac0252e729af165fc6cca"
+    }
+  ],
+  "reproductionScripts": [
+    "../../../scripts/scale-review/scale-probe.mjs",
+    "../../../scripts/scale-review/event-probe.mjs"
+  ],
+  "reproductionNotes": "Scripts retain the original fixture construction and timed operations. Their output location was changed to evaluation-output so rerunning them does not modify retained evidence. A reproduction executes the current compiled tree and must receive its own version and environment record. The reproduction scale script also corrects the synthetic cwd literal to C:/scale-probe; the original JavaScript backslash was an ineffective escape. The corpus uses user-confirmed repository-scoped records and does not depend on worktree matching. Historical result files remain unchanged."
+}

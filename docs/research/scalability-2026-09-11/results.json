@@ -1,0 +1,245 @@
+{
+  "timestamp": "2026-09-11T08:53:35.160Z",
+  "node": "v22.18.0",
+  "platform": "win32",
+  "notes": "Synthetic isolated local probes against the current compiled working tree. Warm read worker; no model calls. Cross-scope case intentionally ties lexical rank with other-repository records. Episode case has one prompt per distinct branch/session, spaced one day apart. Timings are not production SLA measurements. RSS is the process resident size sampled after the probes, not a peak measurement. Main database file sizes exclude WAL/SHM and must not be used as total storage measurements. Each episode timing is the median of three builds; each page timing is the median of five reads. The cross-scope end-to-end request is one sample per size and tests timeout behavior, not a latency percentile.",
+  "episodes": [
+    {
+      "mode": "episodes",
+      "sessions": 50,
+      "events": 50,
+      "episodes": 50,
+      "associations": 1225,
+      "medianMs": 60.05,
+      "samplesMs": [
+        82.9,
+        60.05,
+        56.62
+      ],
+      "rssMiB": 97.26
+    },
+    {
+      "mode": "episodes",
+      "sessions": 100,
+      "events": 100,
+      "episodes": 100,
+      "associations": 4950,
+      "medianMs": 175.33,
+      "samplesMs": [
+        242.73,
+        175.33,
+        161.15
+      ],
+      "rssMiB": 104.66
+    },
+    {
+      "mode": "episodes",
+      "sessions": 200,
+      "events": 200,
+      "episodes": 200,
+      "associations": 19900,
+      "medianMs": 618.07,
+      "samplesMs": [
+        759.6,
+        618.07,
+        588.07
+      ],
+      "rssMiB": 134.61
+    },
+    {
+      "mode": "episodes",
+      "sessions": 400,
+      "events": 400,
+      "episodes": 400,
+      "associations": 79800,
+      "medianMs": 2645.63,
+      "samplesMs": [
+        2698.24,
+        2547.48,
+        2645.63
+      ],
+      "rssMiB": 256.08
+    },
+    {
+      "mode": "episodes",
+      "sessions": 800,
+      "events": 800,
+      "episodes": 800,
+      "associations": 319600,
+      "medianMs": 16748.62,
+      "samplesMs": [
+        15353.65,
+        16815.22,
+        16748.62
+      ],
+      "rssMiB": 772.12
+    }
+  ],
+  "retrieval": [
+    {
+      "mode": "retrieval",
+      "knowledgeRecords": 100,
+      "seedCanonicalMs": 76.44,
+      "rebuildMs": 10.78,
+      "searchPageMedianMs": 1.64,
+      "searchPageSamplesMs": [
+        2.24,
+        1.68,
+        1.43,
+        1.64,
+        1.64
+      ],
+      "singleRecordIndexMedianMs": 5.5,
+      "singleRecordIndexSamplesMs": [
+        5.5,
+        5.1,
+        5.84
+      ],
+      "crossScope": {
+        "elapsedMs": 36.41,
+        "reportedMs": 30,
+        "status": "ok",
+        "items": [
+          "z-target"
+        ],
+        "pages": 2
+      },
+      "rssMiB": 88.36,
+      "mainDatabaseFileMiBBeforeClose": 0
+    },
+    {
+      "mode": "retrieval",
+      "knowledgeRecords": 1000,
+      "seedCanonicalMs": 627.46,
+      "rebuildMs": 31.84,
+      "searchPageMedianMs": 5.46,
+      "searchPageSamplesMs": [
+        5.52,
+        5.42,
+        5.46,
+        5.33,
+        5.67
+      ],
+      "singleRecordIndexMedianMs": 20.26,
+      "singleRecordIndexSamplesMs": [
+        19.66,
+        21.4,
+        20.26
+      ],
+      "crossScope": {
+        "elapsedMs": 164.57,
+        "reportedMs": 160,
+        "status": "degraded",
+        "items": [],
+        "detail": "Knowledge retrieval timed out.",
+        "pages": 7
+      },
+      "rssMiB": 113.93,
+      "mainDatabaseFileMiBBeforeClose": 0
+    },
+    {
+      "mode": "retrieval",
+      "knowledgeRecords": 5000,
+      "seedCanonicalMs": 2834.18,
+      "rebuildMs": 111.58,
+      "searchPageMedianMs": 28.87,
+      "searchPageSamplesMs": [
+        28.87,
+        31.31,
+        29.65,
+        27.25,
+        26.57
+      ],
+      "singleRecordIndexMedianMs": 81.81,
+      "singleRecordIndexSamplesMs": [
+        89.27,
+        81.81,
+        74.77
+      ],
+      "crossScope": {
+        "elapsedMs": 155.68,
+        "reportedMs": 151,
+        "status": "degraded",
+        "items": [],
+        "detail": "Retrieval timed out.",
+        "pages": 4
+      },
+      "rssMiB": 136.8,
+      "mainDatabaseFileMiBBeforeClose": 3.27
+    },
+    {
+      "mode": "retrieval",
+      "knowledgeRecords": 10000,
+      "seedCanonicalMs": 5684.12,
+      "rebuildMs": 233.82,
+      "searchPageMedianMs": 56.31,
+      "searchPageSamplesMs": [
+        50.91,
+        56.31,
+        55.53,
+        57.21,
+        57.71
+      ],
+      "singleRecordIndexMedianMs": 157.13,
+      "singleRecordIndexSamplesMs": [
+        153.67,
+        177.59,
+        157.13
+      ],
+      "crossScope": {
+        "elapsedMs": 163.09,
+        "reportedMs": 158,
+        "status": "degraded",
+        "items": [],
+        "detail": "Knowledge retrieval timed out.",
+        "pages": 2
+      },
+      "rssMiB": 158.93,
+      "mainDatabaseFileMiBBeforeClose": 7.55
+    },
+    {
+      "mode": "retrieval",
+      "knowledgeRecords": 50000,
+      "seedCanonicalMs": 29222.92,
+      "rebuildMs": 1442.02,
+      "searchPageMedianMs": 319.79,
+      "searchPageSamplesMs": [
+        298.92,
+        319.79,
+        373.75,
+        306.05,
+        358.71
+      ],
+      "singleRecordIndexMedianMs": 956.8,
+      "singleRecordIndexSamplesMs": [
+        956.8,
+        885.95,
+        959.42
+      ],
+      "crossScope": {
+        "elapsedMs": 160.79,
+        "reportedMs": 155,
+        "status": "degraded",
+        "items": [],
+        "detail": "Knowledge backend read timed out.",
+        "pages": 1
+      },
+      "rssMiB": 343.54,
+      "mainDatabaseFileMiBBeforeClose": 29.39
+    }
+  ],
+  "validation": {
+    "typecheck": {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    "tests": {
+      "command": "npm test -- tests/unit/retrieval-natural-query.test.ts tests/unit/retrieval-scope.test.ts tests/unit/canonical-knowledge-retriever.test.ts tests/unit/knowledge-duplicates.test.ts tests/unit/learning-knowledge-lifecycle.test.ts tests/unit/learning-query-terms-retrieval.test.ts tests/unit/capture-retention.test.ts tests/unit/incremental-learning.test.ts tests/unit/canonical-store-reliability.test.ts tests/unit/learning-retention.test.ts",
+      "passedFiles": 10,
+      "passedTests": 130,
+      "failedTests": 0,
+      "exitCode": 0
+    },
+    "scope": "Reviewed current working tree including pre-existing uncommitted changes. No product source files changed by this review. Synthetic probes use isolated databases under evaluation-output."
+  }
+}

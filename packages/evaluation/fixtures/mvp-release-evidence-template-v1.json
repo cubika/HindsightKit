@@ -1,0 +1,142 @@
+{
+  "evidenceVersion": 1,
+  "m0Acceptance": {
+    "evidenceVersion": 1,
+    "binding": {
+      "codeVersion": "replace-me",
+      "runtimeDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "operatingSystemVersions": [
+        "replace-me"
+      ],
+      "copilotCliVersion": "replace-me",
+      "pluginVersion": "0.1.0-alpha.0.11",
+      "fixtureVersion": 1,
+      "probeVersion": 1,
+      "captureRunIds": [
+        "replace-me"
+      ],
+      "reportDigests": [
+        "0000000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "reportArtifacts": [
+        {
+          "path": "m0-source-reports\\replace-with-report-digest.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      ]
+    },
+    "capture": {
+      "status": "fail",
+      "foregroundAddedLatencyP95Ms": 0,
+      "callbackWorkDurationP95Ms": 0,
+      "missingRequiredEventCount": 0,
+      "duplicateCanonicalFactCount": 0,
+      "seededSecretPersistenceCount": 0,
+      "internalSessionPersistenceCount": 0,
+      "foregroundBlockingFailureCount": 0,
+      "windows10RepresentativeEventCount": 0,
+      "windows11RepresentativeEventCount": 0,
+      "reportDigest": "0000000000000000000000000000000000000000000000000000000000000002"
+    },
+    "providerDegradation": {
+      "status": "fail",
+      "signedOut": "fail",
+      "rateLimited": "fail",
+      "unavailable": "fail",
+      "incompatible": "fail",
+      "backlogDurable": false,
+      "boundedRetry": false,
+      "foregroundUsable": false,
+      "reportDigest": "0000000000000000000000000000000000000000000000000000000000000003"
+    },
+    "marketplaceUpgrade": {
+      "status": "fail",
+      "source": "cubika/ProvenLoop",
+      "fromVersion": "replace-me",
+      "toVersion": "0.1.0-alpha.0.11",
+      "disableEnablePassed": false,
+      "repeatedInstallPassed": false,
+      "knowledgeDataPreserved": false,
+      "queueDataPreserved": false,
+      "uninstallPreservedData": false,
+      "settingsRestoredExactly": false,
+      "reportDigest": "0000000000000000000000000000000000000000000000000000000000000004"
+    },
+    "doctor": {
+      "status": "fail",
+      "passiveStatus": "unverified",
+      "passiveModelRequestCount": 0,
+      "passiveCredentialInspection": false,
+      "onlineClassifications": [],
+      "reportDigest": "0000000000000000000000000000000000000000000000000000000000000005"
+    },
+    "capabilityIsolation": {
+      "status": "fail",
+      "automatedTestPassed": false,
+      "installedProbePassed": false,
+      "retrievalDisabledPassed": false,
+      "captureDisabledPassed": false,
+      "workerDisabledPassed": false,
+      "correctionLearningDisabledPassed": false,
+      "reportDigest": "0000000000000000000000000000000000000000000000000000000000000006"
+    },
+    "observedGuardrails": {
+      "secretPersistenceCount": 0,
+      "internalSessionPersistenceCount": 0,
+      "foregroundBlockingFailureCount": 0,
+      "crossRepositoryLeakageCount": 0,
+      "deletionPropagationFailureCount": 0
+    }
+  },
+  "evaluation": {
+    "codeVersion": "replace-with-evaluated-code-version",
+    "datasets": {
+      "branchContinuation": {
+        "datasetId": "replace-with-dataset-id",
+        "datasetVersion": 1
+      },
+      "correctionRecurrence": {
+        "datasetId": "replace-with-dataset-id",
+        "datasetVersion": 1
+      },
+      "workEpisodeAssociation": {
+        "datasetId": "replace-with-dataset-id",
+        "datasetVersion": 1
+      }
+    },
+    "executableDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "subgateDigests": {
+      "m0": "0000000000000000000000000000000000000000000000000000000000000000",
+      "m1": "0000000000000000000000000000000000000000000000000000000000000000",
+      "m2": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "reviewId": "replace-with-review-id",
+  "owner": "unassigned",
+  "reviewedAt": "2026-09-02T00:00:00.000Z",
+  "worstCaseReview": {
+    "completed": false,
+    "reviewedCaseIds": [],
+    "allHarmReviewed": false,
+    "allWrongInjectionsReviewed": false
+  },
+  "guardrails": {
+    "severeHarmCount": 0,
+    "secretLeakageCount": 0,
+    "crossRepositoryLeakageCount": 0,
+    "deletionPropagationFailureCount": 0,
+    "unsupportedCompletionClaimCount": 0
+  },
+  "shadow": {
+    "status": "not_run"
+  },
+  "observationWindow": {
+    "endsAt": "2026-09-16T00:00:00.000Z",
+    "observedThrough": "2026-09-02T00:00:00.000Z"
+  },
+  "rollback": {
+    "target": "replace-with-rollback-target",
+    "resolvedCommitSha": "0000000000000000000000000000000000000000",
+    "verified": false
+  }
+}

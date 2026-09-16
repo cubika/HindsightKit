@@ -1,0 +1,58 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "SECRET-001",
+    "milestone": "M0",
+    "statement": "Persisted evaluation content contains no seeded secrets.",
+    "scope": "workflow",
+    "replaySpecIds": ["seeded-secret"],
+    "verifierIds": ["secret-persistence"],
+    "requiredEvidence": [
+      "persisted.content",
+      "secret.scan.completed"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "seeded-secret",
+    "requirementId": "SECRET-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": ["secret.detected"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "seeded-secret",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "known-secret-1",
+        "runId": "fixture",
+        "status": "persisted.content",
+        "inputDigest": "2add77ea942399a9980b64fe6d75415f8c90fb90e3656665b9334708859be1ca",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      },
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "entropy-secret-1",
+        "runId": "fixture",
+        "status": "persisted.content",
+        "inputDigest": "a15a173742e5e092dfefe4c58ff6afe196e7071b8a9891386ed1cda6e917cf9c",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "persistedContents": [
+      {
+        "evidenceId": "known-secret-1",
+        "value": "token=ghp_1234567890abcdefghijklmnopqrst"
+      },
+      {
+        "evidenceId": "entropy-secret-1",
+        "value": "value=9wM3QfT7xL2nV8pR4sK6dH1cB5yJ0uZa"
+      }
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "EVENT-IDEMPOTENCY-001",
+    "milestone": "M0",
+    "statement": "Duplicate deliveries create one canonical event.",
+    "scope": "workflow",
+    "replaySpecIds": ["duplicate-event"],
+    "verifierIds": [
+      "event-schema-source-version",
+      "event-idempotency"
+    ],
+    "requiredEvidence": [
+      "event.supported",
+      "event.idempotency.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "duplicate-event",
+    "requirementId": "EVENT-IDEMPOTENCY-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "pass",
+    "expectedEvidence": [
+      "event.supported",
+      "event.idempotency.checked"
+    ]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "duplicate-event",
+    "expectedCanonicalEventCount": 1,
+    "events": [
+      {
+        "schemaVersion": 1,
+        "eventId": "event-duplicate-1",
+        "adapter": "copilot-cli",
+        "adapterVersion": "1.0.82-0",
+        "eventType": "tool.started",
+        "sessionId": "session-1",
+        "operationId": "invocation-1",
+        "toolName": "powershell",
+        "timestamp": "2026-08-29T00:00:00.000Z",
+        "trust": "tool"
+      },
+      {
+        "schemaVersion": 1,
+        "eventId": "event-duplicate-1",
+        "adapter": "copilot-cli",
+        "adapterVersion": "1.0.82-0",
+        "eventType": "tool.started",
+        "sessionId": "session-1",
+        "operationId": "invocation-1",
+        "toolName": "powershell",
+        "timestamp": "2026-08-29T00:00:00.000Z",
+        "trust": "tool"
+      }
+    ]
+  }
+}

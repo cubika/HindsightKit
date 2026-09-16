@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-09-11T09:29:00.797Z",
+  "sourceReviewCommit": "798afd7f881f6763d31ef0d035a50f63c185c532",
+  "status": "Documentation and diagnostic-script verification passed; remediation remains unimplemented",
+  "checks": [
+    {
+      "command": "npm run typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "node node_modules/eslint/bin/eslint.js scripts/scale-review/scale-probe.mjs scripts/scale-review/event-probe.mjs",
+      "result": "passed after correcting the synthetic cwd literal"
+    },
+    {
+      "command": "node --check scripts/scale-review/scale-probe.mjs; node --check scripts/scale-review/event-probe.mjs",
+      "result": "passed"
+    },
+    {
+      "command": "node scripts/scale-review/scale-probe.mjs quality",
+      "result": "known counterexamples reproduced and assertions match retained quality results"
+    },
+    {
+      "command": "node scripts/scale-review/scale-probe.mjs lock",
+      "result": "read-only schema query succeeded; canonical initialization reproduced database is locked"
+    },
+    {
+      "command": "node --expose-gc scripts/scale-review/event-probe.mjs 100",
+      "result": "completed with 10 Episodes, 45 associations, and 10 evidence envelopes"
+    },
+    {
+      "command": "node --expose-gc scripts/scale-review/scale-probe.mjs retrieval 100",
+      "result": "completed; target retrieved"
+    },
+    {
+      "command": "Local documentation/evidence validation",
+      "result": "38 local links checked in new documents and added cross-references; four original evidence hashes matched; fourteen unique findings; source symbols and code-fence languages checked"
+    }
+  ],
+  "notes": "Small probes ran concurrently to check behavior and script execution. Their timing samples are not a new performance comparison. The earlier full scale curves were not rerun. No product source changed in this documentation delivery."
+}

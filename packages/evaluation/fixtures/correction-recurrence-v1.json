@@ -1,0 +1,40 @@
+{
+  "evidenceKind": "synthetic",
+  "evaluationPurpose": "regression",
+  "datasetId": "correction-recurrence",
+  "datasetVersion": 1,
+  "opportunities": [
+    { "caseId": "opportunity-01", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "correction_repeated" },
+    { "caseId": "opportunity-02", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "correction_repeated" },
+    { "caseId": "opportunity-03", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "correction_repeated" },
+    { "caseId": "opportunity-04", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "correction_repeated", "contextTrace": "correction_repeated" },
+    { "caseId": "opportunity-05", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-06", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-07", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-08", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-09", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-10", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-11", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-12", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "correction_repeated", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-13", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-14", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-15", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-16", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-17", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-18", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-19", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-20", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-21", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-22", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-23", "trainingOccurrences": 1, "expectedEvidenceTier": "externally_verified", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" },
+    { "caseId": "opportunity-24", "trainingOccurrences": 2, "expectedEvidenceTier": "repeated_evidence", "baselineTrace": "success_without_correction", "contextTrace": "success_without_correction" }
+  ],
+  "negativeCases": [
+    { "caseId": "negative-counter-01", "scenario": "counterevidence" },
+    { "caseId": "negative-counter-02", "scenario": "counterevidence" },
+    { "caseId": "negative-scope-01", "scenario": "scope_mismatch" },
+    { "caseId": "negative-scope-02", "scenario": "scope_mismatch" },
+    { "caseId": "negative-unverified-01", "scenario": "unverified" },
+    { "caseId": "negative-unverified-02", "scenario": "unverified" }
+  ]
+}

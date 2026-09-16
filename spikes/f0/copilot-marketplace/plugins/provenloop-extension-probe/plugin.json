@@ -1,0 +1,6 @@
+{
+  "name": "provenloop-extension-probe",
+  "description": "Copilot Extension event and latency probe for ProvenLoop F0.",
+  "version": "0.0.1",
+  "extensions": "extensions/"
+}

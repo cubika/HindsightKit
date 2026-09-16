@@ -1,0 +1,7 @@
+{
+  "name": "provenloop-f0-failure-probe",
+  "description": "Broken integration fixture used to verify foreground degradation.",
+  "version": "0.0.1",
+  "hooks": "hooks.json",
+  "mcpServers": ".mcp.json"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@provenloop/cli",
+  "version": "0.1.0-alpha.0.16",
+  "description": "Local learning infrastructure for GitHub Copilot CLI.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0",
+    "npm": ">=11"
+  },
+  "os": [
+    "win32"
+  ],
+  "main": "./dist/index.js",
+  "bin": {
+    "provenloop": "dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "fixtures"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "alpha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cubika/ProvenLoop.git"
+  }
+}

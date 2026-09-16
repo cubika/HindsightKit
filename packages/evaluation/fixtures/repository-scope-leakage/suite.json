@@ -1,0 +1,48 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "REPOSITORY-SCOPE-001",
+    "milestone": "M0",
+    "statement": "Repository-scoped evidence never crosses repositories.",
+    "scope": "repository",
+    "replaySpecIds": ["repository-scope-leakage"],
+    "verifierIds": ["repository-scope-isolation"],
+    "requiredEvidence": [
+      "scope.observed",
+      "scope.isolation.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "repository-scope-leakage",
+    "requirementId": "REPOSITORY-SCOPE-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": ["scope.leakage"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "repository-scope-leakage",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "scope-leak-1",
+        "runId": "fixture",
+        "status": "scope.observed",
+        "outputDigest": "24c31ba4e4765d92402fdc6b9226b63671dd6ea2537db5235a10602749add536",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "repositoryScopeAssertions": [
+      {
+        "evidenceId": "scope-leak-1",
+        "scope": "repository",
+        "sourceRepoId": "repo-a",
+        "targetRepoId": "repo-b"
+      }
+    ]
+  }
+}

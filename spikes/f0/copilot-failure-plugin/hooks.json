@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "powershell": "Write-Error 'intentional ProvenLoop F0 hook failure'; exit 1",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "powershell": "Write-Error 'intentional ProvenLoop F0 hook failure'; exit 1",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

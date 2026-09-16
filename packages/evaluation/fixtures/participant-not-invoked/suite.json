@@ -1,0 +1,58 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "PARTICIPANT-001",
+    "milestone": "M0",
+    "statement": "Detected participants count only after successful invocation.",
+    "scope": "workflow",
+    "replaySpecIds": ["participant-not-invoked"],
+    "verifierIds": ["participant-resolved-model-identity"],
+    "requiredEvidence": [
+      "participant.available",
+      "participant.identity.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "participant-not-invoked",
+    "requirementId": "PARTICIPANT-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": [
+      "participant.available",
+      "participant.not_invoked"
+    ]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "participant-not-invoked",
+    "processClaims": [
+      {
+        "schemaVersion": 1,
+        "claimId": "claim-consensus-1",
+        "episodeId": "episode-1",
+        "kind": "consensus",
+        "requiredParticipantIds": ["codex"],
+        "availabilityEvidenceIds": ["participant-available-1"],
+        "invocationIds": [],
+        "requiredEvidence": ["invocation.succeeded"],
+        "evidenceIds": ["participant-available-1"],
+        "status": "declared",
+        "createdAt": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "participant-available-1",
+        "runId": "fixture",
+        "participantId": "codex",
+        "status": "participant.available",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ]
+  }
+}

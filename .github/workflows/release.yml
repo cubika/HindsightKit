@@ -1,0 +1,109 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v0.1.0-alpha.*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm install --global npm@11.6.2
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+        env:
+          PROVENLOOP_PROCESS_FIXTURE: "1"
+      - run: npm run test:integration
+      - run: npm run package:verify
+      - shell: powershell
+        run: .\install.ps1 -DryRun
+      - run: git --no-pager diff --exit-code
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Git tag does not match package version $version."
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          if ($version -like "0.1.0-alpha.0*") {
+            "RELEASE_NOTES_PATH=docs\releases\$version.md" >> $env:GITHUB_ENV
+          } else {
+            "RELEASE_NOTES_PATH=release-evidence\$version\release-notes.md" >> $env:GITHUB_ENV
+          }
+
+      - name: Verify retained release evidence
+        if: ${{ !startsWith(env.RELEASE_VERSION, '0.1.0-alpha.0') }}
+        run: >-
+          node scripts/verify-release-evidence.mjs
+          ${{ env.RELEASE_VERSION }}
+          release-evidence\${{ env.RELEASE_VERSION }}
+
+      - name: Pack release artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory artifacts | Out-Null
+          $packed = npm pack `
+            --workspace @provenloop/cli `
+            --json `
+            --pack-destination artifacts |
+              ConvertFrom-Json
+          "PACKAGE_INTEGRITY=$($packed.integrity)" >> $env:GITHUB_ENV
+          Get-ChildItem artifacts -Filter *.tgz | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" |
+              Set-Content "$($_.FullName).sha256" -Encoding ascii
+          }
+
+      - name: Verify npm publication
+        if: ${{ !startsWith(env.RELEASE_VERSION, '0.1.0-alpha.0') }}
+        shell: pwsh
+        run: |
+          $integrity = $null
+          for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
+            $value = npm view `
+              "@provenloop/cli@$env:RELEASE_VERSION" `
+              dist.integrity `
+              --json `
+              --registry=https://registry.npmjs.org 2> $null
+            if ($LASTEXITCODE -eq 0) {
+              $integrity = $value | ConvertFrom-Json
+              break
+            }
+            Start-Sleep -Seconds 15
+          }
+          if ($integrity -ne $env:PACKAGE_INTEGRITY) {
+            throw "Published npm artifact does not match the tagged build."
+          }
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            Get-ChildItem artifacts -File |
+              ForEach-Object { $_.FullName }
+          )
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --prerelease `
+            --title "ProvenLoop $env:RELEASE_VERSION" `
+            --notes-file $env:RELEASE_NOTES_PATH

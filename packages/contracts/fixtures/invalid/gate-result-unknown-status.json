@@ -1,0 +1,13 @@
+{
+  "fixtureVersion": 1,
+  "fixtureId": "gate-result-unknown-status",
+  "schemaName": "gateResult",
+  "expectedStatus": "invalid",
+  "input": {
+    "schemaVersion": 1,
+    "gateId": "gate-1",
+    "status": "warning",
+    "evidenceIds": [],
+    "message": "Unsupported gate status."
+  }
+}

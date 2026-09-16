@@ -1,0 +1,73 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "PROCESS-CLAIM-001",
+    "milestone": "M0",
+    "statement": "A test completion claim requires invocation evidence.",
+    "scope": "workflow",
+    "replaySpecIds": ["false-completion"],
+    "verifierIds": [
+      "process-claim-execution-consistency",
+      "command-completion-exit-code"
+    ],
+    "requiredEvidence": [
+      "claim.declared",
+      "claim.execution.checked",
+      "command.completion.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "false-completion",
+    "requirementId": "PROCESS-CLAIM-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": [
+      "claim.declared",
+      "invocation.missing",
+      "command.completion_missing"
+    ]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "false-completion",
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "claim-evidence-1",
+        "runId": "fixture",
+        "claimId": "claim-test-1",
+        "status": "claim.declared",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "processClaims": [
+      {
+        "schemaVersion": 1,
+        "claimId": "claim-test-1",
+        "episodeId": "episode-1",
+        "kind": "tested",
+        "requiredParticipantIds": [],
+        "availabilityEvidenceIds": [],
+        "invocationIds": ["invocation-missing"],
+        "requiredEvidence": ["command.succeeded"],
+        "evidenceIds": ["claim-evidence-1"],
+        "status": "verified",
+        "createdAt": "2026-08-29T00:00:00.000Z"
+      }
+    ],
+    "commandAssertions": [
+      {
+        "assertionId": "command-assertion-1",
+        "claimId": "claim-test-1",
+        "episodeId": "episode-1",
+        "invocationId": "invocation-missing",
+        "expectedStatus": "succeeded",
+        "expectedExitCode": 0
+      }
+    ]
+  }
+}

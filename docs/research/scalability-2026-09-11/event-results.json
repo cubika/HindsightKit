@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-09-11T09:10:44.886Z",
+  "node": "v22.18.0",
+  "notes": "Synthetic in-memory canonical SQLite; fixed 10 sessions and 1 knowledge record, varying only event count. Each session has one prompt followed by small tool.completed events. Public ingestion API used. Three timed samples per operation; seeding excluded. Evidence read calls knowledgeAdmissionEvidence directly for one learning-prefixed candidate referencing one event; this isolates source-session expansion, not an end-to-end context request or proof of admission. Episode build excludes storage read and projection persistence. Timings are not production SLA measurements.",
+  "rows": [
+    {
+      "totalEvents": 100,
+      "sessions": 10,
+      "knowledgeRecords": 1,
+      "sourceEvidenceIds": 1,
+      "readAllEventsMedianMs": 8.8,
+      "readAllEventsSamplesMs": [
+        8.8,
+        9.54,
+        8.22
+      ],
+      "episodeBuildMedianMs": 8.72,
+      "episodeBuildSamplesMs": [
+        18.32,
+        8.72,
+        7.25
+      ],
+      "resultingEpisodes": 10,
+      "associations": 45,
+      "evidenceReadMedianMs": 2.28,
+      "evidenceReadSamplesMs": [
+        4.11,
+        2.28,
+        1.81
+      ],
+      "evidenceEnvelopesReturned": 10
+    },
+    {
+      "totalEvents": 1000,
+      "sessions": 10,
+      "knowledgeRecords": 1,
+      "sourceEvidenceIds": 1,
+      "readAllEventsMedianMs": 77.84,
+      "readAllEventsSamplesMs": [
+        77.28,
+        77.84,
+        77.91
+      ],
+      "episodeBuildMedianMs": 22.97,
+      "episodeBuildSamplesMs": [
+        41.4,
+        22.97,
+        14.93
+      ],
+      "resultingEpisodes": 10,
+      "associations": 45,
+      "evidenceReadMedianMs": 8.67,
+      "evidenceReadSamplesMs": [
+        12.68,
+        8.48,
+        8.67
+      ],
+      "evidenceEnvelopesReturned": 100
+    },
+    {
+      "totalEvents": 10000,
+      "sessions": 10,
+      "knowledgeRecords": 1,
+      "sourceEvidenceIds": 1,
+      "readAllEventsMedianMs": 602.38,
+      "readAllEventsSamplesMs": [
+        661.8,
+        602.38,
+        565.53
+      ],
+      "episodeBuildMedianMs": 119.82,
+      "episodeBuildSamplesMs": [
+        160.83,
+        119.82,
+        114.01
+      ],
+      "resultingEpisodes": 10,
+      "associations": 45,
+      "evidenceReadMedianMs": 80.11,
+      "evidenceReadSamplesMs": [
+        80.11,
+        82.61,
+        74.77
+      ],
+      "evidenceEnvelopesReturned": 1000
+    }
+  ]
+}

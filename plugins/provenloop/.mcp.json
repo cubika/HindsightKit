@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "provenloop": {
+      "type": "local",
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${PLUGIN_ROOT}\\scripts\\mcp-launcher.ps1"
+      ],
+      "tools": [
+        "*"
+      ]
+    }
+  }
+}

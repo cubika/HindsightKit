@@ -1,0 +1,151 @@
+{
+  "exclusionBaseline": {
+    "knowledgeCount": 1,
+    "prompt": "Run tests before release",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "valid",
+            "rank": 53.86499743748661
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "valid"
+        ]
+      }
+    ]
+  },
+  "exclusionAfterGrowth": {
+    "knowledgeCount": 21,
+    "prompt": "Run tests before release",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "valid",
+            "rank": 53.795675927045245
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "valid"
+        ]
+      }
+    ]
+  },
+  "identicalContent": {
+    "knowledgeCount": 21,
+    "prompt": "Run npm test before merging code.",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-00",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-01",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-01"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-02",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-02"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-03",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-03"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-04",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-04"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-05",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-05"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-06",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-06"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-07",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-07"
+        ]
+      }
+    ]
+  },
+  "weakOverlap": {
+    "knowledgeCount": 1,
+    "prompt": "Run database migration in production.",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [],
+        "candidateKnowledgeIds": []
+      }
+    ]
+  }
+}

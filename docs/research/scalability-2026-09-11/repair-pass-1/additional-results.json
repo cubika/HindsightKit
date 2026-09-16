@@ -1,0 +1,67 @@
+{
+  "notes": "Additional sequential diagnostic observations. The sparse fixture is the same prompt family as the original all-mode curve and still creates weak candidate edges. Changed-content index measured separately on 10,000 records.",
+  "sparseEpisodes": {
+    "sessions": 800,
+    "events": 800,
+    "associations": 319600,
+    "medianMs": 9684.44,
+    "samplesMs": [
+      9684.44,
+      9159.66,
+      9736.05
+    ]
+  },
+  "changedRecordIndex": {
+    "knowledgeRecords": 10000,
+    "medianMs": 4.09,
+    "samplesMs": [
+      4.89,
+      4.09,
+      3.75
+    ]
+  },
+  "unmodifiedReindex": {
+    "knowledgeRecords": 10000,
+    "medianMs": 3.13,
+    "samplesMs": [
+      3.16,
+      3.02,
+      3.13
+    ]
+  },
+  "connectedEpisodes": {
+    "sessions": 800,
+    "events": 800,
+    "episodes": 800,
+    "associations": 0,
+    "medianMs": 180.08,
+    "samplesMs": [
+      211.62,
+      180.08,
+      179.34
+    ],
+    "rssMiB": 98.09
+  },
+  "finalKnowledgeProbe": {
+    "knowledgeRecords": 50000,
+    "seedCanonicalMs": 27509.99,
+    "rebuildMs": 2930.06,
+    "searchPageMedianMs": 126.88,
+    "singleRecordUnchangedIndexMedianMs": 4.01,
+    "changedRecordIndexMedianMs": 5.69,
+    "changedRecordIndexSamplesMs": [
+      7.43,
+      5.69,
+      4.24
+    ],
+    "crossScope": {
+      "elapsedMs": 82.98,
+      "status": "ok",
+      "items": [
+        "z-target"
+      ],
+      "pages": 1
+    },
+    "notes": "Final per-record helper skips an unnecessary FTS delete for new rows. This follow-up is a separate run; earlier retained results remain unchanged."
+  }
+}

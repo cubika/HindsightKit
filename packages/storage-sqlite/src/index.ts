@@ -1,0 +1,36 @@
+export {
+  DatabaseSync,
+  loadNodeSqlite,
+} from "./node-sqlite.js";
+export {
+  readInspection, InspectionReader, INSPECTION_PAGE_SIZE,
+  type InspectionCollection, type InspectionFilter,
+} from "./inspection-reader.js";
+export {
+  CanonicalSqliteStore,
+  CanonicalMigrationRequiredError,
+  DEFAULT_SQLITE_MIGRATIONS,
+  InvalidMigrationPlanError,
+  InvalidCanonicalSchemaError,
+  StaleCanonicalStoreError,
+  UnsupportedDatabaseVersionError,
+  type CanonicalIngestResult,
+  type CanonicalKnowledgeAdmissionEvidence,
+  type CanonicalDeletionMutationResult,
+  type CanonicalDeletionTarget,
+  type CorrectionProjectionWriteResult,
+  type CanonicalParserErrorRecord,
+  type CanonicalRawEventRecord,
+  type CanonicalSqliteStoreOptions,
+  type CanonicalStoreHealth,
+  type CanonicalRestoreOptions,
+  type CanonicalBackupManifest,
+  type CanonicalEnrichmentResult,
+  type CanonicalTimeRange,
+  type CanonicalRangePage,
+  type CanonicalRecordsResetCounts,
+  type LearningPromptWork,
+  type QueueProcessingRecord,
+  type SqliteMigration,
+  type WorkEpisodeProjectionWriteResult,
+} from "./canonical-store.js";

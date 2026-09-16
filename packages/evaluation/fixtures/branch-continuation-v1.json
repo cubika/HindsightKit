@@ -1,0 +1,250 @@
+{
+  "evidenceKind": "synthetic",
+  "evaluationPurpose": "regression",
+  "datasetId": "branch-continuation",
+  "datasetVersion": 1,
+  "tokenBudget": 500,
+  "observations": {
+    "baseline": {
+      "outcomeSucceeded": true,
+      "repeatedContextTokens": 1000,
+      "ttvMs": 1200000
+    },
+    "applicableContext": {
+      "outcomeSucceeded": true,
+      "repeatedContextTokens": 600,
+      "ttvMs": 960000
+    },
+    "abstainedContext": {
+      "outcomeSucceeded": true,
+      "repeatedContextTokens": 1000,
+      "ttvMs": 1200000
+    }
+  },
+  "cases": [
+    {
+      "caseId": "continue-rate-limit",
+      "goal": "finish request rate limiting",
+      "prompt": "Continue the request rate limiting implementation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-sqlite-migration",
+      "goal": "complete the SQLite migration",
+      "prompt": "Continue the SQLite migration and verification",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-parser-refactor",
+      "goal": "finish the parser refactor",
+      "prompt": "Resume the parser refactor from the prior session",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-auth-timeout",
+      "goal": "resolve the authentication timeout",
+      "prompt": "Continue debugging the authentication timeout",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-cache-invalidation",
+      "goal": "complete cache invalidation",
+      "prompt": "Resume cache invalidation work",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-cli-doctor",
+      "goal": "finish CLI doctor checks",
+      "prompt": "Continue implementing the doctor command",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-event-redaction",
+      "goal": "finish event redaction",
+      "prompt": "Continue the event redaction implementation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-queue-recovery",
+      "goal": "complete queue recovery",
+      "prompt": "Resume queue recovery testing",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-episode-builder",
+      "goal": "finish Work Episode grouping",
+      "prompt": "Continue the Work Episode builder",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-mcp-retrieval",
+      "goal": "complete MCP retrieval",
+      "prompt": "Resume MCP context retrieval",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-token-budget",
+      "goal": "finish token budget enforcement",
+      "prompt": "Continue token budget enforcement",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-scope-filter",
+      "goal": "complete repository scope filtering",
+      "prompt": "Resume repository scope filtering",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-feedback",
+      "goal": "finish deterministic feedback",
+      "prompt": "Continue deterministic feedback handling",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-forget",
+      "goal": "complete forget propagation",
+      "prompt": "Resume forget propagation implementation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-worker-drain",
+      "goal": "finish worker drain behavior",
+      "prompt": "Continue worker drain behavior",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-plugin-install",
+      "goal": "complete plugin installation",
+      "prompt": "Resume plugin installation work",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-upgrade-backup",
+      "goal": "finish upgrade backup validation",
+      "prompt": "Continue upgrade backup validation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-capture-latency",
+      "goal": "complete capture latency measurement",
+      "prompt": "Resume capture latency measurement",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-deletion-gate",
+      "goal": "finish the deletion propagation gate",
+      "prompt": "Continue deletion propagation verification",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-knowledge-index",
+      "goal": "complete the knowledge index",
+      "prompt": "Resume knowledge index implementation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-context-explain",
+      "goal": "finish context explanation",
+      "prompt": "Continue context explanation work",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-jsonc-settings",
+      "goal": "complete JSONC settings preservation",
+      "prompt": "Resume JSONC settings preservation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "continue-release-report",
+      "goal": "finish the release report",
+      "prompt": "Continue the release report implementation",
+      "scenario": "exact",
+      "expectedRelevant": true
+    },
+    {
+      "caseId": "reject-other-repository",
+      "goal": "finish billing export",
+      "prompt": "Continue billing export in this repository",
+      "scenario": "repository_mismatch",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-other-branch",
+      "goal": "finish image compression",
+      "prompt": "Continue image compression on this branch",
+      "scenario": "branch_mismatch",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-stale-head",
+      "goal": "finish API pagination",
+      "prompt": "Continue API pagination at the current HEAD",
+      "scenario": "head_mismatch",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-expired-context",
+      "goal": "finish release notes",
+      "prompt": "Continue release note preparation",
+      "scenario": "expired",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-missing-repository",
+      "goal": "finish telemetry cleanup",
+      "prompt": "Continue telemetry cleanup",
+      "scenario": "missing_repo",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-missing-branch",
+      "goal": "finish schema generation",
+      "prompt": "Continue schema generation",
+      "scenario": "missing_branch",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-missing-head",
+      "goal": "finish fixture generation",
+      "prompt": "Continue fixture generation",
+      "scenario": "missing_head",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-absent-context",
+      "goal": "finish log rotation",
+      "prompt": "Continue log rotation work",
+      "scenario": "no_context",
+      "expectedRelevant": false
+    },
+    {
+      "caseId": "reject-over-budget-context",
+      "goal": "finish a deliberately oversized continuation summary",
+      "prompt": "Continue with a very small context budget",
+      "scenario": "token_budget_exceeded",
+      "expectedRelevant": false
+    }
+  ]
+}

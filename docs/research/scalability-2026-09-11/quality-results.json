@@ -1,0 +1,371 @@
+{
+  "exclusionBaseline": {
+    "knowledgeCount": 1,
+    "prompt": "Run tests before release",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "valid",
+            "rank": 53.86499743748661
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "valid"
+        ]
+      }
+    ]
+  },
+  "exclusionAfterGrowth": {
+    "knowledgeCount": 21,
+    "prompt": "Run tests before release",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [],
+        "candidateKnowledgeIds": [
+          "excluded-00",
+          "excluded-01",
+          "excluded-02",
+          "excluded-03",
+          "excluded-04",
+          "excluded-05",
+          "excluded-06",
+          "excluded-07",
+          "excluded-08",
+          "excluded-09",
+          "excluded-10",
+          "excluded-11",
+          "excluded-12",
+          "excluded-13",
+          "excluded-14",
+          "excluded-15",
+          "excluded-16",
+          "excluded-17",
+          "excluded-18",
+          "excluded-19"
+        ]
+      }
+    ]
+  },
+  "identicalContent": {
+    "knowledgeCount": 21,
+    "prompt": "Run npm test before merging code.",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-00",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-01",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-02",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-03",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-04",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-05",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-06",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-07",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-08",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-09",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-10",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-11",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-12",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-13",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-14",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-15",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-16",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-17",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "duplicate-18",
+            "rank": 78.74563674112315
+          },
+          {
+            "id": "duplicate-19",
+            "rank": 78.74563674112315
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      },
+      {
+        "status": "ok",
+        "items": [],
+        "candidateKnowledgeIds": [
+          "duplicate-00",
+          "duplicate-01",
+          "duplicate-02",
+          "duplicate-03",
+          "duplicate-04",
+          "duplicate-05",
+          "duplicate-06",
+          "duplicate-07",
+          "duplicate-08",
+          "duplicate-09",
+          "duplicate-10",
+          "duplicate-11",
+          "duplicate-12",
+          "duplicate-13",
+          "duplicate-14",
+          "duplicate-15",
+          "duplicate-16",
+          "duplicate-17",
+          "duplicate-18",
+          "duplicate-19"
+        ]
+      }
+    ]
+  },
+  "weakOverlap": {
+    "knowledgeCount": 1,
+    "prompt": "Run database migration in production.",
+    "responses": [
+      {
+        "status": "ok",
+        "items": [
+          {
+            "id": "tests",
+            "rank": 53.86499743748661
+          }
+        ],
+        "candidateKnowledgeIds": [
+          "tests"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "requirementId": "MODEL-IDENTITY-001",
+    "milestone": "M0",
+    "statement": "Resolved model identity must match the required participant.",
+    "scope": "workflow",
+    "replaySpecIds": ["resolved-model-mismatch"],
+    "verifierIds": ["participant-resolved-model-identity"],
+    "requiredEvidence": [
+      "invocation.succeeded",
+      "participant.identity.checked"
+    ],
+    "releaseGate": "hard"
+  },
+  "replaySpec": {
+    "schemaVersion": 1,
+    "specId": "resolved-model-mismatch",
+    "requirementId": "MODEL-IDENTITY-001",
+    "inputRef": "inline://fixture",
+    "frozenEnvironment": "local-fixture-v1",
+    "expectedGate": "fail",
+    "expectedEvidence": ["identity.mismatch"]
+  },
+  "fixture": {
+    "schemaVersion": 1,
+    "fixtureVersion": 1,
+    "fixtureId": "resolved-model-mismatch",
+    "identityAssertions": [
+      {
+        "assertionId": "identity-1",
+        "invocationId": "invocation-1",
+        "expectedParticipantId": "reviewer-1",
+        "expectedResolvedProvider": "github-copilot",
+        "expectedResolvedModel": "gpt-5.6-sol"
+      }
+    ],
+    "evidence": [
+      {
+        "schemaVersion": 1,
+        "ledgerEntryId": "invocation-identity-1",
+        "runId": "fixture",
+        "participantId": "reviewer-1",
+        "invocationId": "invocation-1",
+        "requestedProvider": "github-copilot",
+        "requestedModel": "gpt-5.6-sol",
+        "resolvedProvider": "github-copilot",
+        "resolvedModel": "gpt-5.4",
+        "status": "invocation.succeeded",
+        "timestamp": "2026-08-29T00:00:00.000Z"
+      }
+    ]
+  }
+}

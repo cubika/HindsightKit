@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "provenloop-f0-probe": {
+      "type": "local",
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}\\scripts\\mcp-probe.mjs"
+      ],
+      "tools": [
+        "*"
+      ]
+    }
+  }
+}

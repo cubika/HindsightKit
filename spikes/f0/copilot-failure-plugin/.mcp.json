@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "provenloop-f0-broken": {
+      "type": "local",
+      "command": "provenloop-f0-command-that-does-not-exist",
+      "args": [],
+      "tools": [
+        "*"
+      ]
+    }
+  }
+}

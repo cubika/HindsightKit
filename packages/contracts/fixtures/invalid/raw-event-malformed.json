@@ -1,0 +1,14 @@
+{
+  "fixtureVersion": 1,
+  "fixtureId": "raw-event-malformed",
+  "schemaName": "rawEvent",
+  "expectedStatus": "invalid",
+  "input": {
+    "schemaVersion": 1,
+    "adapter": "copilot-cli",
+    "adapterVersion": "1.0.82-0",
+    "eventType": "prompt.submitted",
+    "timestamp": "not-a-timestamp",
+    "trust": "user"
+  }
+}

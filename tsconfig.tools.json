@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "eslint.config.mjs",
+    "tests/**/*.ts",
+    "vitest.config.ts",
+    "vitest.integration.config.ts"
+  ]
+}

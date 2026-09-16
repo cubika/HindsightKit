@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-09-11T10:05:11.307Z",
+  "baseCommit": "798afd7f881f6763d31ef0d035a50f63c185c532",
+  "canonicalSchema": 21,
+  "ftsFormat": 3,
+  "status": "First local repair pass; sustained-capacity acceptance remains open",
+  "checks": [
+    {
+      "command": "npm run lint",
+      "status": "passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "status": "passed"
+    },
+    {
+      "command": "npm test",
+      "status": "passed",
+      "files": 112,
+      "passed": 1283,
+      "skipped": 5
+    },
+    {
+      "command": "npm run test:integration",
+      "status": "passed",
+      "files": 26,
+      "passed": 273
+    },
+    {
+      "command": "npm test -- tests/unit/fts-scale.test.ts tests/unit/context-scale.test.ts tests/unit/learning-query-terms-retrieval.test.ts",
+      "status": "passed",
+      "files": 3,
+      "passed": 32,
+      "scope": "After final new-row index-write optimization"
+    },
+    {
+      "command": "node node_modules/eslint/bin/eslint.js packages/retrieval/src/sqlite-fts-knowledge-backend.ts scripts/scale-review/scale-probe.mjs",
+      "status": "passed",
+      "scope": "Final index-write optimization"
+    },
+    {
+      "command": "Reproduction probes",
+      "status": "completed",
+      "scope": "Same diagnostic curves, event probe, quality and lock cases; connected association mode and changed-content writes measured separately"
+    },
+    {
+      "command": "node node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/knowledge-backend.test.ts tests/integration/mcp-retrieval.test.ts tests/integration/deletion-propagation.test.ts",
+      "status": "passed",
+      "files": 3,
+      "passed": 41,
+      "scope": "Final index-write optimization"
+    }
+  ],
+  "notes": "The full suites passed before the final one-line optimization that skips deleting a nonexistent FTS row for a newly inserted record. Targeted FTS/context tests and typecheck/lint passed afterward. Product source hashes identify the final local state; tests do not establish capacity for one million events or real installed-host acceptance. No deployment, publication, existing-history deletion, or user-data migration performed.",
+  "sourceFiles": [
+    {
+      "path": "packages/cli/src/run-learning.ts",
+      "sha256": "fa16e0c8ceb99b5ae97e586710abebafda9573ec4bf797d34365566b6cbd256a"
+    },
+    {
+      "path": "packages/cli/src/run-worker.ts",
+      "sha256": "a03a4abf0c71d982c0aedcb149fb6461937b43118ba2915e2c449e4c54d73fd6"
+    },
+    {
+      "path": "packages/domain/src/automatic-learning.ts",
+      "sha256": "3675af2f0c7fc50b85a3d8d708975178b492485764083e7b8efe28d3c1d0b635"
+    },
+    {
+      "path": "packages/domain/src/branch-context-builder.ts",
+      "sha256": "bfaf362ef87e8e3304d6bc8cce261db0e60a818460a1e7d44e95981ecd32023d"
+    },
+    {
+      "path": "packages/domain/src/episode-builder.ts",
+      "sha256": "91fbde0970db4e198c98d1b43bff2dbab5f30e8491ddd25df356ce7b040e5d59"
+    },
+    {
+      "path": "packages/host/src/branch-context-projector.ts",
+      "sha256": "7739bb79735b6d7b3a631773641692e5558f1e133a765dd84370458ca37be898"
+    },
+    {
+      "path": "packages/host/src/correction-capture-projector.ts",
+      "sha256": "d85d6563d598eed61a3dd728e6e097e54d5c2f24cd799bffc3d2ade9faa31a09"
+    },
+    {
+      "path": "packages/host/src/deletion-service.ts",
+      "sha256": "dc200ac66728ee3181a7293e4968955b6c5c29ac809705a636d7f2e53629e308"
+    },
+    {
+      "path": "packages/host/src/knowledge-lifecycle-projector.ts",
+      "sha256": "de70c18edcd8489f887980044b6a4a513fcc5adac93a3ab53481e00825261e19"
+    },
+    {
+      "path": "packages/host/src/work-episode-projector.ts",
+      "sha256": "7a2096bdf7382cfa895887af47877a1be495ba479c676e3e40fe8c6346aca338"
+    },
+    {
+      "path": "packages/retrieval/src/context-service.ts",
+      "sha256": "385cfb5634a3257b2ec8e2f3d54f086ad3ab273551dce44f4697916d9c1c564b"
+    },
+    {
+      "path": "packages/retrieval/src/projection.ts",
+      "sha256": "4fc548f8c17738dc8588cb102f0ae82ccd2ed06d85ad82bfeb78807d4f2ffa98"
+    },
+    {
+      "path": "packages/retrieval/src/retriever.ts",
+      "sha256": "6bdf3ebbdd328e8807bc710042b98dfe1d7c3fc0e722370573b2a76b5260f6c5"
+    },
+    {
+      "path": "packages/retrieval/src/sqlite-fts-knowledge-backend.ts",
+      "sha256": "7178761fc61860bb5ac634936f61ecbc8f40174bf014be07e7dbb196dab38b2a"
+    },
+    {
+      "path": "packages/retrieval/src/types.ts",
+      "sha256": "399c38c866adab96ad02ae651820575aa1dc984099cb693e9e10982a323a6a9a"
+    },
+    {
+      "path": "packages/storage-sqlite/src/canonical-store.ts",
+      "sha256": "fd0136be3f17f9d3c78c6b2b1b09a1fabd541eec327057be0bad58a0014c7755"
+    },
+    {
+      "path": "tests/unit/automatic-learning-proof.test.ts",
+      "sha256": "bf5afa9e7df31dd476cc93be70e804a98555ba7e0ad8727c7ff02c2876b52aad"
+    },
+    {
+      "path": "scripts/scale-review/event-probe.mjs",
+      "sha256": "095d3458b52c4b8bccf295142ec47bbcfca918cebef97e7dc2bf0c1a03f3a802"
+    },
+    {
+      "path": "scripts/scale-review/scale-probe.mjs",
+      "sha256": "06ae77dc6d7355480f313bbc375128d9da1f957afe1c2a68d3399e408ed68448"
+    },
+    {
+      "path": "tests/unit/canonical-scale.test.ts",
+      "sha256": "fdb605b1482bf567aceb37b10d36e9cddfde7ae6c4e12353c20155f18a49fe31"
+    },
+    {
+      "path": "tests/unit/context-scale.test.ts",
+      "sha256": "e08ea2aebdb02b7f1304b39faa736d204f7cc320cde1f22c5be4686402e46d38"
+    },
+    {
+      "path": "tests/unit/episode-scale.test.ts",
+      "sha256": "d9a7fc1500ec48b1ab3d4f972718ec86b205fd7a3c1b4fd8638fb9444a02755a"
+    },
+    {
+      "path": "tests/unit/fts-scale.test.ts",
+      "sha256": "879c5d2a27b4ed8f0a518d88460daf107c062d27a12bca024b9266e99a29f2ad"
+    },
+    {
+      "path": "tests/unit/worker-scale.test.ts",
+      "sha256": "d004068508412ba96582521850b0d48676e21df641f1532265ad7ed91f7fc4a7"
+    }
+  ],
+  "evidenceFiles": [
+    {
+      "path": "results.json",
+      "sha256": "42cd3b1970298ee92c025c11f034d9675b6d4540b85584fa4dee83aa1c277bc6"
+    },
+    {
+      "path": "event-results.json",
+      "sha256": "f0f51d97d33b625780dfb91327a2369ceca6f748d24ae688a406c64f34ebebda"
+    },
+    {
+      "path": "quality-results.json",
+      "sha256": "2c36551615cf27cf15a3bc1616aa24e6aaa2e41d8be9535897f32f8cb1c33699"
+    },
+    {
+      "path": "lock-results.json",
+      "sha256": "c085cf5ab8e348cb11f36a61339714cea03425cd9cfe76a777760bcc09e44005"
+    },
+    {
+      "path": "additional-results.json",
+      "sha256": "2ed5c67b857fc1736b074359c9d6eb343c7a0a0d934ea9f49e645275e9b56df3"
+    }
+  ]
+}
