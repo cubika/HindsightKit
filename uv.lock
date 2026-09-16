@@ -2097,19 +2097,30 @@ name = "provenloop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "hindsight-api-slim", extra = ["local-onnx"] },
+    { name = "fastmcp" },
+    { name = "filelock" },
+    { name = "github-copilot-sdk" },
     { name = "hindsight-client" },
     { name = "hindsight-copilot" },
+]
+
+[package.optional-dependencies]
+server = [
+    { name = "hindsight-api-slim", extra = ["local-onnx"] },
     { name = "hindsight-embed" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hindsight-api-slim", extras = ["local-onnx"], specifier = "==0.10.0" },
+    { name = "fastmcp", specifier = "==4.0.4" },
+    { name = "filelock", specifier = "==3.32.7" },
+    { name = "github-copilot-sdk", specifier = "==1.0.14" },
+    { name = "hindsight-api-slim", extras = ["local-onnx"], marker = "extra == 'server'", specifier = "==0.10.0" },
     { name = "hindsight-client", specifier = "==0.10.0" },
     { name = "hindsight-copilot", specifier = "==0.1.0" },
-    { name = "hindsight-embed", specifier = "==0.10.0" },
+    { name = "hindsight-embed", marker = "extra == 'server'", specifier = "==0.10.0" },
 ]
+provides-extras = ["server"]
 
 [[package]]
 name = "psycopg2-binary"

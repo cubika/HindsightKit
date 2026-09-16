@@ -7,9 +7,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from fastmcp import Context, FastMCP
-from hindsight_client import Hindsight
-
-from .cli import profile_config
+from . import connection
 from .memory import Memory, Scope, SHARED_BANK, scope_for
 
 
@@ -26,11 +24,14 @@ def scope_from_roots(roots) -> Scope:
 
 
 def serve(context: str, directory: str | None = None):
-    _, paths = profile_config()
-    server = FastMCP('ProvenLoop', instructions='Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
+    config = connection.load()
+    instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
+                    if connection.fixed_bank(config) else
+                    'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
+    server = FastMCP('ProvenLoop', instructions=instructions)
     # A CLI process inherits the agent's launch cwd. VS Code supplies MCP roots.
-    scope = None
-    if context == 'cli':
+    scope = Scope(connection.fixed_bank(config)) if connection.fixed_bank(config) else None
+    if context == 'cli' and scope is None:
         session_id = os.environ.get('COPILOT_AGENT_SESSION_ID')
         if session_id:
             from .hooks import session_config
@@ -46,7 +47,7 @@ def serve(context: str, directory: str | None = None):
     async def memory(ctx: Context):
         nonlocal scope, root_uris
         async with lock:
-            if context == 'vscode':
+            if context == 'vscode' and not connection.fixed_bank(config):
                 capabilities = ctx.session.client_capabilities
                 if not capabilities or not capabilities.roots:
                     raise ValueError('VS Code did not supply workspace roots; repository memory access is unavailable.')
@@ -61,10 +62,12 @@ def serve(context: str, directory: str | None = None):
 
     async def call(ctx, operation, **arguments):
         selected = await memory(ctx)
-        client = Hindsight(base_url=f'http://127.0.0.1:{paths.port}', timeout=330)
+        client = connection.sdk(config, timeout=330)
         try:
             service = Memory(client, selected)
-            return await service.retain(**arguments) if operation == 'retain' else await service.read(operation, **arguments)
+            result = await service.retain(**arguments) if operation == 'retain' else await service.read(operation, **arguments)
+            await connection.report(config, 'copilot-cli' if context == 'cli' else 'vscode')
+            return result
         finally:
             await client.aclose()
 

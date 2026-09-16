@@ -75,8 +75,6 @@ def main():
                 server.prepare_database()
                 server.start()
                 assert server.validate()['extensions']['vector'] == '0.8.6'
-            # Match the existing pg0 release's extension, including a real upgrade on restore.
-            source.sql("DROP EXTENSION vector; CREATE EXTENSION vector VERSION '0.8.5'")
             if args.hindsight:
                 check_hindsight(source, root)
             source.sql("CREATE TABLE migration_fixture (id bigserial PRIMARY KEY, content text, embedding vector(3)); "

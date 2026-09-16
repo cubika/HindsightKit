@@ -30,7 +30,7 @@ function edit(path, changes) {
 }
 
 if (action === 'preflight') {
-  const [mcpPath, cliPath, configPath, apiUrl] = args;
+  const [mcpPath, cliPath, configPath, apiUrl, replace] = args;
   for (const path of [mcpPath, cliPath, configPath]) read(path);
   const vs = read(mcpPath).value.servers?.hindsight;
   if (vs && !vs.args?.includes('provenloop.cli')) {
@@ -45,9 +45,9 @@ if (action === 'preflight') {
     try { JSON.parse(readFileSync(configPath, 'utf8')); }
     catch { throw new Error('Official coding-agents requires strict JSON in ' + configPath + '. Remove comments/trailing commas/BOM before setup.'); }
   }
-  if (cfg.apiUrl && cfg.apiUrl.replace(/\/$/, '') !== apiUrl) throw new Error('Hindsight already uses another endpoint in ' + configPath);
+  if (cfg.apiUrl && cfg.apiUrl.replace(/\/$/, '') !== apiUrl && !(replace === 'replace' && cfg.provenloop)) throw new Error('Hindsight already uses another endpoint in ' + configPath);
   if (cfg.serverMode && cfg.serverMode !== 'self-hosted') throw new Error('Existing Hindsight serverMode conflicts in ' + configPath);
-  if (cfg.disabled || cfg.retainSessions === false || cfg.apiToken || cfg.bankId ||
+  if (cfg.disabled || cfg.retainSessions === false || (cfg.apiToken && !cfg.provenloop) || cfg.bankId ||
       Object.keys(cfg.harnesses ?? {}).length || Object.keys(cfg.banks ?? {}).length) {
     throw new Error('Existing Hindsight overrides disable learning or change routing/authentication in ' + configPath);
   }
@@ -55,15 +55,20 @@ if (action === 'preflight') {
     if (!/^provenloop-[0-9a-f]{12}$/.test(bank)) throw new Error('An unrelated memory mapping exists in ' + configPath);
   }
 } else if (action === 'vscode') {
-  const [path, python] = args;
+  const [path, python, configPath] = args;
   edit(path, [[['servers', 'hindsight'], { type: 'stdio', command: python,
-    args: ['-m', 'provenloop.cli', 'mcp', '--context', 'vscode'] }]]);
+    args: ['-m', 'provenloop.cli', 'mcp', '--context', 'vscode'],
+    ...(configPath ? { env: { HINDSIGHT_CONFIG: configPath } } : {}) }]]);
 } else if (action === 'config') {
   const [path, apiUrl] = args;
+  const input = readFileSync(0, 'utf8').trim();
+  const settings = input ? JSON.parse(input) : {};
   const cfg = read(path).value;
   const defaults = { serverMode: 'self-hosted', apiUrl, autoUpdate: false, autoSeed: false, codebaseSurvey: false, maxParallelRetains: 2 };
   const changes = Object.entries(defaults).filter(([key]) => !(key in cfg)).map(([key, value]) => [[key], value]);
   changes.push([['optInOnly'], false], [['mapPathToBank'], undefined], [['optInPaths'], undefined]);
+  changes.push([['apiUrl'], apiUrl]);
+  for (const key of ['apiToken', 'provenloop']) if (key in settings) changes.push([[key], settings[key]]);
   edit(path, changes);
 } else if (action === 'remove-project') {
   const [path, apiUrl, bank] = args;

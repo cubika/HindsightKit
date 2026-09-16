@@ -1,0 +1,86 @@
+"""One configured API destination for MCP, hooks, and command-line checks."""
+import json
+import os
+import re
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import aiohttp
+from hindsight_client import Hindsight
+
+
+def config_path() -> Path:
+    return Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
+
+
+def load() -> dict:
+    path = config_path()
+    if path.is_file():
+        return json.loads(path.read_text(encoding='utf-8'))
+    from .cli import profile_config
+    profile, paths = profile_config()
+    return {'apiUrl': f'http://127.0.0.1:{paths.port}',
+            'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY')}
+
+
+def validate_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (parsed.scheme not in {'http', 'https'} or not parsed.hostname or
+            parsed.username is not None or parsed.password is not None or
+            parsed.query or parsed.fragment or parsed.path not in {'', '/'} or
+            any(char.isspace() for char in value)):
+        raise ValueError('Use an HTTP(S) API origin without credentials, path, query, or fragment.')
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        raise ValueError('Invalid API port.')
+    return value.rstrip('/')
+
+
+def validate_bank(value: str) -> str:
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', value):
+        raise ValueError('Bank must contain 1-128 letters, digits, dots, underscores, colons, or hyphens.')
+    return value
+
+
+def client_mode(config: dict) -> bool:
+    return config.get('provenloop', {}).get('mode') == 'client'
+
+
+def fixed_bank(config: dict) -> str | None:
+    return config.get('provenloop', {}).get('bank')
+
+
+def sdk(config: dict, **options) -> Hindsight:
+    return Hindsight(base_url=validate_url(config['apiUrl']), api_key=config.get('apiToken'), **options)
+
+
+async def request(config, method, path, *, body=None, timeout=10):
+    headers = {'Authorization': 'Bearer ' + config['apiToken']} if config.get('apiToken') else {}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
+        async with session.request(method, validate_url(config['apiUrl']) + path,
+                                   headers=headers, json=body, allow_redirects=False) as response:
+            if response.status >= 300:
+                raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
+            return await response.json()
+
+
+async def register(config):
+    info = config.get('provenloop', {})
+    if not info.get('activity'):
+        return
+    await request(config, 'POST', '/ext/provenloop/clients', body={
+        'deviceId': info['deviceId'], 'name': info['name'],
+        'clients': ['vscode', 'copilot-cli'], 'used': False,
+    })
+
+
+async def report(config, kind):
+    info = config.get('provenloop', {})
+    if not info.get('activity'):
+        return
+    try:
+        await request(config, 'POST', '/ext/provenloop/clients', timeout=2, body={
+            'deviceId': info['deviceId'], 'name': info['name'], 'clients': [kind], 'used': True,
+        })
+    except (aiohttp.ClientError, TimeoutError, RuntimeError, ValueError):
+        # Inventory is optional; a reporting outage must not fail a memory operation.
+        pass

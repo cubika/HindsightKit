@@ -9,6 +9,34 @@ from provenloop import postgres
 
 
 class PostgresTests(unittest.TestCase):
+    def test_legacy_installation_root_resolves_version_subdirectory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            instance = root / 'instances/hindsight-embed-provenloop'
+            data = instance / 'data'
+            installation = root / 'installation'
+            binaries = installation / '18.1.0/bin'
+            data.mkdir(parents=True)
+            binaries.mkdir(parents=True)
+            (data / 'PG_VERSION').write_text('18')
+            (data / 'postmaster.pid').write_text('123\ndata\n0\n5432\n')
+            (binaries / 'postgres.exe').touch()
+            (instance / 'instance.json').write_text(json.dumps({
+                'installation_dir': str(installation), 'version': '18.1.0',
+                'data_dir': str(data), 'port': 5432, 'username': 'test',
+                'password': 'secret', 'database': 'hindsight'}))
+            tools = Mock(root=root, sql=Mock(return_value=str(data)))
+            def execute(command, **kwargs):
+                if command[-1] == '--version':
+                    self.assertEqual(command[0], binaries / 'postgres.exe')
+                    return Mock(stdout='postgres (PostgreSQL) 18.1', returncode=0)
+                self.assertEqual(command[0], binaries / 'pg_ctl.exe')
+                return Mock(stdout='', returncode=0)
+            with patch.object(postgres, 'execute', side_effect=execute):
+                with postgres.legacy_connection(root, tools) as connection:
+                    self.assertEqual(connection['database'], 'hindsight')
+                    self.assertEqual(connection['port'], '5432')
+
     def test_profile_switch_preserves_settings_and_original_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'profile.env'

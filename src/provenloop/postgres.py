@@ -49,15 +49,20 @@ def execute(command, *, env=None, input=None, allowed=(0,), sensitive=()):
 def private_directory(path: Path):
     reject_links(path)
     path.mkdir(parents=True, exist_ok=True)
+    restrict_access(path, directory=True)
+
+
+def restrict_access(path: Path, *, directory=False):
     if os.name == 'nt':
         account = execute(['whoami.exe', '/user', '/fo', 'csv', '/nh']).stdout
         sid = next(csv.reader(io.StringIO(account.strip())))[1]
         if not re.fullmatch(r'S-1-[0-9-]+', sid):
             raise RuntimeError('Cannot resolve the current Windows account SID.')
+        permission = '(OI)(CI)F' if directory else 'F'
         execute(['icacls.exe', path, '/inheritance:r', '/grant:r',
-                 f'*{sid}:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F'])
+                 f'*{sid}:{permission}', f'*S-1-5-18:{permission}'])
     else:
-        path.chmod(0o700)
+        path.chmod(0o700 if directory else 0o600)
 
 
 def reject_links(path: Path):
@@ -87,6 +92,7 @@ def ident(value):
 
 class Postgres:
     def __init__(self, root: Path):
+        reject_links(root)
         self.root = root.resolve()
         self.distribution = self.root / ('server-' + POSTGRES_VERSION)
         self.data = self.root / 'data'
@@ -172,6 +178,7 @@ class Postgres:
             raise RuntimeError('PostgreSQL answered from an unexpected data directory.')
 
     def stop(self):
+        reject_links(self.data)
         if self.running():
             execute([self.binary('pg_ctl'), '-D', self.data, '-m', 'fast', '-w', '-t', '60', 'stop'])
 
@@ -274,7 +281,7 @@ class Postgres:
             self.sql(f'REASSIGN OWNED BY {ident(role)} TO hindsight', database=database)
             after = self.snapshot(conn)
             if before != after:
-                raise RuntimeError('Restored table counts do not match the source. The old database is unchanged.')
+                raise RuntimeError('Restored table content does not match the source. The old database is unchanged.')
         finally:
             # If interrupted, a NOLOGIN role cannot expose elevated application access.
             # Reassign any committed objects before removing that temporary role.
@@ -325,11 +332,13 @@ def write_profile_database(path: Path, url):
     backup = path.with_name(path.name + '.before-postgresql')
     if not backup.exists():
         shutil.copy2(path, backup)
+        restrict_access(backup)
     lines = [line for line in original.splitlines()
              if not re.match(r'^\s*(?:export\s+)?(?:HINDSIGHT_EMBED_API_DATABASE_URL|HINDSIGHT_API_DATABASE_URL)\s*=', line)]
     lines.append(DATABASE_KEY + '=' + url)
     temporary = path.with_suffix('.postgresql.tmp')
     temporary.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    restrict_access(temporary)
     os.replace(temporary, path)
 
 

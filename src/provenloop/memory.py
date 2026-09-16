@@ -19,7 +19,7 @@ class Scope:
 
     @property
     def readable_banks(self) -> tuple[str, ...]:
-        return (self.bank, SHARED_BANK) if self.repository else (SHARED_BANK,)
+        return (self.bank, SHARED_BANK) if self.repository else (self.bank,)
 
 
 def scope_for(directory: str | Path) -> Scope:
