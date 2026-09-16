@@ -91,7 +91,7 @@ def install_node_packages():
     lock = PACKAGE / 'package-lock.json'
     stamp = directory / '.installed-lock'
     digest = hashlib.sha256(lock.read_bytes()).hexdigest()
-    if stamp.is_file() and stamp.read_text() == digest and (directory / 'node_modules/@vectorize-io/hindsight-control-plane/bin/cli.js').is_file():
+    if stamp.is_file() and stamp.read_text() == digest and (directory / 'node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js').is_file():
         return
     for name in ['package.json', 'package-lock.json']:
         source = PACKAGE / name
@@ -240,14 +240,79 @@ def start():
     _, paths = profile_config()
     print('Starting Hindsight (first start downloads the database and embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
-    os.environ['PATH'] = str(Path(node()).parent) + os.pathsep + os.environ['PATH']
+    ui_url = start_ui(paths)
+    return f'http://127.0.0.1:{paths.port}', ui_url
+
+
+def start_ui(paths):
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    from hindsight_embed.profile_manager import lock_file, unlock_file
+
+    ui_url = f'http://localhost:{paths.ui_port}'
+    paths.ui_log.parent.mkdir(parents=True, exist_ok=True)
+    with paths.ui_log.with_suffix('.start.lock').open('w') as lock:
+        lock_file(lock)
+        try:
+            if DaemonEmbedManager().is_ui_running(PROFILE, paths.ui_port):
+                asyncio.run(check_ui(ui_url))
+            else:
+                launch_ui(paths, ui_url)
+            # Keep the official stop command aware of the bound port.
+            paths.ui_log.with_suffix('.port').write_text(str(paths.ui_port), encoding='utf-8')
+        finally:
+            unlock_file(lock)
+    return ui_url
+
+
+def launch_ui(paths, ui_url):
+    server = runtime() / 'node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js'
+    if not server.is_file():
+        raise RuntimeError('Hindsight UI is not installed. Run setup first.')
+    with socket.socket() as listener:
+        try:
+            listener.bind(('127.0.0.1', paths.ui_port))
+        except OSError as exc:
+            raise RuntimeError(f'UI port {paths.ui_port} is already in use.') from exc
     ui_env = os.environ.copy()
+    ui_env.update(PORT=str(paths.ui_port), HOSTNAME='localhost',
+                  HINDSIGHT_CP_DATAPLANE_API_URL=f'http://127.0.0.1:{paths.port}')
     # Upstream #4379: Next.js locale rewriting loops with a literal 127.0.0.1 hostname.
     ui_env['NODE_OPTIONS'] = (ui_env.get('NODE_OPTIONS', '') + ' --dns-result-order=ipv4first').strip()
-    run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'start', '--hostname', 'localhost'], cwd=runtime(), env=ui_env)
-    ui_url = f'http://localhost:{paths.ui_port}'
-    asyncio.run(check_ui(ui_url))
-    return f'http://127.0.0.1:{paths.port}', ui_url
+    # Run the pinned official server directly; npx/CLI child shells can create Windows consoles.
+    options = ({'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+               if sys.platform == 'win32' else {'start_new_session': True})
+    with paths.ui_log.open('ab') as log:
+        process = subprocess.Popen(
+            [node(), str(server)], cwd=server.parent, env=ui_env,
+            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, close_fds=True, **options,
+        )
+    try:
+        asyncio.run(wait_ui(ui_url, process))
+    except BaseException as exc:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        if not isinstance(exc, Exception):
+            raise
+        raise RuntimeError(f'Hindsight UI failed to start. See {paths.ui_log}: {exc}') from exc
+
+
+async def wait_ui(url, process, timeout=30):
+    import aiohttp
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError(f'Server exited with code {process.returncode}.')
+        try:
+            await asyncio.wait_for(check_ui(url), timeout=max(0, deadline - loop.time()))
+            if process.poll() is not None:
+                raise RuntimeError(f'Server exited with code {process.returncode}.')
+            return
+        except (aiohttp.ClientError, TimeoutError, RuntimeError):
+            if loop.time() >= deadline:
+                raise
+            await asyncio.sleep(min(0.25, deadline - loop.time()))
 
 
 async def check_ui(url):
@@ -305,7 +370,7 @@ def status():
     ui = manager.is_ui_running(PROFILE)
     print(f'Hindsight: {"running" if healthy else "stopped"} at http://127.0.0.1:{paths.port}')
     print(f'UI: {"running" if ui else "stopped"} at http://localhost:{paths.ui_port}')
-    print(f'Profile: {paths.config}\nLog: {paths.log}')
+    print(f'Profile: {paths.config}\nLog: {paths.log}\nUI log: {paths.ui_log}')
     return healthy and ui
 
 
@@ -394,8 +459,8 @@ def main(argv=None):
             _, paths = profile_config()
             asyncio.run(check_memory(f'http://127.0.0.1:{paths.port}'))
         elif args.command == 'ui':
-            _, paths = profile_config()
-            webbrowser.open(f'http://localhost:{paths.ui_port}')
+            _, ui_url = start()
+            webbrowser.open(ui_url)
         elif args.command == 'copilot':
             command = copilot_command()
             if command is None:
