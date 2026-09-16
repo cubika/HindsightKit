@@ -237,8 +237,16 @@ def configure_profile(args):
 
 
 def start():
-    _, paths = profile_config()
-    print('Starting Hindsight (first start downloads the database and embedding model)...', flush=True)
+    from .postgres import Postgres, require_postgresql, check_external
+    config, paths = profile_config()
+    database_url = require_postgresql(config)
+    database = Postgres(home() / 'postgresql')
+    if database.state_path.is_file() and database_url == database.url:
+        database.start()
+        database.validate()
+    else:
+        asyncio.run(check_external(database_url))
+    print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
     return f'http://127.0.0.1:{paths.port}', ui_url
@@ -364,14 +372,20 @@ async def ensure_bank(api_url: str, bank: str):
 
 def status():
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-    _, paths = profile_config()
+    from .postgres import Postgres, configured_url
+    config, paths = profile_config()
+    database = Postgres(home() / 'postgresql')
+    url = configured_url(config)
+    managed = database.state_path.is_file() and url == database.url
+    print('Database: ' + ('standalone PostgreSQL ' + ('running' if database.running() else 'stopped')
+          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'pg0; run setup to migrate'))
     manager = DaemonEmbedManager()
     healthy = manager.is_running(PROFILE)
     ui = manager.is_ui_running(PROFILE)
     print(f'Hindsight: {"running" if healthy else "stopped"} at http://127.0.0.1:{paths.port}')
     print(f'UI: {"running" if ui else "stopped"} at http://localhost:{paths.ui_port}')
     print(f'Profile: {paths.config}\nLog: {paths.log}\nUI log: {paths.ui_log}')
-    return healthy and ui
+    return healthy and ui and (database.running() if managed else bool(url.startswith(('postgresql://', 'postgres://'))))
 
 
 def setup(args):
@@ -391,6 +405,13 @@ def setup(args):
     coding_config = Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
     for directory in user_directories:
         integrate('preflight', directory / 'mcp.json', cli_mcp, coding_config, api_url)
+    from .postgres import setup_database
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    def stop_api():
+        if not DaemonEmbedManager().stop(PROFILE):
+            raise RuntimeError('Cannot stop Hindsight safely before database migration.')
+    config, paths = profile_config()
+    setup_database(home() / 'postgresql', config, paths.config, stop_api=stop_api)
     api_url, ui_url = start()
     asyncio.run(check_memory(api_url))
     from .memory import SHARED_BANK
@@ -422,7 +443,7 @@ def setup(args):
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,ui,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,backup,ui,copilot}')
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -430,7 +451,7 @@ def main(argv=None):
                               help=f'Reasoning effort for new profiles (default: {DEFAULT_REASONING_EFFORT}).')
     setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
     setup_parser.add_argument('--no-open', action='store_true')
-    for command in ['start', 'stop', 'status', 'check', 'ui']:
+    for command in ['start', 'stop', 'status', 'check', 'backup', 'ui']:
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -453,11 +474,31 @@ def main(argv=None):
         elif args.command == 'stop':
             run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
             run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+            from .postgres import Postgres, configured_url
+            config, _ = profile_config()
+            database = Postgres(home() / 'postgresql')
+            if database.state_path.is_file() and configured_url(config) == database.url:
+                database.stop()
         elif args.command == 'status':
             return 0 if status() else 1
         elif args.command == 'check':
-            _, paths = profile_config()
+            from .postgres import Postgres, require_postgresql, check_external
+            config, paths = profile_config()
+            url = require_postgresql(config)
+            database = Postgres(home() / 'postgresql')
+            if database.state_path.is_file() and url == database.url:
+                database.validate()
+            else:
+                asyncio.run(check_external(url))
             asyncio.run(check_memory(f'http://127.0.0.1:{paths.port}'))
+        elif args.command == 'backup':
+            from .postgres import Postgres, require_postgresql
+            config, _ = profile_config()
+            database = Postgres(home() / 'postgresql')
+            if not database.state_path.is_file() or require_postgresql(config) != database.url:
+                raise RuntimeError('Use the PostgreSQL administrator backup tools for this external database.')
+            database.start()
+            print(f'PostgreSQL backup: {database.backup()}')
         elif args.command == 'ui':
             _, ui_url = start()
             webbrowser.open(ui_url)
