@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="csrf-token" content="__TOKEN__">
+  <meta name="connector-id" content="__CONNECTOR_ID__">
   <title>邮件连接 · ProvenLoop</title>
   <link rel="stylesheet" href="/connectors.css">
   <script src="/connectors.js" defer></script>
@@ -31,6 +32,7 @@
       </a>
       <div class="nav-label">工作空间</div>
       <nav>
+        <a class="nav-item" href="/">全部连接器</a>
         <a class="nav-item current" href="#main" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#icon-mail"/></svg>邮件连接<span class="nav-dot"></span></a>
       </nav>
       <div class="sidebar-bottom">
@@ -48,6 +50,7 @@
 
       <div id="error-banner" class="message error-message" role="alert" tabindex="-1" hidden><div><strong>需要处理</strong><p id="error-text"></p></div><button id="retry-button" class="button button-small button-quiet" type="button">刷新状态</button></div>
       <div id="warning-banner" class="message warning-message" role="status" hidden><p id="warning-text"></p></div>
+      <div id="prerequisite-banner" class="message warning-message" role="status" hidden><div><strong>需要先安装 WorkIQ</strong><p id="prerequisite-text"></p></div></div>
       <noscript><div class="message error-message">请启用 JavaScript，以读取邮箱和配置同步。</div></noscript>
 
       <section class="account-card" aria-labelledby="account-heading">

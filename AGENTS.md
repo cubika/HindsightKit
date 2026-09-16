@@ -1,6 +1,6 @@
 # Development
 
-- Keep ProvenLoop a setup wrapper around pinned official Hindsight components. Do not add a memory database, learning pipeline, connector framework, or forked engine.
+- Keep ProvenLoop a setup wrapper around pinned official Hindsight components. Optional connectors use a small explicit registry and isolated adapters; do not add a memory database, learning pipeline, or forked engine.
 - Maintain one current implementation. Remove superseded paths and unnecessary compatibility fallbacks when replacing behavior.
 - Work in a dedicated worktree from local master: `git worktree add -b codex/<task> .runtime/worktrees/<task> master`. Keep the primary checkout on master and preserve unrelated changes.
 - Setup: `./setup.ps1` on Windows. Test: `.venv/Scripts/python.exe -m unittest discover -s tests -v`.

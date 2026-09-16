@@ -80,13 +80,15 @@ Use the official Hindsight UI to inspect memories, correct facts, or invalidate 
 
 ## WorkIQ email
 
-Run `provenloop connectors` to open the local mail settings page. It uses the current WorkIQ account and lists the real mailbox folders. The suggested selection includes Inbox and the DSAPISOT subtree, excluding its Sev3 and PullRequests subtrees. Choose a historical lookback and a synchronization interval; zero minutes means manual runs. Preview the cleaned content before starting. Closing the browser leaves synchronization running.
+Run `provenloop connectors` to open the optional connector catalog. WorkIQ must already be installed at the supported version before its connector can run. ProvenLoop does not install it or open its login flow during setup. Core memory works without any connector; paused connectors are not automatically started. Each adapter has its own settings, prerequisites and lifecycle, as described in the [connector contract](docs/connectors.md).
+
+The WorkIQ settings page uses the current account and lists real mailbox folders. The suggested selection includes Inbox and the DSAPISOT subtree, excluding its Sev3 and PullRequests subtrees. Choose a historical lookback and a synchronization interval; zero minutes means manual runs. Preview the cleaned content before starting. Closing the browser leaves enabled synchronization running. Pausing releases WorkIQ while preserving imported memory.
 
 The importer reads structured mail, removes mail envelopes and repeated boilerplate, and submits useful content to the official Hindsight engine. Imported email has its own bank and a read-only `recall_mail` MCP tool. Repository and shared agent memory keep their existing routing. The settings page links to the official Hindsight UI for inspecting memory and source evidence.
 
 This release uses bounded time-window polling with overlap. It does not mirror mailbox deletions or guarantee changes outside the scanned window. WorkIQ must already be installed at the supported version and signed in; authentication renewal may require its login UI. `provenloop stop` stops the importer before Hindsight, and `provenloop start` resumes its saved settings. No Windows login task is installed.
 
-Configuration and the delivery ledger live in `~/.provenloop/mail`. Credentials remain with WorkIQ. See [mail design and validation](docs/workiq-mail.md) for source handling and test results.
+The settings host stores its process record in `~/.provenloop/connectors`. Mail configuration and the delivery ledger remain in `~/.provenloop/mail`; opening the catalog does not create a mail ledger or model client. Credentials remain with WorkIQ. See [mail design and validation](docs/workiq-mail.md) for source handling and test results.
 
 ## Files and compatibility
 

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, Mock, patch
 from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
 from provenloop import connection, connectors
+from provenloop.connector_registry import ConnectorHost
+from provenloop.workiq_connector import Adapter
 
 
 class FakeSync:
@@ -33,9 +35,15 @@ class FakeSync:
 class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.sync = FakeSync()
+        self.temp = tempfile.TemporaryDirectory()
+        self.host = ConnectorHost(Path(self.temp.name), {"apiUrl": "http://127.0.0.1:9077"})
+        adapter = Adapter(Path(self.temp.name) / "mail", self.host.config)
+        adapter.sync = self.sync
+        adapter.availability = Mock(return_value={"ready": True, "message": "Installed fixture"})
+        self.host.adapters["workiq"] = adapter
         self.stopped = asyncio.Event()
         self.client = TestClient(TestServer(connectors.make_app(
-            self.sync, port=19078, token='test-token', instance='test-instance',
+            self.host, port=19078, token='test-token', instance='test-instance',
             hindsight_url='http://localhost:19077', shutdown=self.stopped)))
         await self.client.start_server()
         self.headers = {'Host': '127.0.0.1:19078'}
@@ -43,17 +51,18 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.close()
+        self.temp.cleanup()
 
     async def test_rebinding_cross_origin_and_missing_token_cannot_change_settings(self):
         for headers in [self.headers, {**self.write_headers, 'Host': 'attacker.example'},
                         {**self.write_headers, 'Origin': 'https://attacker.example'},
                         {**self.write_headers, 'Sec-Fetch-Site': 'cross-site'}]:
-            response = await self.client.post('/api/sync', headers=headers, json={})
+            response = await self.client.post('/api/connectors/workiq/sync', headers=headers, json={})
             self.assertEqual(response.status, 403)
         self.assertFalse(self.sync.calls)
 
     async def test_status_contains_official_bank_link_and_no_token(self):
-        response = await self.client.get('/api/status', headers=self.headers)
+        response = await self.client.get('/api/connectors/workiq', headers=self.headers)
         self.assertEqual(response.status, 200)
         value = await response.json()
         self.assertEqual(value['hindsight_url'], 'http://localhost:19077/banks/provenloop-mail')
@@ -63,31 +72,52 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_config_and_preview_are_explicit_and_bounded(self):
         config = {'folder_ids': ['inbox'], 'lookback_days': 7, 'interval_minutes': 0}
-        response = await self.client.post('/api/config', headers=self.write_headers, json=config)
+        response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json=config)
         self.assertEqual(response.status, 200)
         self.assertEqual(self.sync.calls, [config])
-        response = await self.client.post('/api/config', headers=self.write_headers, json={**config, 'account': 'other'})
+        response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json={**config, 'account': 'other'})
         self.assertEqual(response.status, 400)
-        response = await self.client.post('/api/config', headers=self.write_headers, data='[]')
+        response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, data='[]')
         self.assertEqual(response.status, 400)
-        response = await self.client.post('/api/preview', headers=self.write_headers, json={})
+        response = await self.client.post('/api/connectors/workiq/preview', headers=self.write_headers, json={})
         self.assertEqual((await response.json())['items'][0]['cleaned'], 'clean')
         self.assertEqual(self.sync.calls, [config])
 
     async def test_page_replaces_csrf_marker_and_static_route_is_allowlisted(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            (directory / 'connectors.html').write_text('<meta content="__TOKEN__">', encoding='utf-8')
+            (directory / 'catalog.html').write_text('<meta content="__TOKEN__">', encoding='utf-8')
+            (directory / 'connectors.html').write_text('<meta content="__TOKEN__" data-connector="__CONNECTOR_ID__">', encoding='utf-8')
+            (directory / 'connectors.js').write_text('/* registered adapter asset */', encoding='utf-8')
+            (directory / 'private.js').write_text('/* not registered */', encoding='utf-8')
             with patch.object(connectors, 'WEB', directory):
                 response = await self.client.get('/', headers=self.headers)
                 self.assertEqual(await response.text(), '<meta content="test-token">')
+                response = await self.client.get('/connectors/workiq', headers=self.headers)
+                self.assertEqual(await response.text(), '<meta content="test-token" data-connector="workiq">')
                 response = await self.client.get('/service.json', headers=self.headers)
+                self.assertEqual(response.status, 404)
+                response = await self.client.get('/connectors.js', headers=self.headers)
+                self.assertEqual(response.status, 200)
+                response = await self.client.get('/private.js', headers=self.headers)
                 self.assertEqual(response.status, 404)
 
     async def test_shutdown_needs_token_and_preserves_sync_settings(self):
         response = await self.client.post('/api/shutdown', headers=self.write_headers, json={})
         self.assertEqual((await response.json())['instance'], 'test-instance')
         self.assertTrue(self.stopped.is_set())
+        self.assertFalse(self.sync.calls)
+
+    async def test_catalog_and_unknown_connector_routes_are_explicit(self):
+        response = await self.client.get('/api/connectors', headers=self.headers)
+        self.assertEqual([item['id'] for item in (await response.json())['connectors']], ['workiq'])
+        for path in ['/api/connectors/unknown', '/connectors/unknown']:
+            response = await self.client.get(path, headers=self.headers)
+            self.assertEqual(response.status, 400)
+        response = await self.client.post('/api/connectors/unknown/sync', headers=self.write_headers)
+        self.assertEqual(response.status, 400)
+        response = await self.client.post('/api/connectors/workiq/unknown', headers=self.write_headers)
+        self.assertEqual(response.status, 400)
         self.assertFalse(self.sync.calls)
 
 
@@ -175,15 +205,16 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
         config = {"apiUrl": "http://127.0.0.1:9077", "apiToken": secret, "provenloop": {"mode": "server"}}
         sdk_client = Mock()
         sync = FakeSync()
-        sync.boot, sync.close = AsyncMock(), AsyncMock()
+        sync.boot, sync.close, sync.discover = AsyncMock(), AsyncMock(), AsyncMock()
         with tempfile.TemporaryDirectory() as temp, socket.socket() as listener:
-            directory = Path(temp)
+            directory = Path(temp) / 'mail'
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
             listener.close()
             with patch.object(connection, "load", return_value=config), \
                  patch.object(connection, "sdk", wraps=connection.sdk) as sdk, \
                  patch.object(connection, "Hindsight", return_value=sdk_client) as hindsight, \
+                 patch.object(Adapter, "availability", return_value={"ready": True, "message": "Installed fixture"}), \
                  patch("provenloop.mail_sync.MailSync", return_value=sync) as make_sync:
                 service = asyncio.create_task(connectors.serve(directory, config["apiUrl"], "http://localhost:19077", port))
                 try:
@@ -193,20 +224,34 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0.01)
                     record = connectors.read_service(directory)
                     self.assertIsNotNone(record)
-                    sdk.assert_called_once_with(config, timeout=120)
-                    hindsight.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=120)
-                    make_sync.assert_called_once_with(directory, config["apiUrl"], client=sdk_client)
+                    sdk.assert_not_called()
+                    make_sync.assert_not_called()
+                    self.assertFalse((directory / 'sync.sqlite3').exists())
                     self.assertNotIn(secret, (directory / "service.json").read_text())
                     async with ClientSession() as client:
-                        async with client.get(f"http://127.0.0.1:{port}/api/status") as response:
+                        async with client.get(f"http://127.0.0.1:{port}/api/connectors") as response:
                             self.assertEqual(response.status, 200)
                             self.assertNotIn(secret, await response.text())
+                        async with client.get(f"http://127.0.0.1:{port}/api/connectors/workiq") as response:
+                            self.assertEqual(response.status, 200)
+                            self.assertNotIn(secret, await response.text())
+                        sdk.assert_not_called()
+                        make_sync.assert_not_called()
+                        self.assertFalse((directory / 'sync.sqlite3').exists())
+                        async with client.post(f"http://127.0.0.1:{port}/api/connectors/workiq/discover",
+                                               headers={"X-ProvenLoop-Token": record["token"]}) as response:
+                            self.assertEqual(response.status, 200)
+                            self.assertNotIn(secret, await response.text())
+                        sdk.assert_called_once_with(config, timeout=120)
+                        hindsight.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=120)
+                        make_sync.assert_called_once_with(directory, config["apiUrl"], client=sdk_client)
                         async with client.post(f"http://127.0.0.1:{port}/api/shutdown",
                                                headers={"X-ProvenLoop-Token": record["token"]}) as response:
                             self.assertEqual(response.status, 200)
                     await asyncio.wait_for(service, 3)
                     self.assertFalse((directory / "service.json").exists())
-                    sync.boot.assert_awaited_once()
+                    sync.boot.assert_not_awaited()
+                    sync.discover.assert_awaited_once()
                     sync.close.assert_awaited_once()
                 finally:
                     if not service.done(): service.cancel()

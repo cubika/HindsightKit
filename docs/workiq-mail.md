@@ -1,6 +1,6 @@
 # WorkIQ mail
 
-ProvenLoop adds one optional mail importer around the official WorkIQ and Hindsight clients. Hindsight continues to own memory extraction, consolidation, storage, and recall. The importer owns mailbox scope, text cleanup, reliable delivery, and its local settings page. It does not modify the official Hindsight UI.
+ProvenLoop's optional WorkIQ adapter implements the [connector contract](connectors.md). Hindsight continues to own memory extraction, consolidation, storage, and recall. The adapter owns mailbox scope, text cleanup, reliable delivery, and its local settings page. WorkIQ must already be installed before the adapter can run. It does not modify the official Hindsight UI.
 
 ## Configuration and lifecycle
 
