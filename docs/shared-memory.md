@@ -43,3 +43,5 @@ Existing databases, memory banks, model configuration, and unrelated editor sett
 Advanced server model and port settings remain available through setup help. Automated deployment can supply an API key through -ApiKeyEnv NAME; secret values are never command-line arguments. A new server normally generates its own key.
 
 Tests use temporary profiles, synthetic keys, HTTP fixtures, local TCP forwarding, and real stdio MCP sessions. Actual Dev Box networking, company login policy, and tunnel reconnect behaviour require a two-machine check. A fresh dependency download was previously blocked by files.pythonhosted.org TLS HandshakeFailure; this is separate from local runtime tests.
+
+Validated on 2026-09-17: 131 tests passed, including installation role separation, automatic repository routing, authenticated discovery, local TCP forwarding, and Windows process checks. After merging the latest interface changes, the 23 connector tests also passed. Actual two-machine networking and a fresh dependency download remain unverified.
