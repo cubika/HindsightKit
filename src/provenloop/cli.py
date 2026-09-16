@@ -241,6 +241,10 @@ def start():
     print('Starting Hindsight (first start downloads the database and embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
+    directory = home() / 'mail'
+    if (directory / 'sync.sqlite3').exists():
+        from .connectors import ensure_running
+        ensure_running(directory, f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
     return f'http://127.0.0.1:{paths.port}', ui_url
 
 
@@ -422,7 +426,7 @@ def setup(args):
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,ui,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,ui,connectors,copilot}')
     setup_parser = sub.add_parser('setup', help='Install, start, verify and connect official components.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -430,7 +434,7 @@ def main(argv=None):
                               help=f'Reasoning effort for new profiles (default: {DEFAULT_REASONING_EFFORT}).')
     setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
     setup_parser.add_argument('--no-open', action='store_true')
-    for command in ['start', 'stop', 'status', 'check', 'ui']:
+    for command in ['start', 'stop', 'status', 'check', 'ui', 'connectors']:
         sub.add_parser(command)
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -451,6 +455,8 @@ def main(argv=None):
         elif args.command == 'start':
             start()
         elif args.command == 'stop':
+            from .connectors import stop
+            stop(home() / 'mail')
             run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
             run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
         elif args.command == 'status':
@@ -461,6 +467,12 @@ def main(argv=None):
         elif args.command == 'ui':
             _, ui_url = start()
             webbrowser.open(ui_url)
+        elif args.command == 'connectors':
+            from .connectors import ensure_running
+            api_url, ui_url = start()
+            _, paths = profile_config()
+            url = ensure_running(home() / 'mail', api_url, ui_url, paths.ui_port + 1)
+            webbrowser.open(url)
         elif args.command == 'copilot':
             command = copilot_command()
             if command is None:

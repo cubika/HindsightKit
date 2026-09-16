@@ -19,4 +19,4 @@ dependencies = [
 provenloop = "provenloop.cli:main"
 
 [tool.setuptools.package-data]
-provenloop = ["*.mjs", "*.json"]
+provenloop = ["*.mjs", "*.json", "web/*.html", "web/*.css", "web/*.js"]

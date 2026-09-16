@@ -67,6 +67,16 @@ No per-repository enable step is needed. Initial git-history import and the auto
 
 Use the official Hindsight UI to inspect memories, correct facts, or invalidate obsolete information. Retrieval and model behavior still need judgment: remembered information can be incomplete or wrong.
 
+## WorkIQ email
+
+Run `provenloop connectors` to open the local mail settings page. It uses the current WorkIQ account and lists the real mailbox folders. The suggested selection includes Inbox and the DSAPISOT subtree, excluding its Sev3 and PullRequests subtrees. Choose a historical lookback and a synchronization interval; zero minutes means manual runs. Preview the cleaned content before starting. Closing the browser leaves synchronization running.
+
+The importer reads structured mail, removes mail envelopes and repeated boilerplate, and submits useful content to the official Hindsight engine. Imported email has its own bank and a read-only `recall_mail` MCP tool. Repository and shared agent memory keep their existing routing. The settings page links to the official Hindsight UI for inspecting memory and source evidence.
+
+This release uses bounded time-window polling with overlap. It does not mirror mailbox deletions or guarantee changes outside the scanned window. WorkIQ must already be installed at the supported version and signed in; authentication renewal may require its login UI. `provenloop stop` stops the importer before Hindsight, and `provenloop start` resumes its saved settings. No Windows login task is installed.
+
+Configuration and the delivery ledger live in `~/.provenloop/mail`. Credentials remain with WorkIQ. See [mail design and validation](docs/workiq-mail.md) for source handling and test results.
+
 ## Files and compatibility
 
 | Location | Contents |

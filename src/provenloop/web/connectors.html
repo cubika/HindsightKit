@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="csrf-token" content="__TOKEN__">
+  <title>邮件连接 · ProvenLoop</title>
+  <link rel="stylesheet" href="/connectors.css">
+  <script src="/connectors.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="应用导航">
+      <a class="brand" href="/" aria-label="ProvenLoop 首页">
+        <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><rect x="3.5" y="3.5" width="21" height="21" rx="7"/><rect x="11.5" y="11.5" width="21" height="21" rx="7"/></svg>
+        <span>ProvenLoop<small>WORKSPACE MEMORY</small></span>
+      </a>
+      <div class="nav-label">工作空间</div>
+      <nav>
+        <a class="nav-item current" href="#main" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#icon-mail"/></svg>邮件连接<span class="nav-dot"></span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <p>邮件范围在这里配置。<br>记忆内容在 Hindsight 中查看。</p>
+        <a id="sidebar-hindsight" class="sidebar-link" target="_blank" rel="noopener noreferrer" hidden>打开 Hindsight<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">（新窗口）</span></a>
+        <div class="local-indicator"><span></span>本地工作空间</div>
+      </div>
+    </aside>
+
+    <main id="main" class="main" tabindex="-1">
+      <header class="page-header">
+        <div><div class="eyebrow">连接 / WORKIQ</div><h1>邮件连接<span class="title-period">.</span></h1><p>选择邮件范围，检查整理后的正文，再开始导入。</p></div>
+        <span id="status-badge" class="status-badge" data-tone="neutral"><span class="status-dot"></span><span id="status-label">正在读取状态</span></span>
+      </header>
+
+      <div id="error-banner" class="message error-message" role="alert" tabindex="-1" hidden><div><strong>需要处理</strong><p id="error-text"></p></div><button id="retry-button" class="button button-small button-quiet" type="button">刷新状态</button></div>
+      <div id="warning-banner" class="message warning-message" role="status" hidden><p id="warning-text"></p></div>
+      <noscript><div class="message error-message">请启用 JavaScript，以读取邮箱和配置同步。</div></noscript>
+
+      <section class="account-card" aria-labelledby="account-heading">
+        <div class="account-icon"><svg class="icon" aria-hidden="true"><use href="#icon-mail"/></svg></div>
+        <div class="account-copy"><div class="account-heading"><h2 id="account-heading">WorkIQ 邮箱</h2><span class="subtle-tag">当前账号</span></div><p id="account-address">正在读取账号…</p><p id="account-name" class="account-name" hidden></p></div>
+        <button id="discover-button" class="button button-quiet" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>读取邮箱文件夹</span></button>
+      </section>
+
+      <form id="config-form" novalidate>
+        <div class="settings-grid">
+          <section class="panel folder-panel" aria-labelledby="folder-heading">
+            <div class="panel-heading"><div><span class="section-number">01</span><h2 id="folder-heading">同步哪些邮件</h2></div><span id="folder-count" class="count-tag">已选 0 个</span></div>
+            <p class="section-description">勾选需要扫描的文件夹，子文件夹需单独勾选。</p>
+            <div class="folder-toolbar">
+              <div class="search-field"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><label class="sr-only" for="folder-search">搜索邮件文件夹</label><input id="folder-search" type="search" placeholder="查找文件夹" autocomplete="off" disabled></div>
+              <button id="recommend-button" class="text-button" type="button" disabled>使用建议范围</button>
+            </div>
+            <div id="folder-container" class="folder-container" aria-busy="true"><p class="empty-state" id="folder-empty">正在读取文件夹…</p><ul id="folder-tree" class="folder-tree" aria-label="邮件文件夹"></ul></div>
+            <div class="folder-footnote"><span id="folder-hint">建议范围会根据实际邮箱匹配。</span><button id="clear-folders-button" class="text-button muted-button" type="button" disabled>清空选择</button></div>
+          </section>
+
+          <section class="panel schedule-panel" aria-labelledby="schedule-heading">
+            <div class="panel-heading"><div><span class="section-number">02</span><h2 id="schedule-heading">同步安排</h2></div><svg class="icon heading-icon" aria-hidden="true"><use href="#icon-clock"/></svg></div>
+            <div class="field-group"><label for="lookback-days">历史扫描范围</label><div class="number-field"><span class="input-prefix">过去</span><input id="lookback-days" name="lookback_days" type="number" min="1" max="3650" step="1" value="7" required aria-describedby="lookback-help" disabled><span>天</span></div><p id="lookback-help" class="field-help">首次导入时，扫描过去的邮件。</p></div>
+            <div class="field-group"><label for="interval-minutes">自动同步间隔</label><div class="number-field"><span class="input-prefix">每</span><input id="interval-minutes" name="interval_minutes" type="number" min="0" max="10080" step="1" value="60" required aria-describedby="interval-help" disabled><span>分钟</span></div><p id="interval-help" class="field-help">设为 0 时，关闭定时同步，可手动运行。</p></div>
+            <div class="schedule-note"><span class="note-line"></span><p>后续扫描会接着上次进度继续。<br>关闭此页面后，自动同步仍会运行。</p></div>
+          </section>
+        </div>
+
+        <div class="action-bar">
+          <div class="save-status"><span id="save-dot" class="save-dot"></span><span id="save-status">正在读取设置</span></div>
+          <div class="action-buttons"><button id="save-button" class="button button-quiet" type="submit" disabled><span>保存设置</span></button><button id="preview-button" class="button button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-eye"/></svg><span>预览正文</span></button><button id="toggle-button" class="button button-primary" type="button" disabled><svg class="icon" aria-hidden="true"><use id="toggle-icon" href="#icon-play"/></svg><span id="toggle-label">开始同步</span></button></div>
+        </div>
+      </form>
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section class="panel activity-panel" aria-labelledby="activity-heading">
+        <div class="panel-heading"><div><h2 id="activity-heading">同步状态</h2><span class="heading-caption">最近一次扫描</span></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>立即同步</span></button></div>
+        <dl class="stats-grid"><div><dt>已扫描</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>已导入</dt><dd id="stat-imported">—</dd></div><div><dt>已跳过</dt><dd id="stat-skipped">—</dd></div><div><dt>失败</dt><dd id="stat-failed">—</dd></div><div><dt>待处理</dt><dd id="stat-pending">—</dd></div></dl>
+        <div class="run-details"><p><span>上次成功</span><time id="last-success">尚未完成同步</time></p><p><span>下次同步</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>查看邮件记忆<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">（新窗口）</span></a></div>
+      </section>
+
+      <section id="preview-panel" class="panel preview-panel" aria-labelledby="preview-heading" tabindex="-1" hidden>
+        <div class="panel-heading"><div><h2 id="preview-heading">正文预览</h2><span id="preview-count" class="heading-caption"></span></div><button id="close-preview-button" class="icon-button" type="button" aria-label="关闭正文预览"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
+        <p class="section-description">检查正文清理和跳过原因。预览不会写入记忆。</p>
+        <div id="preview-items"></div>
+      </section>
+      <footer class="page-footer"><span>ProvenLoop <span class="footer-divider">/</span> WorkIQ → Hindsight</span><span id="connection-status">连接本地服务中</span></footer>
+    </main>
+  </div>
+</body>
+</html>

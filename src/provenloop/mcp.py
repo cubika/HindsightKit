@@ -83,4 +83,24 @@ def serve(context: str, directory: str | None = None):
         """Ask Hindsight to reason over each accessible bank; results identify their source."""
         return await call(ctx, 'reflect', query=query, max_tokens=max_tokens)
 
+    @server.tool
+    async def recall_mail(query: str, max_tokens: int = 4096) -> dict:
+        """Search imported work email for decisions and findings, with source links. Read only."""
+        if not query.strip() or not 256 <= max_tokens <= 16384:
+            raise ValueError('Provide a query and max_tokens between 256 and 16384.')
+        client = Hindsight(base_url=f'http://127.0.0.1:{paths.port}', timeout=90)
+        try:
+            result = await client.arecall(bank_id='provenloop-mail', query=query,
+                                         max_tokens=max_tokens, budget='mid',
+                                         types=['world', 'experience', 'observation'],
+                                         prefer_observations=True, include_source_facts=True,
+                                         max_source_facts_tokens=max_tokens // 2)
+            return {'bank': 'provenloop-mail', 'result': result.model_dump(mode='json')}
+        except Exception as exc:
+            if getattr(exc, 'status', None) == 404:
+                return {'bank': 'provenloop-mail', 'result': {}, 'message': 'No email has been imported.'}
+            raise
+        finally:
+            await client.aclose()
+
     server.run(transport='stdio', show_banner=False)

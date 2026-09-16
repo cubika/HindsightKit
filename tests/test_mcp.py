@@ -33,7 +33,7 @@ class McpTests(unittest.TestCase):
                         async with ClientSession(reader, writer, list_roots_callback=list_roots if roots is not None else None) as client:
                             await client.initialize()
                             tools = await client.list_tools()
-                            self.assertEqual({t.name for t in tools.tools}, {'recall', 'retain', 'reflect'})
+                            self.assertEqual({t.name for t in tools.tools}, {'recall', 'retain', 'reflect', 'recall_mail'})
                             for tool in tools.tools:
                                 self.assertNotIn('bank_id', tool.input_schema.get('properties', {}))
                             result = await client.call_tool('recall', {'query':'isolation test for an empty bank'})
