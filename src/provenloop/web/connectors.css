@@ -280,3 +280,7 @@ h1 { font-size: clamp(28px, 2.5vw, 35px); line-height: 1.3; font-weight: 650; le
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.connector-catalog { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:24px; margin-bottom:24px; }
+.connector-card { padding:28px; max-width:560px; }
+.connector-card h2 { margin:0 0 12px; }
+.connector-card .button { margin-top:20px; text-decoration:none; }

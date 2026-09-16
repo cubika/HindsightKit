@@ -267,10 +267,13 @@ def start():
     print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
-    directory = home() / 'mail'
-    if (directory / 'sync.sqlite3').exists():
+    from .connector_registry import enabled_connectors
+    if enabled_connectors(home()):
         from .connectors import ensure_running
-        ensure_running(directory, f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
+        try:
+            ensure_running(home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
+        except RuntimeError as exc:
+            print(f'Optional connectors: {exc}', file=sys.stderr)
     return f'http://127.0.0.1:{paths.port}', ui_url
 
 
@@ -619,7 +622,7 @@ def main(argv=None):
         elif args.command == 'stop':
             require_local()
             from .connectors import stop
-            stop(home() / 'mail')
+            stop(home() / 'connectors')
             run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
             run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
             from .postgres import Postgres, configured_url
@@ -657,7 +660,7 @@ def main(argv=None):
                 asyncio.run(connection.request(connection.load(), 'GET', '/health'))
             except Exception:
                 api_url, ui_url = start()
-            url = ensure_running(home() / 'mail', api_url, ui_url, paths.ui_port + 1)
+            url = ensure_running(home() / 'connectors', api_url, ui_url, paths.ui_port + 1)
             webbrowser.open(url)
         elif args.command == 'copilot':
             command = copilot_command()
