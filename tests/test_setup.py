@@ -1,0 +1,107 @@
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from provenloop import cli
+
+
+class SetupTests(unittest.TestCase):
+    def test_worktree_and_main_share_bank_but_siblings_do_not(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            main = base / 'project with spaces'
+            worktree = base / 'worktree'
+            sibling = base / 'sibling'
+            main.mkdir()
+            sibling.mkdir()
+            cli.run(['git', 'init', main], capture=True)
+            cli.run(['git', '-C', main, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], capture=True)
+            cli.run(['git', '-C', main, 'worktree', 'add', '-b', 'fixture', worktree], capture=True)
+            self.assertEqual(cli.project_identity(main), cli.project_identity(worktree))
+            self.assertNotEqual(cli.project_identity(main)[1], cli.project_identity(sibling)[1])
+
+    def test_existing_port_is_idempotent(self):
+        from hindsight_embed.profile_manager import ProfileManager
+        args = argparse.Namespace(port=9077, model=None)
+        with patch.object(ProfileManager, 'load_profile_config', return_value={'HINDSIGHT_API_PORT': '9077'}), \
+             patch.object(ProfileManager, 'resolve_profile_paths', return_value=argparse.Namespace(port=9077)), \
+             patch.object(ProfileManager, 'create_profile') as create:
+            cli.configure_profile(args)
+            create.assert_not_called()
+
+    def test_jsonc_preserves_other_servers_and_comments(self):
+        runtime = cli.runtime()
+        if not (runtime / 'node_modules/jsonc-parser').is_dir():
+            self.skipTest('Install runtime dependencies before integration tests.')
+        with tempfile.TemporaryDirectory() as temp:
+            mcp = Path(temp) / 'mcp.json'
+            original = '{\n  // user comment\n  "servers": {"other": {"command": "other"},},\n}\n'
+            mcp.write_text(original)
+            cli.integrate('vscode', mcp, 'http://127.0.0.1:9077', 'test-bank')
+            self.assertIn('// user comment', mcp.read_text())
+            self.assertIn('"other"', mcp.read_text())
+            first = mcp.read_bytes()
+            cli.integrate('vscode', mcp, 'http://127.0.0.1:9077', 'test-bank')
+            self.assertEqual(first, mcp.read_bytes())
+            self.assertEqual(original, Path(str(mcp) + '.provenloop-backup').read_text())
+
+    def test_conflicting_endpoint_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            mcp = base / 'mcp.json'
+            mcp.write_text(json.dumps({'servers': {'hindsight': {'type': 'http', 'url': 'https://example.invalid/mcp/old/'}}}))
+            original = mcp.read_bytes()
+            with self.assertRaises(subprocess.CalledProcessError):
+                cli.integrate('preflight', mcp, base / 'cli.json', base / 'config.json', 'http://127.0.0.1:9077', base, 'bank')
+            self.assertEqual(original, mcp.read_bytes())
+
+    def test_disabled_learning_and_jsonc_runtime_config_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            config = base / 'config.json'
+            for content in [
+                '{"disabled": true}',
+                '{/* comment */ "apiUrl":"http://127.0.0.1:9077"}',
+                '{"harnesses":{"copilot-cli":{"mapPathToBank":{"other":"another-bank"}}}}',
+                '{"harnesses":{"copilot-cli":{"banks":{"bank":{"disabled":true}}}}}',
+            ]:
+                config.write_text(content)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    cli.integrate('preflight', base / 'vs.json', base / 'cli.json', config, 'http://127.0.0.1:9077', base, 'bank')
+                self.assertEqual(content, config.read_text())
+
+    def test_official_installer_merges_and_uses_stable_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            mcp = base / '.copilot/mcp-config.json'
+            mcp.parent.mkdir()
+            mcp.write_text('{ // keep\n "mcpServers": {"other": {"command": "other"},},\n}\n')
+            config = base / '.hindsight/coding-agent.json'
+            cli.integrate('config', config, base, 'bank', 'http://127.0.0.1:9077')
+            hook_path = base / '.copilot/hooks/hindsight-coding-agents.json'
+            hook_path.parent.mkdir()
+            hook_path.write_text(json.dumps({'version': 1, 'hooks': {'sessionStart': [{'command': 'echo user-hook', 'timeout': 1}]}}))
+            for _ in range(2):
+                cli.integrate('install-cli', base, config, 'http://127.0.0.1:9077', cli.node())
+            self.assertIn('// keep', mcp.read_text())
+            self.assertIn('"other"', mcp.read_text())
+            hooks = json.loads((base / '.copilot/hooks/hindsight-coding-agents.json').read_text())
+            self.assertEqual(hooks['hooks']['sessionStart'][0]['command'], 'echo user-hook')
+            for entries in hooks['hooks'].values():
+                for hook in entries:
+                    if hook.get('command') == 'echo user-hook':
+                        continue
+                    self.assertTrue(Path(hook['exec']).is_absolute())
+                    self.assertTrue(Path(hook['args'][0]).is_file())
+                    self.assertNotIn('integration-', hook['args'][0])
+            self.assertTrue((base / '.copilot/skills/hindsight-coding-agent/SKILL.md').is_file())
+
+
+if __name__ == '__main__':
+    unittest.main()

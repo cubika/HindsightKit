@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "provenloop"
+version = "0.1.0"
+description = "Set up local Hindsight memory for GitHub Copilot."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "hindsight-api-slim[embedded-db,local-onnx]==0.10.0",
+    "hindsight-embed==0.10.0",
+    "hindsight-client==0.10.0",
+    "hindsight-copilot==0.1.0",
+    "pg0-embedded==0.15.2",
+]
+
+[project.scripts]
+provenloop = "provenloop.cli:main"
+
+[tool.setuptools.package-data]
+provenloop = ["*.mjs", "*.json"]

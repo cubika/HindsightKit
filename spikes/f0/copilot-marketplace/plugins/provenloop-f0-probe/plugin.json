@@ -1,7 +1,0 @@
-{
-  "name": "provenloop-f0-probe",
-  "description": "Temporary Copilot CLI integration probe for ProvenLoop F0.",
-  "version": "0.0.1",
-  "hooks": "hooks.json",
-  "mcpServers": ".mcp.json"
-}

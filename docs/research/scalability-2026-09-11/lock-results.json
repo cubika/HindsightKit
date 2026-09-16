@@ -1,6 +1,0 @@
-{
-  "mode": "lock",
-  "directReadonlySchemaVersion": 20,
-  "canonicalOpenError": "database is locked",
-  "canonicalOpenMs": 79.3
-}
