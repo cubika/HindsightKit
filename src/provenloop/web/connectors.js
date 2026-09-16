@@ -15,28 +15,28 @@
   };
   const activeStates = new Set(["queued", "running", "scanning", "syncing", "importing", "processing", "stopping"]);
   const stateLabels = {
-    queued: "准备同步", running: "正在同步", scanning: "正在扫描", syncing: "正在同步",
-    importing: "正在导入", processing: "正在处理", stopping: "正在暂停",
-    paused: "已暂停", idle: "等待同步", ready: "等待同步",
-    completed: "同步完成", complete: "同步完成", error: "同步出错",
-    failed: "同步出错", account_changed: "账号已变化", blocked: "需要处理",
+    queued: "Preparing sync", running: "Syncing", scanning: "Scanning", syncing: "Syncing",
+    importing: "Importing", processing: "Processing", stopping: "Pausing",
+    paused: "Paused", idle: "Waiting for sync", ready: "Waiting for sync",
+    completed: "Sync complete", complete: "Sync complete", error: "Sync error",
+    failed: "Sync error", account_changed: "Account changed", blocked: "Action needed",
   };
   const reasonLabels = {
-    "Candidate for Hindsight extraction": "待提取：由 Hindsight 判断是否保留记忆。",
-    draft: "已跳过：草稿。",
-    empty_or_courtesy: "已跳过：正文为空，或仅包含礼貌回复。",
-    review_request_only: "已跳过：仅请求审查，没有具体技术发现。",
-    meeting_join_details: "已跳过：仅包含会议加入信息。",
-    routine_monitor_notification: "已跳过：常规监控通知。",
+    "Candidate for Hindsight extraction": "Candidate: Hindsight will decide which facts to retain.",
+    draft: "Skipped: draft.",
+    empty_or_courtesy: "Skipped: empty message or courtesy reply.",
+    review_request_only: "Skipped: review request without technical findings.",
+    meeting_join_details: "Skipped: meeting access details only.",
+    routine_monitor_notification: "Skipped: routine monitoring notification.",
   };
   const failureLabels = {
-    workiq_protected_body_unavailable: "邮件受保护或已加密，WorkIQ 无法读取正文。",
-    workiq_body_too_large: "正文过大，超出当前读取范围。",
-    workiq_complete_body_missing: "未能取得完整正文，暂未导入。",
-    workiq_mail_not_found: "未找到这封邮件，可能已被移动或删除。",
+    workiq_protected_body_unavailable: "WorkIQ cannot read this protected or encrypted message.",
+    workiq_body_too_large: "The message exceeds the current size limit.",
+    workiq_complete_body_missing: "The full message could not be retrieved. It has not been imported.",
+    workiq_mail_not_found: "Message not found. It may have been moved or deleted.",
   };
-  const numberFormat = new Intl.NumberFormat("zh-CN");
-  const dateFormat = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  const numberFormat = new Intl.NumberFormat("en-US");
+  const dateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
   let snapshot = null;
   let folders = [];
   let selected = new Set();
@@ -74,16 +74,16 @@
     const minutes = Number(controls.interval.value);
     if (!controls.lookback.value || !Number.isSafeInteger(days) || days < 1 || days > 3650) {
       controls.lookback.focus();
-      throw new Error("历史扫描范围需要填写 1 至 3650 的整数天数。");
+      throw new Error("Enter a whole number from 1 to 3,650 for the lookback in days.");
     }
     if (!controls.interval.value || !Number.isSafeInteger(minutes) || minutes < 0 || minutes > 10080) {
       controls.interval.focus();
-      throw new Error("同步间隔需要填写 0 至 10080 的整数分钟。");
+      throw new Error("Enter a whole number from 0 to 10,080 for the sync interval in minutes.");
     }
-    if (!selected.size) throw new Error("请先选择至少一个邮件文件夹。");
+    if (!selected.size) throw new Error("Select at least one mail folder.");
     const available = new Set(folders.filter((folder) => !folder.excluded).map((folder) => folder.id));
     if ([...selected].some((id) => !available.has(id))) {
-      throw new Error("已选文件夹中有项目无法读取，请重新读取邮箱文件夹并调整选择。");
+      throw new Error("Some selected folders are unavailable. Refresh the folder list and update your selection.");
     }
     return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes };
   }
@@ -124,11 +124,11 @@
     controls.sync.disabled = busy || !ready || isActive();
     controls.toggle.disabled = busy || (!canPause && !ready) || snapshot?.run?.state === "stopping";
     controls.toggle.dataset.pausedAction = String(canPause);
-    byId("toggle-label").textContent = canPause ? "暂停同步" : "开始同步";
+    byId("toggle-label").textContent = canPause ? "Pause sync" : "Start sync";
     byId("toggle-icon").setAttribute("href", canPause ? "#icon-pause" : "#icon-play");
-    byId("save-status").textContent = busy ? "正在处理，请稍候" : !loaded ? "尚未读取设置" : dirty ? "设置有改动，尚未保存" : "设置已保存";
+    byId("save-status").textContent = busy ? "Processing, please wait" : !loaded ? "Settings not loaded" : dirty ? "Unsaved changes" : "Settings saved";
     byId("save-dot").classList.toggle("dirty", dirty);
-    byId("folder-count").textContent = `已选 ${numberFormat.format(selected.size)} 个`;
+    byId("folder-count").textContent = `${numberFormat.format(selected.size)} selected`;
     document.querySelectorAll(".folder-label input").forEach((input) => { input.disabled = busy || input.dataset.excluded === "true"; });
     byId("config-form").setAttribute("aria-busy", String(busy));
   }
@@ -143,9 +143,9 @@
     const warnings = Array.isArray(snapshot?.warnings) ? snapshot.warnings.filter((item) => typeof item === "string") : [];
     const available = new Set(folders.map((folder) => folder.id));
     const missing = [...selected].filter((id) => !available.has(id));
-    if (missing.length) warnings.push(`有 ${missing.length} 个已选文件夹无法读取。请重新读取文件夹，或清空选择后重新勾选。`);
+    if (missing.length) warnings.push(`${missing.length} selected ${missing.length === 1 ? "folder is" : "folders are"} unavailable. Refresh folders or clear the selection and choose again.`);
     const excludedIds = new Set(folders.filter((folder) => folder.excluded).map((folder) => folder.id));
-    if (folderIds(snapshot?.config?.folder_ids).some((id) => excludedIds.has(id))) warnings.push("已移除排除范围内的选择，请保存设置。");
+    if (folderIds(snapshot?.config?.folder_ids).some((id) => excludedIds.has(id))) warnings.push("Excluded folders have been removed from the selection. Save to apply.");
     byId("warning-text").textContent = warnings.join("\n");
     byId("warning-banner").hidden = !warnings.length;
   }
@@ -161,15 +161,15 @@
       const item = document.createElement("li");
       const subject = document.createElement("p");
       subject.className = "failure-subject";
-      subject.textContent = plainText(failure.subject) || "无主题邮件";
+      subject.textContent = plainText(failure.subject) || "Untitled message";
       const reason = document.createElement("p");
       reason.className = "failure-reason";
-      reason.textContent = failureLabels[failure.reason] || "暂时无法读取正文，请稍后重试。";
+      reason.textContent = failureLabels[failure.reason] || "The message could not be read. Try again later.";
       item.append(subject, reason);
       fragment.append(item);
     }
     byId("failures-list").replaceChildren(fragment);
-    byId("failures-count").textContent = `${failures.length} 封`;
+    byId("failures-count").textContent = `${failures.length} ${failures.length === 1 ? "message" : "messages"}`;
     panel.hidden = !failures.length;
     if (!failures.length) panel.open = false;
   }
@@ -181,7 +181,7 @@
     element.textContent = valid ? dateFormat.format(date) : fallback;
     if (valid) {
       element.dateTime = date.toISOString();
-      element.title = date.toLocaleString("zh-CN");
+      element.title = date.toLocaleString("en-US");
     } else {
       element.removeAttribute("datetime");
       element.removeAttribute("title");
@@ -193,18 +193,18 @@
     byId('prerequisite-banner').hidden = prerequisite?.ready !== false;
     byId('prerequisite-text').textContent = prerequisite?.message || '';
     const account = snapshot.account;
-    byId("account-address").textContent = account ? plainText(account.address, "当前 WorkIQ 账号") : "点击“读取邮箱文件夹”，连接当前 WorkIQ 账号。";
+    byId("account-address").textContent = account ? plainText(account.address, "Current WorkIQ account") : "Select Load folders to connect your current WorkIQ account.";
     byId("account-name").textContent = plainText(account?.name);
     byId("account-name").hidden = !account?.name || account.name === account.address;
-    controls.discover.querySelector("span").textContent = folders.length ? "刷新文件夹" : "读取邮箱文件夹";
+    controls.discover.querySelector("span").textContent = folders.length ? "Refresh folders" : "Load folders";
     const run = snapshot.run || {};
     const runState = plainText(run.state);
     const failed = ["error", "failed", "blocked", "account_changed"].includes(runState) || Boolean(run.error);
-    let label = stateLabels[runState] || "等待同步";
+    let label = stateLabels[runState] || "Waiting for sync";
     let tone = isActive() ? "active" : failed ? "error" : snapshot.config?.enabled ? "positive" : "neutral";
-    if (!account) { label = "尚未连接"; tone = "neutral"; }
-    else if (!isActive() && !failed && !snapshot.config?.enabled) label = "已暂停";
-    else if (!isActive() && !failed && snapshot.config?.interval_minutes === 0) label = "手动同步";
+    if (!account) { label = "Not connected"; tone = "neutral"; }
+    else if (!isActive() && !failed && !snapshot.config?.enabled) label = "Paused";
+    else if (!isActive() && !failed && snapshot.config?.interval_minutes === 0) label = "Manual sync";
     byId("status-label").textContent = label;
     byId("status-badge").dataset.tone = tone;
     for (const key of ["scanned", "imported", "skipped", "failed", "pending"]) {
@@ -212,8 +212,8 @@
       byId(`stat-${key}`).textContent = Number.isFinite(value) && value >= 0 ? numberFormat.format(value) : "0";
     }
     byId("stat-failed").classList.toggle("has-failures", run.failed > 0);
-    renderTime("last-success", run.last_success, "尚未完成同步");
-    renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "手动同步" : "等待安排") : "已暂停");
+    renderTime("last-success", run.last_success, "No completed sync yet");
+    renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "Manual sync" : "Not scheduled yet") : "Paused");
     let hindsightUrl = null;
     try {
       const url = new URL(snapshot.hindsight_url);
@@ -225,7 +225,7 @@
       if (hindsightUrl) link.href = hindsightUrl;
       else link.removeAttribute("href");
     }
-    byId("connection-status").textContent = "已连接本地服务 · 每 5 秒更新";
+    byId("connection-status").textContent = "Local service connected · Updates every 5 seconds";
     renderErrors();
     renderWarnings();
     renderFailures();
@@ -234,7 +234,7 @@
 
   function applyStatus(data, acceptConfig = false) {
     if (!data || typeof data !== "object" || !data.config || !Array.isArray(data.folders)) {
-      throw new Error("本地服务返回的状态格式不正确，请刷新重试。");
+      throw new Error("The local service returned an invalid status. Refresh to try again.");
     }
     const previousAccount = snapshot?.account?.address;
     const accountChanged = previousAccount && data.account?.address && previousAccount !== data.account.address;
@@ -320,7 +320,7 @@
         const toggle = document.createElement("button");
         toggle.type = "button";
         toggle.className = "folder-toggle";
-        toggle.setAttribute("aria-label", `${plainText(folder.name, "文件夹")}的子文件夹`);
+        toggle.setAttribute("aria-label", `Subfolders of ${plainText(folder.name, "folder")}`);
         toggle.setAttribute("aria-expanded", String(!group.hidden));
         toggle.addEventListener("click", () => {
           group.hidden = !group.hidden;
@@ -342,7 +342,7 @@
       input.checked = selected.has(folder.id);
       input.dataset.excluded = String(Boolean(folder.excluded));
       input.disabled = busy || Boolean(folder.excluded);
-      input.setAttribute("aria-label", path || plainText(folder.name, "未命名文件夹"));
+      input.setAttribute("aria-label", path || plainText(folder.name, "Unnamed folder"));
       input.addEventListener("change", () => {
         if (input.checked) selected.add(folder.id);
         else selected.delete(folder.id);
@@ -351,13 +351,13 @@
       });
       const name = document.createElement("span");
       name.className = "folder-name";
-      name.textContent = plainText(folder.name, "未命名文件夹");
+      name.textContent = plainText(folder.name, "Unnamed folder");
       label.append(input, name);
       row.append(label);
       if (folder.recommended || folder.excluded) {
         const tag = document.createElement("span");
         tag.className = folder.excluded ? "folder-excluded" : "folder-recommended";
-        tag.textContent = folder.excluded ? "已排除" : "建议";
+        tag.textContent = folder.excluded ? "Excluded" : "Recommended";
         row.append(tag);
       }
       item.append(row);
@@ -378,9 +378,9 @@
     }
     tree.replaceChildren(fragment);
     byId("folder-empty").hidden = matches > 0;
-    byId("folder-empty").textContent = folders.length ? "没有找到匹配的文件夹。" : "还没有文件夹。点击“读取邮箱文件夹”后选择同步范围。";
+    byId("folder-empty").textContent = folders.length ? "No matching folders." : "No folders loaded. Select Load folders, then choose your mail scope.";
     byId("folder-container").setAttribute("aria-busy", "false");
-    byId("folder-hint").textContent = folders.length ? `共 ${numberFormat.format(folders.length)} 个文件夹 · 已选项会单独扫描` : "建议范围会根据实际邮箱匹配。";
+    byId("folder-hint").textContent = folders.length ? `${numberFormat.format(folders.length)} folders · Each selection is scanned separately` : "Recommended folders are matched to your mailbox.";
   }
 
   async function request(path, { method = "GET", body, signal, timeout = 30000 } = {}) {
@@ -398,15 +398,15 @@
       }
       const response = await fetch(path, { method, headers, body: method === "POST" ? JSON.stringify(body ?? {}) : undefined, signal: controller.signal, credentials: "same-origin", cache: "no-store" });
       let data;
-      try { data = await response.json(); } catch { throw new Error(`本地服务返回了无法读取的响应（HTTP ${response.status}）。`); }
-      if (!response.ok) throw new Error(errorText(data?.error) || errorText(data?.detail) || `请求未完成（HTTP ${response.status}）。`);
+      try { data = await response.json(); } catch { throw new Error(`The local service returned an unreadable response (HTTP ${response.status}).`); }
+      if (!response.ok) throw new Error(errorText(data?.error) || errorText(data?.detail) || `The request failed (HTTP ${response.status}).`);
       return data;
     } catch (error) {
       if (error.name === "AbortError") {
         if (signal?.aborted) throw error;
-        throw new Error("请求超时。操作可能仍在运行，请刷新状态后再试。");
+        throw new Error("The request timed out. It may still be running; refresh the status before trying again.");
       }
-      if (error instanceof TypeError) throw new Error("无法连接本地服务。请确认 ProvenLoop 连接服务仍在运行，再刷新状态。");
+      if (error instanceof TypeError) throw new Error("Cannot reach the local service. Check that the ProvenLoop connector service is running, then refresh the status.");
       throw error;
     } finally {
       clearTimeout(timer);
@@ -434,11 +434,11 @@
       if (error.name !== "AbortError" && epoch === statusEpoch) {
         connectionError = error.message;
         renderErrors();
-        byId("connection-status").textContent = "状态更新失败 · 将自动重试";
+        byId("connection-status").textContent = "Status unavailable · Retrying automatically";
         if (!snapshot) {
-          byId("status-label").textContent = "服务未连接";
+          byId("status-label").textContent = "Service disconnected";
           byId("status-badge").dataset.tone = "error";
-          byId("account-address").textContent = "尚未读取账号";
+          byId("account-address").textContent = "Account not loaded";
           renderFolders();
         }
         updateControls();
@@ -471,7 +471,7 @@
     try {
       await action();
     } catch (error) {
-      requestError = error.message || "操作未完成，请重试。";
+      requestError = error.message || "The action failed. Try again.";
       renderErrors();
       byId("error-banner").focus({ preventScroll: true });
       byId("error-banner").scrollIntoView({ block: "center" });
@@ -485,7 +485,7 @@
   }
 
   function renderPreview(data) {
-    if (!data || !Array.isArray(data.items)) throw new Error("本地服务返回的预览格式不正确，请重试。");
+    if (!data || !Array.isArray(data.items)) throw new Error("The local service returned an invalid preview. Try again.");
     const container = byId("preview-items");
     const fragment = document.createDocumentFragment();
     data.items.forEach((item, index) => {
@@ -498,7 +498,7 @@
       number.className = "preview-index";
       number.textContent = String(index + 1).padStart(2, "0");
       const title = document.createElement("span");
-      title.textContent = plainText(item.subject, "无主题邮件");
+      title.textContent = plainText(item.subject, "Untitled message");
       summary.append(number, title);
       detail.append(summary);
       if (item.reason) {
@@ -509,7 +509,7 @@
       }
       const columns = document.createElement("div");
       columns.className = "preview-columns";
-      for (const [key, label] of [["source", "来源正文"], ["cleaned", "清理后的正文"]]) {
+      for (const [key, label] of [["source", "Original message"], ["cleaned", "Cleaned message"]]) {
         const column = document.createElement("section");
         column.className = "preview-column";
         const heading = document.createElement("h3");
@@ -517,7 +517,7 @@
         const text = document.createElement("pre");
         text.tabIndex = 0;
         text.setAttribute("aria-label", label);
-        text.textContent = plainText(item[key]) || (key === "cleaned" ? "没有保留正文。" : "没有可预览的正文。");
+        text.textContent = plainText(item[key]) || (key === "cleaned" ? "No content retained." : "No message content to preview.");
         column.append(heading, text);
         columns.append(column);
       }
@@ -528,10 +528,10 @@
     if (!data.items.length) {
       const empty = document.createElement("p");
       empty.className = "preview-empty";
-      empty.textContent = "当前范围内没有可预览的邮件。可调整文件夹或历史扫描范围后重试。";
+      empty.textContent = "No messages to preview in this scope. Adjust the folders or lookback and try again.";
       container.append(empty);
     }
-    byId("preview-count").textContent = `${data.items.length} 封样本`;
+    byId("preview-count").textContent = `${data.items.length} sample ${data.items.length === 1 ? "message" : "messages"}`;
     byId("preview-panel").hidden = false;
     byId("preview-panel").focus({ preventScroll: true });
     byId("preview-panel").scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
@@ -539,31 +539,31 @@
 
   byId("config-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    perform(controls.save, async () => { await saveIfNeeded(); byId("feedback").textContent = "设置已保存。"; });
+    perform(controls.save, async () => { await saveIfNeeded(); byId("feedback").textContent = "Settings saved."; });
   });
   controls.discover.addEventListener("click", () => perform(controls.discover, async () => {
     const data = await request("/api/discover", { method: "POST", timeout: 180000 });
     applyStatus(data);
-    byId("feedback").textContent = "邮箱文件夹已更新。";
+    byId("feedback").textContent = "Mail folders refreshed.";
   }));
   controls.preview.addEventListener("click", () => perform(controls.preview, async () => {
     await saveIfNeeded();
     const data = await request("/api/preview", { method: "POST", timeout: 180000 });
     renderPreview(data);
-    byId("feedback").textContent = "预览已生成，未写入记忆。";
+    byId("feedback").textContent = "Preview ready. No memories were created.";
   }));
   controls.toggle.addEventListener("click", () => perform(controls.toggle, async () => {
     const pause = Boolean(snapshot?.config?.enabled) || isActive();
     if (!pause) await saveIfNeeded();
     const data = await request(pause ? "/api/pause" : "/api/start", { method: "POST" });
     applyStatus(data);
-    byId("feedback").textContent = pause ? "已请求暂停同步。" : "已开始同步，可在下方查看进度。";
+    byId("feedback").textContent = pause ? "Pause requested." : "Sync started. Progress appears below.";
   }));
   controls.sync.addEventListener("click", () => perform(controls.sync, async () => {
     await saveIfNeeded();
     const data = await request("/api/sync", { method: "POST" });
     applyStatus(data);
-    byId("feedback").textContent = "已请求同步，可在下方查看进度。";
+    byId("feedback").textContent = "Sync requested. Progress appears below.";
   }));
   controls.retry.addEventListener("click", () => { requestError = ""; refreshStatus(); });
   controls.search.addEventListener("input", renderFolders);

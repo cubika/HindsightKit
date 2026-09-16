@@ -26,6 +26,8 @@ Imported mail is accessible through a read-only `recall_mail` tool in the local 
 
 ## Interface
 
+All interface labels, status messages, accessibility text, and date/number formatting use English. Mail subjects and body text keep their original language.
+
 Use a small, responsive page with account status, a folder tree, lookback and interval controls, preview, start/pause, and synchronize now. Show simple counts for scanned, imported, skipped, failed, and pending items, plus the last successful run and next scheduled run. A preview compares source text, cleaned text, and exclusion reasons. Errors remain visible and can be retried. No dashboard framework or copied memory browser is needed.
 
 ## Validation
@@ -51,3 +53,7 @@ The page passed real discovery, save/reload, two five-message previews, and desk
 Model latency remains the main constraint. This test establishes useful extraction on the inspected examples, not a guarantee that a large historical mailbox finishes quickly or that every future fact is correct. Queue state and failures remain visible, and the existing model configuration is preserved.
 
 A separate one-day scan through the real source and a recording test receiver processed 49 emails: 39 candidates, two deterministic skips, and eight protected bodies. After fixing a metadata/body revision race, repeating the scan submitted no unchanged content and kept the eight protected items visible for retry. This check did not call a model.
+
+### Retained demonstration, September 17, 2026
+
+At the user's request to inspect actual imported data, a new bounded selection of nine real messages was processed through the production WorkIQ reader and durable mail queue into `provenloop-mail`. Five source documents remain, containing 11 source facts and nine observations; four messages were skipped and no pending or failed deliveries remained. Extraction took 161.7 seconds. Official API reads confirmed completed consolidation, preserved Outlook source links, and useful recall for API propagation, payload compatibility, and queue diagnostics. These successful records are deliberately retained for the user, unlike the disposable test banks above. The scan covered a selected sample, not the full configured seven-day range. Automatic synchronization remains off.

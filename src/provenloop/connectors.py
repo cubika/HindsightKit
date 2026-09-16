@@ -126,7 +126,7 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
             raise
         except Exception:
             # Remote exceptions can include mailbox content or opaque tokens.
-            response = web.json_response({'error': '操作未完成，请检查连接状态后重试。'}, status=503)
+            response = web.json_response({'error': 'The operation failed. Check the connection status and try again.'}, status=503)
         response.headers.update({
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
             'Referrer-Policy': 'no-referrer',
@@ -138,7 +138,7 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
 
     def snapshot(identity):
         value = host.status(identity)
-        return {**value, 'hindsight_url': hindsight_url + '/banks/' + quote(value['bank'], safe='')}
+        return {**value, 'hindsight_url': hindsight_url + '/en/banks/' + quote(value['bank'], safe='')}
 
     async def page(request):
         identity = request.match_info.get('connector')
@@ -173,7 +173,7 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
             try:
                 data = await request.json()
             except (ValueError, UnicodeError):
-                raise ValueError('设置必须是有效的 JSON。')
+                raise ValueError('Settings must be valid JSON.')
         result = await host.action(identity, name, data)
         return web.json_response(result if name == 'preview' else snapshot(identity))
 

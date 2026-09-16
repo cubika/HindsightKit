@@ -30,7 +30,7 @@ def saved_status(directory):
             finally:
                 db.close()
         except (sqlite3.Error, KeyError, TypeError) as exc:
-            raise ValueError('无法读取邮件同步配置。') from exc
+            raise ValueError('Unable to read email sync settings.') from exc
     return value
 
 
@@ -47,9 +47,9 @@ class Adapter:
             from .mail_source import find_workiq, WorkIQError
             try:
                 find_workiq()
-                self._check = {'ready': True, 'message': 'WorkIQ 已安装'}
+                self._check = {'ready': True, 'message': 'WorkIQ is installed'}
             except (WorkIQError, OSError):
-                self._check = {'ready': False, 'message': '请先安装受支持的 WorkIQ 1.0.0，再刷新检查。ProvenLoop 不会自动安装或启动它。'}
+                self._check = {'ready': False, 'message': 'Install the supported WorkIQ 1.0.0 package, then refresh. ProvenLoop does not install or launch it automatically.'}
         return self._check
 
     def status(self):
@@ -81,7 +81,7 @@ class Adapter:
             return self.status()
         if action == 'config':
             if not isinstance(data, dict) or set(data) != {'folder_ids', 'lookback_days', 'interval_minutes'}:
-                raise ValueError('请选择文件夹、历史扫描天数和同步间隔。')
+                raise ValueError('Choose folders, a lookback period, and a sync interval.')
         if not self.availability(refresh=True)['ready']:
             raise ValueError(self._check['message'])
         self.error = None

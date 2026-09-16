@@ -1,5 +1,7 @@
 # Optional connectors
 
+Here, registry means the Python list of supported adapters. It has no connection to the Windows Registry.
+
 Connectors are optional adapters around the official memory service. Installing or starting ProvenLoop does not install WorkIQ, open its login flow, scan mail, or create a mail delivery ledger. Users can use all core memory features without a connector.
 
 The connector registry declares each adapter's ID, settings view, data directory, and module. The shared host provides discovery, HTTP routing, and lifecycle management. Each adapter owns its prerequisites, settings validation, state, source access, and optional recall tools. Modules are loaded by registered ID; configuration cannot name arbitrary Python modules or executables. Adding another connector requires one adapter, a settings view, and a registry entry. Mail-specific parsing and ingestion stay in the WorkIQ adapter.
