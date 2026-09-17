@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -79,6 +80,79 @@ class NodeBundleTests(unittest.TestCase):
                 cli.install_node_packages(client=True)
             self.assertEqual(marker.read_text(), 'previous runtime')
             self.assertFalse((directory / '.installed-lock').exists())
+
+    def test_reuse_detects_missing_and_same_size_changed_files(self):
+        for damage in ('missing', 'changed'):
+            with self.subTest(damage=damage), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                package, bundle = self.fixture(root)
+                directory = root / 'runtime'
+                with patch.object(node_bundle, 'verify_installed'):
+                    node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+                target = directory / 'node_modules/required/LICENSE'
+                if damage == 'missing':
+                    target.unlink()
+                else:
+                    target.write_bytes(b'x' * target.stat().st_size)
+                with self.assertRaisesRegex(ValueError, 'missing or changed|file changed'):
+                    node_bundle.verify_bundle_files(bundle, package, 'client', directory)
+
+    def test_reuse_checks_all_batches_and_propagates_worker_failures(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            extra = {f'node_modules/required/file-{index:03d}.txt': f'content-{index:03d}'
+                     for index in range(260)}
+            package, bundle = self.fixture(root, extra)
+            directory = root / 'runtime'
+            with patch.object(node_bundle, 'verify_installed'):
+                node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+            node_bundle.verify_bundle_files(bundle, package, 'client', directory)
+            for name in ('file-000.txt', 'file-130.txt', 'file-259.txt'):
+                target = directory / 'node_modules/required' / name
+                original = target.read_bytes()
+                target.write_bytes(b'x' * len(original))
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'file changed'):
+                    node_bundle.verify_bundle_files(bundle, package, 'client', directory)
+                target.write_bytes(original)
+
+    def test_repair_replaces_node_modules_that_became_a_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            directory = root / 'runtime'
+            directory.mkdir()
+            (directory / 'node_modules').write_text('damaged runtime')
+            with patch.object(node_bundle, 'verify_installed'), contextlib.redirect_stdout(io.StringIO()):
+                node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+            node_bundle.verify_bundle_files(bundle, package, 'client', directory)
+            self.assertFalse((directory / '.previous-node_modules').exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows junction validation')
+    def test_reuse_and_replacement_reject_junctions_without_touching_the_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            directory = root / 'runtime'
+            with patch.object(node_bundle, 'verify_installed'):
+                node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+            external = root / 'external'
+            external.mkdir()
+            marker = external / 'keep.txt'
+            marker.write_text('keep this data')
+            junction = directory / 'node_modules/linked'
+            subprocess.run(['powershell.exe', '-NoProfile', '-Command',
+                'New-Item -ItemType Junction -Path $env:TEST_LINK -Target $env:TEST_TARGET | Out-Null'],
+                env={**os.environ, 'TEST_LINK': str(junction), 'TEST_TARGET': str(external)},
+                check=True, capture_output=True, timeout=15)
+            try:
+                with self.assertRaisesRegex(ValueError, 'Linked npm bundle path'):
+                    node_bundle.verify_bundle_files(bundle, package, 'client', directory)
+                with self.assertRaisesRegex(ValueError, 'Linked npm bundle path'):
+                    node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+                self.assertEqual(marker.read_text(), 'keep this data')
+                self.assertTrue((directory / node_bundle.ENTRYPOINTS['client'][0]).is_file())
+            finally:
+                junction.rmdir()
 
     def test_failed_entrypoint_validation_does_not_replace_existing_node_modules(self):
         with tempfile.TemporaryDirectory() as temp:

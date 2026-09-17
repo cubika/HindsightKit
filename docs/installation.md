@@ -125,6 +125,8 @@ The log contains stage messages and dependency-command output, not a complete te
 
 ### Dependency installation and retries
 
+If this computer only connects to another server, use the release's `-ClientOnly` command, or pass `-Server` with the server address. A fresh client downloads the smaller package and skips the local dashboard, database, and embedding model. An existing local server keeps its management dependencies.
+
 Release installation uses bundled Python wheels and Hindsight npm components. Copilot CLI is separate: setup checks and reuses an existing installation; if missing, it installs the official CLI globally through npm. That step requires network access and uses the user's npm registry, proxy, and CA settings. Existing Copilot installations are not upgraded or overwritten.
 
 Setup reuses x64 Node.js 22+ with npm from PATH. Otherwise it reuses the current installation's portable Node.js or downloads the pinned official runtime. It skips runtimes inside another HindsightKit checkout or release directory.

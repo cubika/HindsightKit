@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -39,9 +40,32 @@ def sha256(path: Path) -> str:
 def ordinary_path(path: Path) -> Path:
     path = Path(os.path.abspath(path))
     for parent in (path, *path.parents):
-        if parent.is_symlink() or (parent.exists() and getattr(parent.lstat(), 'st_file_attributes', 0) & 0x400):
+        try:
+            info = parent.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
             raise ValueError(f'Linked npm bundle path: {parent}')
     return path
+
+
+def _ordinary_files(directory: Path):
+    # scandir supplies Windows file attributes without statting every ancestor
+    # again for each of the dashboard's tens of thousands of files.
+    pending = [ordinary_path(directory)]
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                path = Path(entry.path)
+                if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                    raise ValueError(f'Linked npm bundle path: {path}')
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(path)
+                elif stat.S_ISREG(info.st_mode):
+                    yield path, info
+                else:
+                    raise ValueError(f'Npm bundle path is not an ordinary file: {path}')
 
 
 def _unique(pairs):
@@ -162,20 +186,43 @@ def verify_installed(directory: Path, package: Path, role: str, node: str):
 
 def verify_bundle_files(bundle: Path, package: Path, role: str, directory: Path):
     manifest = validate_bundle(bundle, package, roles=(role,))
+    directory = ordinary_path(directory)
     with zipfile.ZipFile(bundle / manifest['bundles'][role]['archive']) as archive:
+        remaining = {item.filename.casefold(): item for item in archive.infolist() if not item.is_dir()}
+        total = len(remaining)
+        checked = 0
         next_status = time.monotonic() + 10
-        for index, item in enumerate(archive.infolist(), 1):
-            if item.is_dir():
-                continue
-            target = ordinary_path(directory / item.filename)
-            if not target.is_file() or target.stat().st_size != item.file_size:
-                raise ValueError(f'Installed npm file is missing or changed: {item.filename}')
+
+        def check_file(pair):
+            target, item = pair
             with archive.open(item) as expected, target.open('rb') as actual:
                 if hashlib.file_digest(expected, 'sha256').digest() != hashlib.file_digest(actual, 'sha256').digest():
                     raise ValueError(f'Installed npm file changed: {item.filename}')
-            if time.monotonic() >= next_status:
-                print(f'Checking bundled {role} files: {index}/{len(archive.infolist())}.', flush=True)
-                next_status = time.monotonic() + 10
+
+        # Windows file opens can wait for scanning. Overlap a bounded number of
+        # reads; keep the archive open until all workers have finished.
+        with ThreadPoolExecutor(max_workers=8) as workers:
+            pending = []
+            for target, info in _ordinary_files(directory / 'node_modules'):
+                name = target.relative_to(directory).as_posix().casefold()
+                item = remaining.pop(name, None)
+                if item is None:
+                    continue
+                if info.st_size != item.file_size:
+                    raise ValueError(f'Installed npm file is missing or changed: {item.filename}')
+                pending.append((target, item))
+                if len(pending) == 128:
+                    for _ in workers.map(check_file, pending):
+                        checked += 1
+                        if time.monotonic() >= next_status:
+                            print(f'Checking bundled {role} files: {checked}/{total}.', flush=True)
+                            next_status = time.monotonic() + 10
+                    pending.clear()
+            for _ in workers.map(check_file, pending):
+                pass
+        if remaining:
+            item = next(iter(remaining.values()))
+            raise ValueError(f'Installed npm file is missing or changed: {item.filename}')
 
 
 def _rename(source: Path, target: Path):
@@ -198,10 +245,9 @@ def install_bundle(bundle: Path, package: Path, role: str, directory: Path, node
     previous = ordinary_path(directory / '.previous-node_modules')
     if previous.exists() and not target.exists():
         _rename(previous, target)
-    if target.exists():
-        for current, dirs, files in os.walk(target):
-            for name in dirs + files:
-                ordinary_path(Path(current) / name)
+    if target.is_dir():
+        for _ in _ordinary_files(target):
+            pass
     with tempfile.TemporaryDirectory(prefix='.node-install-', dir=directory) as temporary:
         stage = Path(temporary)
         archive_path = bundle / manifest['bundles'][role]['archive']
@@ -220,10 +266,12 @@ def install_bundle(bundle: Path, package: Path, role: str, directory: Path, node
         verify_installed(stage, package, role, node)
         if previous.exists():
             # A prior completed replacement may have been interrupted during cleanup.
-            for current, dirs, files in os.walk(previous):
-                for name in dirs + files:
-                    ordinary_path(Path(current) / name)
-            shutil.rmtree(previous)
+            if previous.is_dir():
+                for _ in _ordinary_files(previous):
+                    pass
+                shutil.rmtree(previous)
+            else:
+                previous.unlink()
         if target.exists():
             _rename(target, previous)
         try:
@@ -237,6 +285,9 @@ def install_bundle(bundle: Path, package: Path, role: str, directory: Path, node
             raise
         if previous.exists():
             try:
-                shutil.rmtree(previous)
+                if previous.is_dir():
+                    shutil.rmtree(previous)
+                else:
+                    previous.unlink()
             except OSError:
                 print(f'Installed dependencies are ready; old files remain at {previous} because they are in use.', flush=True)

@@ -24,9 +24,11 @@ class BootstrapTests(unittest.TestCase):
         self.archive = self.root / 'package.zip'
         self.log = self.root / 'setup.json'
         self.download_log = self.root / 'downloads.txt'
+        self.hash_log = self.root / 'hashes.txt'
         self.shell = shutil.which('powershell.exe')
         self.env = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
         self.env.update(TEST_ARCHIVE=str(self.archive), TEST_SETUP_LOG=str(self.log),
+                        TEST_HASH_LOG=str(self.hash_log),
                         TEST_DOWNLOAD_LOG=str(self.download_log), TEST_INSTALL_DIR=str(self.destination),
                         LOCALAPPDATA=str(self.root / 'local app data'),
                         USERPROFILE=str(self.root / 'profile'),
@@ -79,6 +81,7 @@ exit 0
         self.env['TEST_PACKAGE_NAME'] = 'hindsightkit-client-windows-x64.zip' if wants_client and not has_server else 'hindsightkit-windows-x64.zip'
         self.env['TEST_RELEASE_URL'] = self.release_url + '/' + self.env['TEST_PACKAGE_NAME']
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility
 function hk { 'unrelated user function' }
 function gh {
     $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', $env:TEST_PACKAGE_NAME, '--output')
@@ -96,6 +99,11 @@ function Invoke-WebRequest {
     if ($Uri -ne $env:TEST_RELEASE_URL) { throw 'Unexpected download destination.' }
     Add-Content -LiteralPath $env:TEST_DOWNLOAD_LOG -Value $Uri
     Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $OutFile
+}
+function Get-FileHash {
+    param([string]$LiteralPath, [string]$Algorithm)
+    Add-Content -LiteralPath $env:TEST_HASH_LOG -Value $LiteralPath
+    Microsoft.PowerShell.Utility\\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
 }
 try {
     $script = [scriptblock]::Create((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'install.ps1') -Raw))
@@ -126,6 +134,8 @@ try {
     def test_pipe_install_uses_managed_directory_and_reuses_same_version(self):
         digest = self.package()
         self.run_installer(digest, '-NoOpen')
+        fresh_hashes = self.hash_log.read_text(encoding='utf-8-sig').splitlines()
+        self.assertEqual(sum(Path(path).name == 'setup.ps1' for path in fresh_hashes), 1)
         receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
         self.assertTrue(Path(receipt['directory']).samefile(self.app))
         self.assertTrue(Path(receipt['manifest']).samefile(self.app / 'release.json'))
@@ -140,6 +150,8 @@ try {
         self.assertFalse(receipt['serverOnly'])
         (self.app / 'keep.txt').write_text('existing runtime')
         self.run_installer(digest)
+        retry_hashes = self.hash_log.read_text(encoding='utf-8-sig').splitlines()[len(fresh_hashes):]
+        self.assertEqual(sum(Path(path).name == 'setup.ps1' for path in retry_hashes), 1)
         self.assertEqual(len(self.download_log.read_text().splitlines()), 1)
         self.assertEqual((self.app / 'keep.txt').read_text(), 'existing runtime')
         self.assertFalse(list(self.destination.glob('.install-*')))
@@ -198,6 +210,37 @@ try {
         self.assertIn('Invalid release package entry', result.stdout)
         self.assertFalse(self.log.exists())
         self.assertFalse((self.root / 'escaped.txt').exists())
+
+    def test_extraction_rejects_linked_parent_before_writing(self):
+        self.package({'app/linked/keep.txt': 'overwrite'})
+        external = self.root / 'external'
+        external.mkdir()
+        marker = external / 'keep.txt'
+        marker.write_text('preserve')
+        destination = self.root / 'staged'
+        destination.mkdir()
+        harness = self.root / 'extract.ps1'
+        harness.write_text('''$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:TEST_TEMPLATE, [ref]$tokens, [ref]$errors)
+foreach ($function in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    Invoke-Expression $function.Extent.Text
+}
+New-Item -ItemType Junction -Path $env:TEST_LINK -Target $env:TEST_TARGET | Out-Null
+Expand-InstallPackage $env:TEST_ARCHIVE $env:TEST_DESTINATION
+''', encoding='utf-8')
+        junction = destination / 'linked'
+        try:
+            result = subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(harness)],
+                env={**self.env, 'TEST_TEMPLATE': str(TEMPLATE), 'TEST_LINK': str(junction),
+                     'TEST_TARGET': str(external), 'TEST_DESTINATION': str(destination)},
+                capture_output=True, text=True, timeout=15)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('ordinary directories', result.stderr)
+            self.assertEqual(marker.read_text(), 'preserve')
+        finally:
+            if junction.is_junction():
+                junction.rmdir()
 
     def test_unknown_existing_installation_is_preserved(self):
         digest = self.package()

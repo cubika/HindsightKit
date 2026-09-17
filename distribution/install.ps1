@@ -77,8 +77,12 @@ function Expand-InstallPackage([string]$Archive, [string]$Destination) {
             if ($seen.ContainsKey($relative)) { throw "Duplicate release package entry: $name" }
             $seen[$relative] = $true
             $target = Assert-InstallChild $Destination (Join-Path $Destination $relative)
-            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force | Out-Null
+            $parent = Assert-InstallDirectory ([IO.Path]::GetDirectoryName($target))
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $false)
+            if ((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'Extracted application files must not be links.'
+            }
             $hashes[$relative] = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
         }
     } finally { $zip.Dispose() }
@@ -194,8 +198,11 @@ function Install-HindsightKit {
         } elseif (-not (Test-Path -LiteralPath (Join-Path $app '.package-sha256')) -or
             (Get-Content -LiteralPath (Join-Path $app '.package-sha256') -Raw) -ne $packageSha256) {
             throw 'Existing release directory is not owned by this installer. Its files were preserved.'
+        } else {
+            # Fresh extraction already checked every file and recorded its hash.
+            # A retry must check the saved files before executing setup again.
+            Assert-InstalledPackage $app
         }
-        Assert-InstalledPackage $app
         Write-InstallMessage ("Using verified application: " + $app)
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $app 'setup.ps1'))
         if ($ServerOnly) { $arguments += '-ServerOnly' }
