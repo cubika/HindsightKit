@@ -382,6 +382,14 @@ After setup, reload VS Code and allow its Hindsight MCP server when prompted.
 Open a new Copilot CLI session. Setup checks a temporary memory through Copilot and removes it afterward;
 this uses a small amount of Copilot allowance.
 
+## Pause repository memory
+
+Inside a Git repository, use {tick}hindsightkit memory off{tick} to pause hooks and MCP memory tools.
+Use {tick}hindsightkit memory on{tick} to re-enable them or {tick}hindsightkit memory status{tick} to check.
+The setting stays local to this clone and its worktrees. Existing stored memory is preserved.
+After upgrading, restart the Hindsight MCP server and open a new Copilot CLI session once.
+After re-enabling memory, use a new session for automatic capture; paused sessions are not imported retroactively.
+
 ## Connect another computer later
 
 Run {tick}hindsightkit share{tick} on the memory server.

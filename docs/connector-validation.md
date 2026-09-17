@@ -117,3 +117,5 @@ The published v0.1.2 builds also passed 323 tests and final full/client package 
 The v0.1.3 installation changes, integrated with the current mail connector changes, passed all 358 repository tests. Connector checks used fixtures; no mailbox reads or model calls were made.
 
 Removing the bundled Copilot CLI passed 369 repository tests; after integrating newer master changes, the 80 affected mail source and sync tests also passed. All connector checks used fixtures.
+
+The v0.1.4 repository-memory switch candidate passed all 397 tests. Connector checks used fixtures without mailbox reads or model calls.
