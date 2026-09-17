@@ -103,3 +103,5 @@ The subsequent connection-command and authenticated-release regression passed 27
 The v0.1.0 hosted release CI runs also passed all 270 tests without a mailbox account or Copilot model calls. Packaging and installation results are recorded in [release verification](release-validation.md). These fixture and packaging passes do not establish that every user's dependency downloads or fresh installation will succeed.
 
 The v0.1.1 candidate CI passed 303 repository tests, including connector fixtures, without live mailbox reads. Its installation acceptance used a disposable synthetic memory to verify upgrade preservation and then removed that bank. Python bundle and affected-network installation evidence is recorded in [release verification](release-validation.md).
+
+The final v0.1.1 release builds also passed 303 tests, including those fixtures. The actual local installation and repeat-install checks preserved the server profile, database metadata, and a pre-install synthetic memory; that temporary bank was deleted afterward. No live mailbox read was part of these acceptance checks.

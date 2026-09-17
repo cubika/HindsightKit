@@ -2,9 +2,9 @@
 
 These records separate completed checks from pending acceptance work. They do not guarantee that every machine or network can finish installation. Connector-specific measurements are in [connector validation](connector-validation.md).
 
-## v0.1.1 candidate, September 17, 2026
+## v0.1.1, September 17, 2026
 
-Hosted packaging, affected-machine installation, and repeat-install acceptance passed for candidate commit `091711b`. The candidate is ready for release; publication is pending. It includes a Python wheel bundle in the application archive, with separate client/server requirements and SHA256 hashes. Release setup uses that bundle with package-index access disabled. The Python interpreter, Node.js, npm components, and embedding model remain downloads. Source setup continues to use the dependency lock and package hosts.
+Hosted packaging, affected-machine installation, and repeat-install acceptance passed for candidate commit `091711b`. Version 0.1.1 was then published from `3875b9d`; the intervening changes were validation documentation only. It includes a Python wheel bundle in the application archive, with separate client/server requirements and SHA256 hashes. Release setup uses that bundle with package-index access disabled. The Python interpreter, Node.js, npm components, and embedding model remain downloads. Source setup continues to use the dependency lock and package hosts.
 
 The candidate also records installation stages and dependency-command output under `<InstallDir>\logs`, prints the failed stage and first matching dependency error, and distinguishes Node.js download, completed installation, and reuse. Interactive setup output is excluded from the log so Copilot login and connection-key prompts remain in the console.
 
@@ -22,7 +22,7 @@ Repeating the same generated installer completed with exit code 0. It reported r
 
 After installation, requesting the original v0.1.0 wheel URL still failed with `SSLV3_ALERT_HANDSHAKE_FAILURE`. The successful candidate installs therefore did not depend on that connection recovering.
 
-The local cached archive preserved the candidate's exact packaged bytes and checksum checks, but did not exercise a newly published release's download URL. Tag-triggered builds and published asset downloads remain release steps. These results establish the installation fix on the tested machine and retain the fresh-sign-in and model-download limits described above.
+The local cached archive preserved the candidate's exact packaged bytes and checksum checks. The final tag-triggered builds then passed 303 tests and repeated the client/server offline checks from their final ZIPs. Downloaded release assets passed all SHA256 checks, including the 194 Python wheels and 4,474 PostgreSQL files, and their application source matched the accepted candidate. Public and authenticated installer downloads were checked after publication. These results establish the installation fix on the tested machine and retain the fresh-sign-in and model-download limits described above.
 
 ## v0.1.0, September 17, 2026
 
@@ -50,4 +50,4 @@ The failed release environment contained only the two virtualenv initialization 
 
 These files explain why an environment with existing dependencies can continue without a fresh download while a new release encounters the failing wheel request. They do not identify the network cause or prove the earlier download route. The installed distribution had no `direct_url.json`, and this inspection did not rerun the old service.
 
-The earlier documentation review applied no installation fix. The v0.1.1 candidate now changes the Python package source, but its remaining acceptance checks are recorded above. See [troubleshooting](installation.md#troubleshooting) for the relevant log and console output.
+The earlier documentation review applied no installation fix. The v0.1.1 candidate changes the Python package source; its installation results and remaining release steps are recorded above. See [troubleshooting](installation.md#troubleshooting) for the relevant log and console output.
