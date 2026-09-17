@@ -127,6 +127,7 @@ class FakeClient:
         self.prompts=[]
         self.cleanup=[]
         self.stopped=self.aborted=self.disconnected=False
+        self.forced=False
     async def start(self):
         pass
     async def create_session(self,**kwargs):
@@ -138,6 +139,9 @@ class FakeClient:
     async def stop(self):
         self.stopped=True
         self.cleanup.append("stop")
+    async def force_stop(self):
+        self.forced=True
+        self.cleanup.append("force_stop")
 
 
 class BuilderTests(unittest.IsolatedAsyncioTestCase):
@@ -161,10 +165,12 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(config[key])
         self.assertEqual(config['mcp_servers'],{})
         self.assertEqual(config['memory'],{'enabled':False})
-        self.assertTrue(client.stopped and client.aborted and client.disconnected)
+        self.assertTrue(client.stopped)
         self.assertFalse(hasattr(client,'deleted'))
-        self.assertEqual(client.cleanup,['abort','disconnect','stop'])
+        self.assertEqual(client.cleanup,['stop'])
         self.assertFalse(Path(client.config['base_directory']).exists())
+        self.assertEqual(output['metadata']['analysis_model'], 'configured-model')
+        self.assertEqual(output['metadata']['analysis_reasoning_effort'], 'xhigh')
 
     async def test_one_format_repair_same_session(self):
         clients=[]
@@ -186,7 +192,138 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['action'],'publish')
         self.assertEqual(clients[0].session_config['model'],'gpt-5.6-luna')
         self.assertEqual(clients[0].session_config['reasoning_effort'],'none')
+        self.assertEqual(result['metadata']['analysis_model'], 'gpt-5.6-luna')
+        self.assertEqual(result['metadata']['analysis_reasoning_effort'], 'none')
         self.assertEqual(profile,self.profile)
+
+    async def test_concurrent_builds_keep_separate_runtime_contexts_and_metrics(self):
+        clients = []
+        def factory(**kwargs):
+            client = FakeClient([answer()], **kwargs)
+            clients.append(client)
+            return client
+        builder = OutcomeBuilder(self.profile, client_factory=factory)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            await asyncio.gather(builder.build([message()]), builder.build([message()]))
+        self.assertEqual(len(clients), 2)
+        self.assertNotEqual(clients[0].config['base_directory'], clients[1].config['base_directory'])
+        self.assertTrue(all(len(client.prompts) == 1 for client in clients))
+        self.assertFalse(builder._clients)
+        for stage in ('runtime_start', 'inference', 'runtime_stop'):
+            self.assertEqual(builder.metrics[stage + '_count'], 2)
+            self.assertGreaterEqual(builder.metrics[stage + '_seconds'], 0)
+
+    async def test_cancel_during_inference_waits_for_force_stop_before_deleting_directory(self):
+        started, forcing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        class WaitingSession(FakeSession):
+            async def send_and_wait(self, *args, **kwargs):
+                started.set()
+                await asyncio.Event().wait()
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                return WaitingSession(self)
+            async def force_stop(self):
+                forcing.set()
+                await release.wait()
+                await super().force_stop()
+        client = WaitingClient([])
+        def factory(**kwargs):
+            client.config = kwargs
+            return client
+        builder = OutcomeBuilder(self.profile, client_factory=factory)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            task = asyncio.create_task(builder.build([message()]))
+            await asyncio.wait_for(started.wait(), 2)
+            task.cancel()
+            await asyncio.wait_for(forcing.wait(), 2)
+            self.assertFalse(task.done())
+            self.assertTrue(Path(client.config['base_directory']).exists())
+            self.assertIn(client, builder._clients)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertEqual(client.cleanup, ['force_stop'])
+        self.assertFalse(builder._clients)
+        self.assertFalse(Path(client.config['base_directory']).exists())
+        self.assertEqual(builder.metrics['inference_count'], 1)
+        self.assertEqual(builder.metrics['runtime_stop_count'], 1)
+
+    async def test_cancel_during_graceful_stop_forces_owned_runtime_closed(self):
+        stopping = asyncio.Event()
+        class WaitingClient(FakeClient):
+            async def stop(self):
+                self.cleanup.append('stop')
+                stopping.set()
+                await asyncio.Event().wait()
+        client = WaitingClient([answer()])
+        builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            task = asyncio.create_task(builder.build([message()]))
+            await asyncio.wait_for(stopping.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertEqual(client.cleanup, ['stop', 'force_stop'])
+        self.assertFalse(builder._clients)
+        self.assertFalse(builder._directories)
+
+    async def test_stop_timeout_uses_force_stop_and_keeps_completed_result(self):
+        class WaitingClient(FakeClient):
+            async def stop(self):
+                self.cleanup.append('stop')
+                await asyncio.Event().wait()
+        client = WaitingClient([answer()])
+        builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'), patch('hindsightkit.mail_outcome.RUNTIME_STOP_TIMEOUT', 0.01):
+            result = await asyncio.wait_for(builder.build([message()]), 2)
+        self.assertEqual(result['action'], 'publish')
+        self.assertEqual(client.cleanup, ['stop', 'force_stop'])
+        self.assertFalse(builder._clients)
+        self.assertFalse(builder._directories)
+
+    async def test_failed_force_stop_keeps_client_and_directory_for_close_retry(self):
+        class BrokenClient(FakeClient):
+            fail = True
+            async def stop(self):
+                raise TimeoutError()
+            async def force_stop(self):
+                if self.fail:
+                    raise RuntimeError('fake shutdown failure')
+                await super().force_stop()
+        client = BrokenClient([answer()])
+        builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            with self.assertRaisesRegex(OutcomeError, 'runtime_cleanup_failed'):
+                await builder.build([message()])
+        self.assertIn(client, builder._clients)
+        directory = Path(builder._directories[client])
+        self.assertTrue(directory.exists())
+        client.fail = False
+        await builder.close()
+        self.assertTrue(client.forced)
+        self.assertFalse(directory.exists())
+        self.assertFalse(builder._clients)
+
+    async def test_cancel_during_runtime_start_records_failure_and_forces_cleanup(self):
+        starting = asyncio.Event()
+        class WaitingClient(FakeClient):
+            async def start(self):
+                starting.set()
+                await asyncio.Event().wait()
+        client = WaitingClient([])
+        builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            task = asyncio.create_task(builder.build([message()]))
+            await asyncio.wait_for(starting.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertEqual(client.cleanup, ['force_stop'])
+        self.assertFalse(builder._clients)
+        self.assertEqual(builder.metrics['runtime_start_count'], 1)
+        self.assertEqual(builder.metrics['inference_count'], 0)
+        self.assertEqual(builder.metrics['runtime_stop_count'], 1)
 
     async def test_two_invalid_results_raise(self):
         def factory(**kwargs):
@@ -249,7 +386,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
             client=BrokenClient([],**kwargs);clients.append(client);return client
         with patch('hindsightkit.mail_outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'model_failed'):
             await OutcomeBuilder(BuilderTests.profile,client_factory=factory).build([message()],{'original_text':'Old result'})
-        self.assertTrue(clients[0].stopped and clients[0].aborted)
+        self.assertTrue(clients[0].stopped)
 
 class GuardRegressionTests(unittest.TestCase):
     def test_negated_refutation_cannot_withdraw(self):

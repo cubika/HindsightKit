@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path
 import sqlite3
+import time
 import uuid
 
 from filelock import FileLock
@@ -93,6 +94,9 @@ class MailSync:
         self._task = self._scheduler = None
         self._wake = asyncio.Event()
         self._active_threads = 0
+        self._metrics = {}
+        self._model_metrics_baseline = {}
+        self._run_started = None
         self.poll_seconds, self.operation_timeout = 2, 1800
         if self._get('config') is None:
             self._put('config', dict(folder_ids=[], lookback_days=30, interval_minutes=30, enabled=False))
@@ -133,6 +137,12 @@ class MailSync:
         run['outcomes'] = self.db.execute('SELECT COUNT(*) FROM threads WHERE has_outcome=1').fetchone()[0]
         run['pending'] = self.db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
         run['active_threads'] = self._active_threads
+        timing = dict(self._metrics)
+        timing.update({key: round(value - self._model_metrics_baseline.get(key, 0), 3)
+                       for key, value in getattr(self.builder, 'metrics', {}).items()})
+        if self._run_started is not None:
+            timing['elapsed_seconds'] = round(time.monotonic() - self._run_started, 3)
+        run['timing'] = timing
         selected = set(self._get('config')['folder_ids'])
         selected_threads = self._selected_threads()
         failures_by_thread = {row['id'] for row in self.db.execute("SELECT id FROM threads WHERE error IS NOT NULL")
@@ -303,6 +313,7 @@ class MailSync:
         config = self._get("config")
         config["enabled"] = False
         self._put("config", config)
+        self._run_update(state="stopping", next_run=None)
         if self._task and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
@@ -452,6 +463,9 @@ class MailSync:
     async def _run(self):
         phase = 'account verification'
         failed = set()
+        self._metrics = {}
+        self._model_metrics_baseline = dict(getattr(self.builder, 'metrics', {}))
+        self._run_started = time.monotonic()
         try:
             if not self._get('window'):
                 self._put('run', {**self._new_run(), 'last_success': self._get('run')['last_success']})
@@ -461,7 +475,7 @@ class MailSync:
             phase = 'Hindsight configuration'
             await self._ensure_bank()
             phase = 'mail discovery'
-            before = await self._scan()
+            before = await self._measure('discovery', self._scan())
             for row in self.db.execute('SELECT id FROM threads WHERE payload IS NOT NULL').fetchall():
                 try:
                     await self._deliver(row['id'])
@@ -471,7 +485,7 @@ class MailSync:
                     failed.add(row['id'])
                     self._thread_error(row['id'], exc)
             selected = self._selected_threads()
-            identities = [row['id'] for row in self.db.execute("SELECT id FROM threads WHERE state!='idle'").fetchall()
+            identities = [row['id'] for row in self.db.execute("SELECT id FROM threads WHERE state!='idle' ORDER BY CASE WHEN state='error' THEN 1 ELSE 0 END, rowid").fetchall()
                           if row['id'] in selected and row['id'] not in failed]
             phase = 'thread processing'
             await self._process_threads(identities, before, failed)
@@ -497,6 +511,9 @@ class MailSync:
                 self._put('config', {**self._get('config'), 'enabled': False})
         finally:
             config = self._get('config')
+            if self._run_started is not None:
+                self._metrics['elapsed_seconds'] = round(time.monotonic() - self._run_started, 3)
+                self._run_started = None
             self._run_update(next_run=_iso(_now() + timedelta(minutes=config['interval_minutes'])) if config['enabled'] and config['interval_minutes'] else None)
             self._wake.set()
 
@@ -505,15 +522,22 @@ class MailSync:
 
         async def worker():
             for identity in remaining:
+                if asyncio.current_task().cancelling():
+                    raise asyncio.CancelledError
                 self._active_threads += 1
+                attempted = False
                 try:
                     await self._prepare(identity, before)
+                    attempted = True
                 except Exception as exc:
                     if getattr(exc, 'status', None) in {401, 403}:
                         raise
                     failed.add(identity)
                     self._thread_error(identity, exc)
+                    attempted = True
                 finally:
+                    if attempted:
+                        self._metrics['attempted_threads'] = self._metrics.get('attempted_threads', 0) + 1
                     self._active_threads -= 1
 
         tasks = [asyncio.create_task(worker()) for _ in range(min(len(identities), self._get('config')['parallel_threads']))]
@@ -521,9 +545,19 @@ class MailSync:
             await asyncio.gather(*tasks)
         finally:
             for task in tasks:
-                if not task.done():
+                if not task.done() and not task.cancelling():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _measure(self, phase, operation):
+        started = time.monotonic()
+        try:
+            return await operation
+        finally:
+            key = phase + '_seconds'
+            self._metrics[key] = round(self._metrics.get(key, 0) + time.monotonic() - started, 3)
+            key = phase + '_calls'
+            self._metrics[key] = self._metrics.get(key, 0) + 1
 
     def _thread_error(self, identity, exc):
         with self.db:
@@ -546,7 +580,7 @@ class MailSync:
         if self.db.execute('SELECT COUNT(*) FROM threads WHERE payload IS NOT NULL').fetchone()[0] >= MAX_PREPARED:
             raise ValueError('Pending outcome queue is full; finish existing deliveries before preparing more.')
         async with self._source_lock:
-            messages = await self.source.thread(row['conversation'], self._get('config')['folder_ids'], before)
+            messages = await self._measure('source', self.source.thread(row['conversation'], self._get('config')['folder_ids'], before))
         if not messages or len(messages) > 100 or any(m.get('error') for m in messages):
             raise ValueError('Complete thread evidence is unavailable.')
         if sum(len(m.get('content', '')) for m in messages) > 100000:
@@ -569,7 +603,7 @@ class MailSync:
             from .mail_outcome import OutcomeBuilder
             config = self._get('config')
             self.builder = OutcomeBuilder(model=config['model'] or None, reasoning_effort=config['reasoning_effort'] or None)
-        decision = await self.builder.build(messages, previous=previous)
+        decision = await self._measure('composition', self.builder.build(messages, previous=previous))
         self._validate_decision(decision)
         outcome_hash = _hash([decision['content'], decision['metadata']])
         if decision['action'] == 'publish' and previous and previous.get('original_text') == decision['content'] and row['outcome_hash'] == outcome_hash:
@@ -587,7 +621,7 @@ class MailSync:
                 raise ValueError('Pending outcome queue is full; finish existing deliveries before preparing more.')
             self.db.execute("UPDATE threads SET target_revision=?,operation_id=?,payload=?,state='prepared',error=NULL WHERE id=? AND revision=?",
                 (row['revision'], str(uuid.uuid4()), _json(target), identity, row['revision']))
-        await self._deliver(identity)
+        await self._measure('publication', self._deliver(identity))
 
     @staticmethod
     def _validate_decision(decision):

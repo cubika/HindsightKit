@@ -1,6 +1,6 @@
 """Prepare one evidence-backed current outcome using the official Copilot SDK."""
 import asyncio
-from contextlib import suppress
+from contextlib import contextmanager
 from datetime import timezone
 from decimal import Decimal
 import hashlib
@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+from time import monotonic
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
@@ -17,6 +18,8 @@ from .mail_source import _date
 
 MAX_INPUT = 100_000
 MAX_OUTCOME = 6000
+RUNTIME_STOP_TIMEOUT = 15
+RUNTIME_FORCE_STOP_TIMEOUT = 10
 QUOTE_MARKER = '[Earlier quoted message; author and date not verified]'
 
 
@@ -300,12 +303,70 @@ class OutcomeBuilder:
         self.profile, self.timeout, self.client_factory = profile, timeout, client_factory
         self.model, self.reasoning_effort = model, reasoning_effort
         self._clients = set()
+        self._directories = {}
+        self.metrics = {stage + suffix: 0 for stage in ('runtime_start', 'inference', 'runtime_stop')
+                        for suffix in ('_seconds', '_count')}
+
+    @contextmanager
+    def _measure(self, stage):
+        started = monotonic()
+        try:
+            yield
+        finally:
+            self.metrics[stage + '_seconds'] += monotonic() - started
+            self.metrics[stage + '_count'] += 1
+
+    @contextmanager
+    def _runtime_directory(self):
+        directory = tempfile.mkdtemp(prefix='hindsightkit-outcome-')
+        try:
+            yield directory
+        finally:
+            if directory not in self._directories.values() and Path(directory).exists():
+                shutil.rmtree(directory)
+
+    def _release_client(self, client):
+        directory = self._directories.get(client)
+        if directory:
+            shutil.rmtree(directory)
+            del self._directories[client]
+        self._clients.discard(client)
+
+    async def _stop_client(self, client):
+        cancelled = bool(asyncio.current_task().cancelling())
+        with self._measure('runtime_stop'):
+            try:
+                if not cancelled:
+                    try:
+                        # The SDK stops its sessions and owned runtime together.
+                        await asyncio.wait_for(client.stop(), RUNTIME_STOP_TIMEOUT)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                    except Exception:
+                        pass
+                    else:
+                        self._release_client(client)
+                        return
+                cleanup = asyncio.create_task(asyncio.wait_for(client.force_stop(), RUNTIME_FORCE_STOP_TIMEOUT))
+                while not cleanup.done():
+                    try:
+                        # Keep the isolated runtime alive until its cleanup finishes,
+                        # even if the caller is cancelled again while stopping.
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                cleanup.result()
+                self._release_client(client)
+            except Exception:
+                raise OutcomeError('outcome_runtime_cleanup_failed') from None
+            finally:
+                if cancelled:
+                    raise asyncio.CancelledError
 
     async def close(self):
-        for client in list(self._clients):
-            with suppress(Exception):
-                await asyncio.wait_for(client.stop(), 15)
-            self._clients.discard(client)
+        results = await asyncio.gather(*(self._stop_client(client) for client in list(self._clients)), return_exceptions=True)
+        if any(isinstance(result, BaseException) for result in results):
+            raise OutcomeError('outcome_runtime_cleanup_failed')
 
     async def build(self, messages, previous=None):
         prior, previous_meta = _previous(previous)
@@ -321,6 +382,7 @@ class OutcomeBuilder:
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise OutcomeError('outcome_copilot_profile_required')
         model = self.model or profile.get('HINDSIGHT_API_LLM_MODEL')
+        reasoning_effort = self.reasoning_effort or profile.get('HINDSIGHT_API_LLM_REASONING_EFFORT')
         if not model:
             raise OutcomeError('outcome_model_missing')
         from copilot import CopilotClient
@@ -333,35 +395,40 @@ class OutcomeBuilder:
         tool = Tool(name='record_outcome', description='Return the current thread outcome with exact supporting evidence.',
                     parameters=Outcome.model_json_schema(), handler=finish, skip_permission=True, is_terminal=True)
         prompt = json.dumps({'previous_outcome': prior or None, 'messages': sources}, ensure_ascii=False)
-        with tempfile.TemporaryDirectory(prefix='hindsightkit-outcome-') as directory:
+        with self._runtime_directory() as directory:
             account = Path.home() / '.copilot/config.json'
             if account.is_file():
                 shutil.copyfile(account, Path(directory) / 'config.json')
             client = (self.client_factory or CopilotClient)(mode='empty', base_directory=directory,
                 working_directory=directory, use_logged_in_user=True, builtin_plugin_directories=[], log_level='error')
             self._clients.add(client)
-            session = None
+            self._directories[client] = directory
             try:
-                await asyncio.wait_for(client.start(), 90)
-                session = await client.create_session(model=model, reasoning_effort=self.reasoning_effort or profile.get('HINDSIGHT_API_LLM_REASONING_EFFORT'),
-                    available_tools=['record_outcome'], tools=[tool], tool_search={'enabled': False},
-                    system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
-                    working_directory=directory, config_directory=directory, enable_config_discovery=False,
-                    enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
-                    enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
-                    mcp_servers={}, custom_agents=[], enable_host_git_operations=False,
-                    enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
-                    infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
-                    mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False)
+                with self._measure('runtime_start'):
+                    await asyncio.wait_for(client.start(), 90)
+                    session = await client.create_session(model=model, reasoning_effort=reasoning_effort,
+                        available_tools=['record_outcome'], tools=[tool], tool_search={'enabled': False},
+                        system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
+                        working_directory=directory, config_directory=directory, enable_config_discovery=False,
+                        enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
+                        enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
+                        mcp_servers={}, custom_agents=[], enable_host_git_operations=False,
+                        enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
+                        infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
+                        mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False)
                 if len(prompt) > MAX_INPUT + 30_000:
                     raise OutcomeError('outcome_thread_too_large')
                 for attempt in range(2):
                     captured.clear()
-                    await session.send_and_wait(prompt if not attempt else 'The result failed JSON schema or evidence validation. Return one corrected record_outcome call using the same evidence. Do not change unsupported facts into guesses. Keep exact numeric values and units; diagnostic fields ending in Ms explicitly mean milliseconds. Use the original field notation if the unit cannot be stated with confidence.', timeout=self.timeout)
+                    with self._measure('inference'):
+                        await session.send_and_wait(prompt if not attempt else 'The result failed JSON schema or evidence validation. Return one corrected record_outcome call using the same evidence. Do not change unsupported facts into guesses. Keep exact numeric values and units; diagnostic fields ending in Ms explicitly mean milliseconds. Use the original field notation if the unit cannot be stated with confidence.', timeout=self.timeout)
                     try:
                         if len(captured) != 1:
                             raise OutcomeError('outcome_format_invalid')
-                        return _validate(captured[0], index, previous)
+                        result = _validate(captured[0], index, previous)
+                        if result['action'] == 'publish':
+                            result['metadata'].update(analysis_model=model, analysis_reasoning_effort=reasoning_effort or 'default')
+                        return result
                     except OutcomeError as error:
                         if attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_content_label_invalid'}:
                             raise
@@ -371,12 +438,4 @@ class OutcomeBuilder:
             except Exception:
                 raise OutcomeError('outcome_model_failed') from None
             finally:
-                if session:
-                    with suppress(Exception):
-                        await asyncio.wait_for(session.abort(), 10)
-                    # Stop the isolated runtime; its temporary directory owns all session files.
-                    with suppress(Exception):
-                        await asyncio.wait_for(session.disconnect(), 10)
-                with suppress(Exception):
-                    await asyncio.wait_for(client.stop(), 15)
-                self._clients.discard(client)
+                await self._stop_client(client)

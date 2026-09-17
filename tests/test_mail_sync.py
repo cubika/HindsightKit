@@ -275,6 +275,47 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         await self.run_sync()
         self.assertEqual(len(self.client.docs), 2)
 
+    async def test_pause_does_not_interrupt_worker_cleanup_twice(self):
+        self.append('two', 'Second finding', thread='second')
+        await self.sync.configure({'parallel_threads': 2})
+        entered, cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        active = cancelled = cleaned = 0
+        async def blocked(messages, previous=None):
+            nonlocal active, cancelled, cleaned
+            active += 1
+            if active == 2:
+                entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled += 1
+                if cancelled == 2:
+                    cleanup_entered.set()
+                if messages[0]['metadata']['thread_id'] == 'second':
+                    await cleanup_release.wait()
+                cleaned += 1
+        self.builder.build = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(entered.wait(), 2)
+        pause = asyncio.create_task(self.sync.pause())
+        await asyncio.wait_for(cleanup_entered.wait(), 2)
+        await asyncio.sleep(0)
+        self.assertEqual(self.sync.status()['run']['state'], 'stopping')
+        cleanup_release.set()
+        await asyncio.wait_for(pause, 2)
+        self.assertEqual(cleaned, 2)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 0)
+        self.assertFalse(self.client.docs)
+
+    async def test_stage_metrics_count_calls_without_source_content(self):
+        await self.run_sync()
+        metrics = self.sync.status()['run']['timing']
+        for phase in ('discovery', 'source', 'composition', 'publication'):
+            self.assertEqual(metrics[phase + '_calls'], 1)
+            self.assertGreaterEqual(metrics[phase + '_seconds'], 0)
+        self.assertEqual(metrics['attempted_threads'], 1)
+        self.assertNotIn('Initial finding', json.dumps(metrics))
+
     async def test_import_settings_validate_and_persist(self):
         for settings in ({'parallel_threads':0},{'parallel_threads':5},{'parallel_threads':True},
                          {'model':'bad model'},{'reasoning_effort':'invalid'}):
