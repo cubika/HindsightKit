@@ -56,6 +56,8 @@ Record the last supporting or confirming time and source references for the curr
 
 Clean mail envelopes, recipient lists, signatures, boilerplate, repeated quotations, and executable or remote markup. Preserve substantive conditions and negation. Temporary processing payloads are bounded and removed after delivery. The operational ledger keeps IDs, revisions, hashes, and checkpoints, not a second searchable memory store.
 
+Metadata remains separate from outcome prose. Each published thread carries its title, source subject, supporting-message authors and dates, source folders, evidence, links, last-supported time, and revision. Source-message authors describe provenance; they do not automatically become fix owners or authors of quoted claims. Tags provide compact filters for source, record kind, current status, and up to five systems explicitly named in the accepted outcome. Only connector-owned tags are refreshed; unrelated user tags survive subsequent updates. These labels do not create additional memory records.
+
 ## Presentation and acceptance
 
 Present one current thread outcome with source links, last update, and resolved or unresolved status. Count source messages separately from retained outcomes. More replies must not cause unbounded growth in durable documents or obsolete recall results.

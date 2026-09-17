@@ -417,6 +417,10 @@ class WorkIQMailSource:
             raise WorkIQError("workiq_thread_incomplete")
         if sum(len(message["content"]) for message in messages) > self.max_thread_chars:
             raise WorkIQError("workiq_thread_too_large")
+        for message in messages:
+            folder = self._folders[message['metadata']['folder_id']]
+            if folder.get('path'):
+                message['metadata']['folder_path'] = folder['path']
         messages.sort(key=lambda message: (_date(message["metadata"].get("sent_at") or message["metadata"]["received_at"]), message["source_key"]))
         return messages
 

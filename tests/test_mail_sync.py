@@ -112,7 +112,7 @@ class Client:
     def complete(self, operation):
         request = self.targets[operation]
         self.jobs[operation]['status'] = 'completed'
-        self.docs[request['document_id']] = dict(original_text=request['content'], document_metadata=request['metadata'], memory_unit_count=self.unit_count)
+        self.docs[request['document_id']] = dict(original_text=request['content'], document_metadata=request['metadata'], memory_unit_count=self.unit_count, tags=request.get('tags', []))
 
     async def aretain(self, **kwargs):
         self.submissions.append(deepcopy(kwargs))
@@ -136,6 +136,9 @@ class Client:
     async def get_document(self, bank_id, document_id):
         if document_id not in self.docs: raise Missing()
         return deepcopy(self.docs[document_id])
+
+    async def update_document(self, bank_id, document_id, update_document_request):
+        self.docs[document_id]['tags'] = list(update_document_request.tags)
 
     async def delete_document(self, bank_id, document_id):
         self.deleted.append(document_id)
@@ -417,6 +420,30 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         await self.restart()
         await self.run_sync()
         self.assertEqual(self.sync.status()['run']['outcomes'], 1)
+
+    async def test_update_refreshes_managed_labels_and_preserves_user_tags(self):
+        await self.run_sync()
+        document=next(iter(self.client.docs))
+        self.client.docs[document]['tags'].append('user:important')
+        self.append('verified', 'Verified service fix')
+        await self.run_sync()
+        tags=self.client.docs[document]['tags']
+        self.assertIn('status:resolved',tags)
+        self.assertNotIn('status:unresolved',tags)
+        self.assertIn('user:important',tags)
+        self.assertEqual(len(self.client.docs),1)
+
+    async def test_retry_preserves_tags_added_after_a_failed_update(self):
+        await self.run_sync()
+        document=next(iter(self.client.docs))
+        self.append('verified','Verified fix')
+        self.client.mode='failed'
+        await self.run_sync()
+        self.client.docs[document]['tags'].append('user:added-during-retry')
+        self.client.mode='completed'
+        await self.run_sync()
+        self.assertIn('user:added-during-retry',self.client.docs[document]['tags'])
+        self.assertEqual(len(self.client.docs),1)
 
     async def test_new_ledger_refuses_nonempty_bank_without_mutating_documents(self):
         self.client.docs['old-message'] = dict(original_text='Existing memory', memory_unit_count=1)
