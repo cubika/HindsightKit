@@ -1,98 +1,79 @@
-# Connect Dev Boxes with Dev Tunnels
+# Connect another computer after installation
 
-Use this when the coding machine cannot reach the memory server directly. Both machines connect out to Microsoft Dev Tunnels. HindsightKit connects to the local port created on the coding machine; it does not need a tunnel ID in its settings.
+Install HindsightKit normally first. Local use needs no network setup. These commands are a separate, optional step when another computer should use this memory server.
 
-This guide uses the default API port, 9077. Only the memory API is forwarded. The database and dashboard stay on the server.
+## Direct connection
 
-## 1. Prepare both machines
-
-Install the [Microsoft Dev Tunnels CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) on both machines. Sign in with the same account that will own the tunnel:
+On the computer that stores memory:
 
 ```powershell
-devtunnel user login
-devtunnel user show
+hindsightkit share
 ```
 
-Use the intended company account on both Dev Boxes. The default tunnel is private to its owner; no anonymous access setting is needed.
-
-## 2. Start the memory server and tunnel
-
-On the machine that stores memory, run from the HindsightKit checkout:
+On the other computer:
 
 ```powershell
-.\setup.ps1 -ServerOnly
-hindsightkit status
+hindsightkit connect
 ```
 
-Setup starts the server and reports the location of its connection key. The default key file is `%USERPROFILE%\.hindsightkit\server\connection-key.txt`. Share this value privately with your coding machine; it is the HindsightKit key, separate from the Dev Tunnels login. Keep it out of Git and command-line arguments.
+Paste the server's connection code at the hidden prompt. The client verifies the server before updating its connection. Reload VS Code and open a fresh Copilot CLI session afterward. A failed connection preserves the previous settings.
 
-In a terminal on the server, run:
+The code contains the server address and its connection key. Share it privately with your own computer, keep it out of Git, and do not put it in command-line arguments. It grants access to the memory server; it is not a per-device permission or an expiring pairing token.
+
+If the hostname is not reachable, supply an address that the other computer can use:
 
 ```powershell
-devtunnel host -p 9077 --protocol http
+hindsightkit share --address http://memory-host:9077
 ```
 
-Keep this process running and copy the tunnel ID from its output. If Hindsight uses a different API port, substitute that port here.
-
-## 3. Connect the coding machine
-
-On the other Dev Box, replace the quoted value with the ID from the server:
+A known direct address also works without a code:
 
 ```powershell
-$tunnelId = 'ID-FROM-SERVER-OUTPUT'
-devtunnel connect $tunnelId
+hindsightkit connect --server http://memory-host:9077
 ```
 
-Keep this process running. Check its output for the local forwarded port. For port 9077, open another terminal in the HindsightKit checkout and run:
+The connection key is requested separately. Direct HTTP is intended for a trusted private network. An existing HTTPS reverse proxy can be used by passing its API origin. Setup does not change firewall rules.
 
-```powershell
-.\setup.ps1 -Server http://127.0.0.1:9077
-hindsightkit status
-```
-
-Enter the server's HindsightKit connection key at the hidden prompt. The machine name and memory routing are automatic. If the forwarded local port differs, use that port in the URL.
-
-The `-Server` value is the local forwarded HTTP address. Do not use the tunnel ID, the server's private IP, or the browser forwarding URL ending in `devtunnels.ms` for this workflow. The Dev Tunnels CLI handles tunnel authentication before forwarding requests.
-
-Reload VS Code and open a fresh Copilot CLI session after client setup. Clients install no dashboard or database.
-
-## 4. Verify shared use
+## When the computers cannot connect directly
 
 On the memory server:
 
 ```powershell
-hindsightkit clients
+hindsightkit share --relay
 ```
 
-The coding machine should appear with its registered integrations. After a successful memory query, its last-use time should update. This list reports recent use, not open windows or live tunnel connections.
+On the other computer, run `hindsightkit connect` and paste the new code. Direct access is tested first. If the network cannot reach the server, HindsightKit starts its private relay in the background. An incorrect key, incompatible server, or invalid TLS certificate is reported without switching networks.
 
-On the client, `hindsightkit check` performs a retain/recall check using a temporary bank, then removes it. It uses a small amount of the server's Copilot allowance.
+The first relay use installs Microsoft's signed Dev Tunnels CLI if needed and opens its normal login flow. Use the same account on both computers. HindsightKit creates a private tunnel owned by that account; it does not enable anonymous access or grant access to other people. Copilot login remains separate. Company policy must allow the [Dev Tunnels outbound domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
 
-To check sharing between coding clients, start fresh sessions outside Git on both machines, save a unique test fact on one, and recall it on the other. For repository memory, use clones with the same Git origin. Remove the test document through the server dashboard afterward.
+No tunnel ID, forwarding port, or extra terminal needs to be managed by the user. The client retains a stable loopback address even if the tunnel CLI chooses a different local forwarding port. Only the memory API is forwarded; PostgreSQL and the dashboard remain on the server.
 
-## Reconnect and troubleshoot
-
-The Hindsight server and both `devtunnel` processes must remain running. After a server reboot, run `hindsightkit start`, host the tunnel again, then reconnect the coding machine. The temporary host command may produce a new tunnel ID; the saved HindsightKit URL remains usable if the forwarded local port stays the same.
-
-For a reusable tunnel ID, create a persistent tunnel once on the server:
+## Daily use
 
 ```powershell
-devtunnel create
-devtunnel port create -p 9077 --protocol http
+hindsightkit status
+hindsightkit start
+hindsightkit stop
 ```
 
-Record the ID returned by `create`. On subsequent runs, use `devtunnel host YOUR-TUNNEL-ID` on the server and `devtunnel connect YOUR-TUNNEL-ID` on each coding machine. Tunnel expiry and account login still follow Dev Tunnels rules.
+The managed relay continues after the terminal closes and retries interrupted connections. After reboot, run `hindsightkit start` on the server to restore the saved relay. Client MCP/hooks also restore the saved connection when they start. Background recovery never opens a login flow: if authentication has expired, rerun `share --relay` or `connect` interactively. No Windows login task is installed.
 
-| Symptom | Check |
-| --- | --- |
-| Tunnel cannot connect | Both accounts match, the host process is running, and company policy permits the [required outbound domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains). |
-| Local port is occupied | Stop the conflicting local service or use the actual port reported by the forwarding CLI. Do not install a second Hindsight server on a client just to resolve this. |
-| HindsightKit reports HTTP 401 | Enter the memory server's connection key, not a tunnel token. |
-| Memory connection is refused | Check both tunnel processes and run `hindsightkit status` on the server. |
-| Forwarded port changes | Rerun client setup with the new `-Server` URL, then restart coding sessions. |
+To return the coding computer to its own installed memory server:
 
-## Validation scope
+```powershell
+hindsightkit connect --local
+```
 
-The commands were checked against [Microsoft's CLI documentation](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands). Automated HindsightKit tests cover authenticated HTTP, local TCP forwarding, and client configuration. Real cross-Dev-Box relay access, company sign-in policy, and reconnect behaviour remain to be tested.
+To stop and disable automatic relay sharing on the server:
 
-Microsoft positions [Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/overview) for development and testing. See [server and client setup](shared-memory.md) for direct network access and the underlying installation behaviour.
+```powershell
+hindsightkit unshare
+```
+
+This disables the managed relay; it does not revoke the server key or disable existing direct access. Cloud tunnel expiry follows Microsoft policy. If an inactive tunnel expires, run `share --relay` again and distribute the new code.
+
+## Verification
+
+Use `hindsightkit check` for a temporary retain/recall test. It uses Copilot allowance and removes its test bank afterward. On a machine with both a local server and a remote client, the command checks the local server; check client connectivity with `hindsightkit status` or an actual client query.
+
+Microsoft documents Dev Tunnels for development and testing. Cross-machine relay access, company login policy, and reconnect behavior require a two-machine check. Local fixtures alone do not establish that those external conditions have passed.

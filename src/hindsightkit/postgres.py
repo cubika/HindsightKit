@@ -107,6 +107,9 @@ def release_distribution():
         if not all(isinstance(manifest.get(name), str) and manifest[name].strip()
                    for name in ('version', 'repository', 'release_url')):
             raise ValueError('release metadata is missing')
+        requires_auth = manifest.get('requires_auth', False)
+        if type(requires_auth) is not bool:
+            raise ValueError('requires_auth must be a boolean')
         distribution = manifest.get('postgres')
         if not isinstance(distribution, dict):
             raise ValueError('PostgreSQL distribution is missing')
@@ -122,7 +125,18 @@ def release_distribution():
         digest = distribution.get('sha256')
         if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', digest):
             raise ValueError('PostgreSQL SHA256 is invalid')
-        return url, digest.upper()
+        if requires_auth:
+            repository, tag = manifest['repository'], manifest['version']
+            if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*', repository)
+                    or not re.fullmatch(r'v\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?', tag)):
+                raise ValueError('Authenticated release repository or tag is invalid')
+            base = f'https://{parsed.netloc}/{repository}/releases/download/{tag}'
+            asset = parsed.path.rsplit('/', 1)[-1]
+            if (parsed.query or manifest['release_url'] != base or url != base + '/' + asset
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*\.zip', asset)):
+                raise ValueError('PostgreSQL URL does not match the authenticated repository, tag and asset')
+            return url, digest.upper(), repository, tag
+        return url, digest.upper(), None, None
     except (OSError, ValueError, TypeError) as exc:
         raise RuntimeError(f'Invalid HindsightKit release manifest {manifest_path!r}: {exc}') from exc
 
@@ -158,6 +172,8 @@ class Postgres:
                    '-CacheDirectory', str(self.root / 'downloads')]
         if distribution:
             command += ['-DistributionUrl', distribution[0], '-DistributionSha256', distribution[1]]
+            if distribution[2]:
+                command += ['-ReleaseRepository', distribution[2], '-ReleaseTag', distribution[3]]
         # Stream every stage immediately, retaining a bounded tail for failures.
         detail = ''
         with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

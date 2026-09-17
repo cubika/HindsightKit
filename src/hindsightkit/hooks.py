@@ -65,6 +65,8 @@ def run(event_name: str):
     config = json.loads(config_path.read_text(encoding='utf-8'))
     if config.get('disabled'):
         return
+    from .remote import prepare_client
+    prepare_client(config)
     event = json.load(sys.stdin)
     path, pinned = session_config(event, config)
     if event_name == 'sessionStart':

@@ -20,7 +20,7 @@ Bank selection is internal. Repository sessions keep their own memory and read s
 
 ## Local use and network transport
 
-For two Dev Boxes connected through Microsoft Dev Tunnels, follow the [step-by-step tunnel guide](devtunnel.md). It includes commands for both machines, the address to pass to client setup, and reconnect checks.
+After installation, use `hindsightkit share` and `hindsightkit connect` to connect another computer. The [remote connection guide](devtunnel.md) covers direct access and the optional private relay without changing the installation flow.
 
 Default setup already includes the local client. To add one to an installation previously made with ServerOnly:
 
@@ -30,7 +30,7 @@ Default setup already includes the local client. To add one to an installation p
 
 The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Plain setup prepares the server and configures a local client when no remote client connection exists. It preserves an existing remote connection and prints a notice. ServerOnly leaves client settings alone. Running setup with a server address changes only the managed client connection after validation.
 
-IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same command. For an established tunnel, use its local forwarded address as the server URL. HindsightKit does not manage tunnel IDs, accounts, or processes. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
+IP addresses, DNS names, and existing SSH forwards can be passed to `hindsightkit connect --server URL`. HindsightKit manages its own optional relay when a connection code includes one. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
 
 The server starts listening during setup. After reboot, run hindsightkit start; stop and ui manage only the local server. No login task or Windows service is installed. The status command reports installed roles. Client-only installations never launch a replacement local server when their connection is unavailable.
 

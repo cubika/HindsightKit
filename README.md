@@ -4,7 +4,7 @@ Run a [Hindsight](https://github.com/vectorize-io/hindsight) memory server and c
 
 ## Setup on Windows
 
-If the machines cannot reach each other directly, use the [Dev Tunnels guide](docs/devtunnel.md).
+Install normally for local use. To connect another computer afterward, use the separate [remote connection commands](docs/devtunnel.md): `hindsightkit share` on the server and `hindsightkit connect` on the client. Add `--relay` to share when direct networking is unavailable.
 
 For installation without a checkout, open **Releases** in the repository you are viewing and copy the command from a published version. Each repository's release contains an installer and instructions with its own download address. See [release installation](docs/releases.md).
 

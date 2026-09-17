@@ -26,6 +26,8 @@ def scope_from_roots(roots) -> Scope:
 
 def serve(context: str, directory: str | None = None):
     config = connection.load()
+    from .remote import prepare_client
+    prepare_client(config)
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
                     'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')

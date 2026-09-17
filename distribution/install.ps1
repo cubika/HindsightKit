@@ -19,6 +19,8 @@ $releaseVersion = '@@VERSION@@'
 $releaseUrl = '@@RELEASE_URL@@'
 $packageName = '@@PACKAGE_NAME@@'
 $packageSha256 = '@@PACKAGE_SHA256@@'
+$releaseRepository = '@@REPOSITORY@@'
+$requiresAuth = @@REQUIRES_AUTH@@
 
 function Assert-InstallDirectory([string]$Path) {
     if (-not [IO.Path]::IsPathRooted($Path)) { throw 'InstallDir must be an absolute path.' }
@@ -119,6 +121,7 @@ function Install-HindsightKit {
         }
     }
     if (-not $ServerOnly -and -not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Install Git before installing coding integrations.' }
+    if ($requiresAuth -and -not (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Install GitHub CLI and run gh auth login with an account that can read this repository.' }
     $root = Assert-InstallDirectory $InstallDir
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $lockPath = Join-Path $root 'install.lock'
@@ -138,7 +141,13 @@ function Install-HindsightKit {
             Write-Host "Downloading HindsightKit $releaseVersion..."
             for ($attempt = 1; $attempt -le 3; $attempt++) {
                 try {
-                    Invoke-WebRequest -Uri ($releaseUrl + '/' + $packageName) -OutFile $archive -UseBasicParsing -TimeoutSec 900
+                    if ($requiresAuth) {
+                        $releaseHost = ([uri]$releaseUrl).Host
+                        & gh release download $releaseVersion --repo ($releaseHost + '/' + $releaseRepository) --pattern $packageName --output $archive --clobber
+                        if ($LASTEXITCODE) { throw 'Authenticated release download failed. Check gh auth status and repository access.' }
+                    } else {
+                        Invoke-WebRequest -Uri ($releaseUrl + '/' + $packageName) -OutFile $archive -UseBasicParsing -TimeoutSec 900
+                    }
                     break
                 } catch { if ($attempt -eq 3) { throw }; Write-Warning 'Download failed; retrying.' }
             }

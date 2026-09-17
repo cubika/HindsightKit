@@ -239,29 +239,52 @@ def write_archive(destination: Path, files, extra=None):
     return inspect_file(destination)
 
 
-def installation_notes(version: str, release_url: str) -> str:
+def installation_notes(version: str, release_url: str, repository: str, visibility: str) -> str:
     installer = release_url + "/install.ps1"
     tick = chr(96)
     fence = tick * 3
-    return f"""# HindsightKit {version}
-
-Run this command in Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
-It installs the local server and connects this computer in one run.
+    login = ""
+    if visibility == "public":
+        local = f"irm '{installer}' | iex"
+        server = f"& ([scriptblock]::Create((irm '{installer}'))) -ServerOnly"
+        client = f"& ([scriptblock]::Create((irm '{installer}'))) -Server 'http://server-host:9077'"
+    else:
+        host = urlsplit(release_url).netloc
+        login = f"""
+This {visibility} repository requires GitHub CLI and an account with repository access.
+Sign in before downloading the installer:
 
 {fence}powershell
-irm '{installer}' | iex
+gh auth login --hostname '{host}'
+if ($LASTEXITCODE -ne 0) {{ throw 'GitHub sign-in failed.' }}
+{fence}
+"""
+        download = (f"$hindsightkitInstaller = gh release download '{version}' "
+                    f"--repo '{host}/{repository}' --pattern 'install.ps1' --output - | Out-String\n"
+                    "if ($LASTEXITCODE -ne 0) { throw 'Installer download failed.' }\n"
+                    "if ([string]::IsNullOrWhiteSpace($hindsightkitInstaller)) { throw 'Installer download was empty.' }\n")
+        local = download + "& ([scriptblock]::Create($hindsightkitInstaller))"
+        server = local + " -ServerOnly"
+        client = local + " -Server 'http://server-host:9077'"
+    return f"""# HindsightKit {version}
+
+Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
+The default command installs the local server and connects this computer in one run.
+{login}
+{fence}powershell
+{local}
 {fence}
 
 To install a server without connecting the current computer:
 
 {fence}powershell
-& ([scriptblock]::Create((irm '{installer}'))) -ServerOnly
+{server}
 {fence}
 
 To connect another computer to an existing server:
 
 {fence}powershell
-& ([scriptblock]::Create((irm '{installer}'))) -Server 'http://server-host:9077'
+{client}
 {fence}
 
 The installer downloads the pinned application and verifies its SHA256 checksum.
@@ -270,19 +293,20 @@ and the required C++ runtime DLLs. Users do not need a C++ compiler.
 Python and Node.js dependencies download during setup. Existing Copilot authentication
 and any required model-provider configuration still apply.
 
-Each repository generates its own installer and this command when its tag release
-workflow runs. The workflow supplies {tick}GITHUB_REPOSITORY{tick} and {tick}GITHUB_SERVER_URL{tick},
-so the two remotes have separate download addresses. Pushing a commit does not rewrite
-the source README. Copy the installation command from the release in the repository
-you intend to use. All downloads in this installer use the fixed {tick}{version}{tick} tag.
+These commands download assets from {release_url}.
+All downloads in this installer use the fixed {tick}{version}{tick} tag.
 
 {tick}SHA256SUMS{tick} lists the checksums of every release asset.
 """
 
 
 def package_release(*, version: str, repository: str, server_url: str,
-                    postgres_directory: Path, output: Path, source_root: Path):
+                    postgres_directory: Path, output: Path, source_root: Path,
+                    visibility: str = "public"):
     release_url = release_identity(version, repository, server_url)
+    if visibility not in {"public", "private", "internal"}:
+        raise ValueError("Release visibility must be public, private, or internal")
+    requires_auth = visibility != "public"
     source_root = ordinary_path(source_root)
     postgres_directory = ordinary_path(postgres_directory)
     output = ordinary_path(output)
@@ -315,13 +339,16 @@ def package_release(*, version: str, repository: str, server_url: str,
     inspect_file(template_path, needles)
     template = template_path.read_text(encoding="utf-8-sig")
     substitutions = {"@@VERSION@@": version, "@@RELEASE_URL@@": release_url,
-                     "@@PACKAGE_NAME@@": APP_NAME, "@@PACKAGE_SHA256@@": ""}
+                     "@@PACKAGE_NAME@@": APP_NAME, "@@PACKAGE_SHA256@@": "",
+                     "@@REPOSITORY@@": repository,
+                     "@@REQUIRES_AUTH@@": "$true" if requires_auth else "$false"}
     if any(template.count(token) != 1 for token in substitutions) \
             or set(re.findall(r"@@[A-Z0-9_]+@@", template)) != set(substitutions):
         raise ValueError("Installer template must contain each supported token exactly once")
     output.mkdir(parents=True, exist_ok=True)
     pg_hash = write_archive(output / POSTGRES_NAME, postgres)
     release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
+               "requires_auth": requires_auth,
                "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
                             "postgres_version": POSTGRES_VERSION, "vector_version": VECTOR_VERSION}}
     app_hash = write_archive(output / APP_NAME, application,
@@ -330,7 +357,7 @@ def package_release(*, version: str, repository: str, server_url: str,
     for token, value in substitutions.items():
         template = template.replace(token, value)
     (output / "install.ps1").write_text(template, encoding="utf-8", newline="\n")
-    notes = installation_notes(version, release_url)
+    notes = installation_notes(version, release_url, repository, visibility)
     for name in ("QUICKSTART.md", "release-notes.md"):
         (output / name).write_text(notes, encoding="utf-8", newline="\n")
     assets = sorted(path for path in output.iterdir() if path.is_file())
@@ -344,6 +371,7 @@ def main(argv=None):
     parser.add_argument("--version", required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--server-url", default="https://github.com")
+    parser.add_argument("--visibility", choices=("public", "private", "internal"), default="public")
     parser.add_argument("--postgres-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[1])

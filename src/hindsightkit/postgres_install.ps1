@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Destination,
     [Parameter(Mandatory = $true)][string]$CacheDirectory,
     [string]$DistributionUrl,
-    [string]$DistributionSha256
+    [string]$DistributionSha256,
+    [string]$ReleaseRepository,
+    [string]$ReleaseTag
 )
 
 Set-StrictMode -Version Latest
@@ -71,7 +73,8 @@ function Assert-OrdinaryTree([string]$Root) {
     }
 }
 
-function Get-VerifiedArchive([string]$Url, [string]$Name, [string]$Sha256) {
+function Get-VerifiedArchive([string]$Url, [string]$Name, [string]$Sha256,
+    [string]$Repository, [string]$Tag, [string]$Asset) {
     $cached = Assert-ChildPath $CacheDirectory (Join-Path $CacheDirectory $Name)
     if (Test-Path -LiteralPath $cached) {
         if ((Get-Sha256 $cached) -eq $Sha256) { return $cached }
@@ -85,7 +88,20 @@ function Get-VerifiedArchive([string]$Url, [string]$Name, [string]$Sha256) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
-                Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing -TimeoutSec 900
+                if ($Repository) {
+                    $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue
+                    if (-not $gh) { throw 'GitHub CLI is required to download this release. Install gh and sign in to the release host, then rerun setup.' }
+                    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial }
+                    # gh owns the current account and its credentials. Suppress
+                    # subprocess diagnostics, which can include authenticated URLs.
+                    try {
+                        & $gh.Source release download $Tag --repo $Repository --pattern $Asset --output $partial *> $null
+                        $downloadExit = $LASTEXITCODE
+                    } catch { $downloadExit = 1 }
+                    if ($downloadExit -ne 0) { throw "Authenticated release download failed (exit $downloadExit). Check gh authentication and access to $Repository, then rerun setup." }
+                } else {
+                    Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing -TimeoutSec 900
+                }
                 break
             } catch {
                 if ($attempt -eq 3) { throw }
@@ -305,12 +321,27 @@ if ($env:OS -ne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $
     throw 'This installer requires x64 Windows.'
 }
 $useDistribution = $PSBoundParameters.ContainsKey('DistributionUrl') -or $PSBoundParameters.ContainsKey('DistributionSha256')
+$useReleaseAuth = $PSBoundParameters.ContainsKey('ReleaseRepository') -or $PSBoundParameters.ContainsKey('ReleaseTag')
+$downloadRepository = $null
+$downloadAsset = $null
+if ($useReleaseAuth -and -not $useDistribution) { throw 'Authenticated release options require a distribution URL and SHA256.' }
 if ($useDistribution) {
     $parsedDistribution = $null
     if (-not [uri]::TryCreate($DistributionUrl, [UriKind]::Absolute, [ref]$parsedDistribution) -or
         $parsedDistribution.Scheme -ne 'https' -or -not $parsedDistribution.Host -or $parsedDistribution.UserInfo -or
         $parsedDistribution.Fragment -or $DistributionUrl -match '\s' -or $DistributionSha256 -notmatch '^[a-fA-F0-9]{64}$') {
         throw 'A release distribution requires an HTTPS URL without credentials or a fragment and a valid SHA256.'
+    }
+    if ($useReleaseAuth) {
+        $downloadAsset = $parsedDistribution.Segments[-1]
+        $expectedPath = '/' + $ReleaseRepository + '/releases/download/' + $ReleaseTag + '/' + $downloadAsset
+        if ($ReleaseRepository -notmatch '^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$' -or
+            $ReleaseTag -notmatch '^v\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$' -or
+            $downloadAsset -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$' -or $parsedDistribution.Query -or
+            $DistributionUrl -cne ('https://' + $parsedDistribution.Authority + $expectedPath)) {
+            throw 'The authenticated distribution URL must match its repository, release tag and ZIP asset.'
+        }
+        $downloadRepository = $parsedDistribution.Authority + '/' + $ReleaseRepository
     }
 }
 $Destination = Get-AbsoluteDirectory $Destination
@@ -332,7 +363,7 @@ if (Test-Path -LiteralPath $Destination) {
         $pgRoot = Join-Path $stageRoot 'pgsql'
         if ($useDistribution) {
             $archiveName = 'hindsightkit-postgres-' + $DistributionSha256.ToLowerInvariant() + '.zip'
-            $archive = Get-VerifiedArchive $DistributionUrl $archiveName $DistributionSha256
+            $archive = Get-VerifiedArchive $DistributionUrl $archiveName $DistributionSha256 $downloadRepository $ReleaseTag $downloadAsset
             Write-Host 'Extracting the precompiled PostgreSQL release and pgvector...'
             Expand-OfficialArchive $archive $pgRoot 'pgsql/' @()
         } else {

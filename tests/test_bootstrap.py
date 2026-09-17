@@ -58,11 +58,12 @@ exit 0
         self.app = self.destination / 'versions' / (version + '-' + digest[:12])
         return digest
 
-    def run_installer(self, digest, args='', *, expected=0):
+    def run_installer(self, digest, args='', *, expected=0, authenticated=False):
         template = TEMPLATE.read_text(encoding='utf-8')
         for key, value in {'VERSION': self.version, 'RELEASE_URL': self.release_url,
                            'PACKAGE_NAME': 'hindsightkit-windows-x64.zip',
-                           'PACKAGE_SHA256': digest}.items():
+                           'PACKAGE_SHA256': digest, 'REPOSITORY': 'example/HindsightKit',
+                           'REQUIRES_AUTH': '$true' if authenticated else '$false'}.items():
             template = template.replace('@@' + key + '@@', value)
         installer = self.root / 'install.ps1'
         installer.write_text(template, encoding='utf-8')
@@ -71,6 +72,17 @@ exit 0
         self.env['TEST_RELEASE_URL'] = self.release_url + '/hindsightkit-windows-x64.zip'
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
 function hk { 'unrelated user function' }
+function gh {
+    $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', 'hindsightkit-windows-x64.zip', '--output')
+    if ($args.Count -ne 10) { throw 'Unexpected authenticated arguments.' }
+    for ($index=0; $index -lt $expected.Count; $index++) {
+        if ($args[$index] -ne $expected[$index]) { throw 'Unexpected authenticated download target.' }
+    }
+    if ($args[9] -ne '--clobber') { throw 'Missing overwrite option for interrupted download.' }
+    Add-Content -LiteralPath $env:TEST_DOWNLOAD_LOG -Value 'authenticated'
+    Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $args[8]
+    $global:LASTEXITCODE = 0
+}
 function Invoke-WebRequest {
     param($Uri, $OutFile, [switch]$UseBasicParsing, $TimeoutSec)
     if ($Uri -ne $env:TEST_RELEASE_URL) { throw 'Unexpected download destination.' }
@@ -93,6 +105,14 @@ try {
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
+
+    def test_internal_release_download_uses_exact_authenticated_asset(self):
+        if not shutil.which('gh'):
+            self.skipTest('GitHub CLI is required for command prerequisite discovery')
+        digest = self.package()
+        self.env['TEST_VERSION'] = self.version
+        self.run_installer(digest, authenticated=True)
+        self.assertEqual(self.download_log.read_text().strip(), 'authenticated')
 
     def test_pipe_install_uses_managed_directory_and_reuses_same_version(self):
         digest = self.package()

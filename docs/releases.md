@@ -16,7 +16,7 @@ The same source commit is pushed to origin and enterprise. README content is ide
 
 Each repository runs its own release workflow. The packager uses `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY` to generate install.ps1, QUICKSTART.md, and release notes for that repository. All downloads inside an installer use the version tag that produced it. The generated URL is stored in the installer; it does not depend on the user's Git remotes or working directory.
 
-Pushing a branch alone does not publish an installer. Push a version tag to each intended remote, or run the workflow manually for a tag already present there. Each workflow creates a draft release. Review its assets and publish that draft in the corresponding repository. Both repositories must permit Actions and release uploads. The anonymous `irm` command requires public release assets; a private repository needs an authenticated download workflow.
+Pushing a branch alone does not publish an installer. Push a version tag to each intended remote, or run the workflow manually for a tag already present there. Each workflow creates a draft prerelease. Review its assets and publish that draft in the corresponding repository. Both repositories must permit Actions and release uploads. Public release instructions use anonymous `irm`. Private and internal releases generate authenticated GitHub CLI download commands; users sign in with an account that can read that repository. The installer uses the same account to download both application and database assets.
 
 If an interrupted upload leaves a draft, inspect that draft and remove it before rerunning the workflow for the same tag. The workflow does not overwrite an existing release. Use a new version tag for a release that has already been published.
 

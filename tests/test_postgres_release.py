@@ -82,7 +82,7 @@ class ReleaseManifestTests(unittest.TestCase):
             manifest = self.manifest()
             (app / 'release.json').write_text(json.dumps(manifest), encoding='utf-8')
             with patch.dict(os.environ, {}, clear=True), patch.object(postgres, '__file__', str(package)):
-                self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32))
+                self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32, None, None))
                 (app / 'release.json').write_text('{}', encoding='utf-8')
                 with self.assertRaisesRegex(RuntimeError, 'Invalid HindsightKit release manifest'):
                     postgres.release_distribution()
@@ -100,7 +100,48 @@ class ReleaseManifestTests(unittest.TestCase):
                 self.assertIsNone(postgres.release_distribution())
                 (app / 'release.json').write_text('{}', encoding='utf-8')
                 with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': str(explicit)}):
-                    self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32))
+                    self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32, None, None))
+
+    def test_authenticated_manifest_passes_repository_and_tag_to_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.manifest()
+            manifest.update(requires_auth=True, repository='gim-home/HindsightKit',
+                            release_url='https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0')
+            manifest['postgres']['url'] = manifest['release_url'] + '/postgres.zip'
+            path = Path(directory) / 'release.json'
+            path.write_text(json.dumps(manifest), encoding='utf-8')
+            process = MagicMock()
+            process.__enter__.return_value = process
+            process.stdout = io.StringIO('Verified release.\n')
+            process.wait.return_value = 0
+            with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': str(path)}), \
+                 patch.object(postgres, 'private_directory'), \
+                 patch.object(postgres.shutil, 'which', return_value='powershell.exe'), \
+                 patch.object(postgres.subprocess, 'Popen', return_value=process) as popen:
+                postgres.Postgres(Path(directory) / 'postgresql').install()
+            self.assertEqual(popen.call_args.args[0][-8:],
+                             ['-DistributionUrl', manifest['postgres']['url'], '-DistributionSha256', 'AB' * 32,
+                              '-ReleaseRepository', 'gim-home/HindsightKit', '-ReleaseTag', 'v1.0.0'])
+
+    def test_authenticated_manifest_rejects_nonboolean_or_mismatched_release(self):
+        cases = [('requires_auth', 'true'), ('requires_auth', 1), ('repository', 'other/repo'),
+                 ('version', 'v2.0.0'), ('release_url', 'https://other.example.com/owner/HindsightKit/releases/download/v1.0.0'),
+                 ('url', 'https://github.com/owner/HindsightKit/releases/download/v1.0.0/*.zip'),
+                 ('url', 'https://github.com/owner/HindsightKit/releases/download/v1.0.0/postgres.zip?token=secret')]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'release.json'
+            for key, value in cases:
+                manifest = self.manifest()
+                manifest.update(requires_auth=True,
+                                release_url='https://github.com/owner/HindsightKit/releases/download/v1.0.0')
+                if key == 'url':
+                    manifest['postgres']['url'] = value
+                else:
+                    manifest[key] = value
+                path.write_text(json.dumps(manifest), encoding='utf-8')
+                with self.subTest(key=key, value=value), patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': str(path)}):
+                    with self.assertRaisesRegex(RuntimeError, 'Invalid HindsightKit release manifest'):
+                        postgres.release_distribution()
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell release installation')
@@ -124,6 +165,31 @@ function Invoke-WebRequest {
     Copy-Item -LiteralPath $Archive -Destination $OutFile
 }
 & $Installer -Destination $Destination -CacheDirectory $Cache -DistributionUrl 'https://example.com/postgres.zip' -DistributionSha256 $Sha256
+''', encoding='utf-8')
+        cls.auth_harness = cls.root / 'install-auth-fixture.ps1'
+        cls.auth_harness.write_text('''param([string]$Installer, [string]$Root, [string]$Archive,
+    [string]$Sha256, [string]$Url, [string]$Repository, [string]$Tag, [int]$GhExit = 0)
+$ErrorActionPreference = 'Stop'
+$env:HINDSIGHTKIT_TEST_ARCHIVE = $Archive
+$env:HINDSIGHTKIT_TEST_CALLS = Join-Path $Root 'gh-calls.jsonl'
+$env:HINDSIGHTKIT_TEST_GH_EXIT = [string]$GhExit
+function Invoke-WebRequest { throw 'Anonymous download must not be called' }
+function Start-Sleep {}
+$ghFixture = Join-Path (Split-Path -Parent $PSCommandPath) 'gh-fixture.ps1'
+function Get-Command {
+    param($Name, $CommandType, $ErrorAction)
+    if ($Name -eq 'gh') { return [pscustomobject]@{ Source = $ghFixture } }
+    Microsoft.PowerShell.Core\\Get-Command @PSBoundParameters
+}
+& $Installer -Destination (Join-Path $Root 'installed') -CacheDirectory (Join-Path $Root 'cache') -DistributionUrl $Url -DistributionSha256 $Sha256 -ReleaseRepository $Repository -ReleaseTag $Tag
+''', encoding='utf-8')
+        (cls.root / 'gh-fixture.ps1').write_text('''$ErrorActionPreference = 'Stop'
+Add-Content -LiteralPath $env:HINDSIGHTKIT_TEST_CALLS -Value (ConvertTo-Json -InputObject @($args) -Compress)
+$outputIndex = [Array]::IndexOf($args, '--output')
+if ($outputIndex -lt 0) { throw 'Missing output option' }
+Copy-Item -LiteralPath $env:HINDSIGHTKIT_TEST_ARCHIVE -Destination $args[$outputIndex + 1]
+Write-Output 'synthetic-sensitive-auth-diagnostic'
+$global:LASTEXITCODE = [int]$env:HINDSIGHTKIT_TEST_GH_EXIT
 ''', encoding='utf-8')
         # A tiny version-reporting executable exercises the installer's real file,
         # archive and process checks without installing or starting PostgreSQL.
@@ -178,6 +244,14 @@ Add-Type -TypeDefinition 'public class VersionFixture {
                                '-Archive', str(archive), '-Sha256', digest],
                               env=self.environment, capture_output=True, text=True, timeout=60)
 
+    def install_authenticated(self, root, archive, digest, *, gh_exit=0, url=None):
+        return subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                               str(self.auth_harness), '-Installer', str(self.installer), '-Root', str(root),
+                               '-Archive', str(archive), '-Sha256', digest, '-GhExit', str(gh_exit),
+                               '-Repository', 'gim-home/HindsightKit', '-Tag', 'v1.0.0',
+                               '-Url', url or 'https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0/postgres.zip'],
+                              env=self.environment, capture_output=True, text=True, timeout=60)
+
     def assert_failed_cleanly(self, root, result, message):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(message, result.stdout + result.stderr)
@@ -199,6 +273,51 @@ Add-Type -TypeDefinition 'public class VersionFixture {
             self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
             self.assertIn('Verified existing PostgreSQL', second.stdout)
             self.assertEqual(list(root.glob('.hindsightkit-postgres-*')), [])
+
+    def test_authenticated_release_uses_current_gh_and_reuses_verified_cache(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            archive, digest = self.archive(root)
+            result = self.install_authenticated(root, archive, digest)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            calls = [json.loads(line) for line in (root / 'gh-calls.jsonl').read_text(encoding='utf-8-sig').splitlines()]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][:-1], ['release', 'download', 'v1.0.0', '--repo',
+                             'git.example.com/gim-home/HindsightKit', '--pattern', 'postgres.zip', '--output'])
+            self.assertIn('.part-', calls[0][-1])
+            self.assertNotIn('synthetic-sensitive-auth-diagnostic', result.stdout + result.stderr)
+            installed = root / 'installed'
+            # This fixture is an ordinary tree owned by this temporary test only.
+            self.assertTrue(installed.resolve().is_relative_to(root.resolve()))
+            shutil.rmtree(installed)
+            archive.unlink()
+            repeated = self.install_authenticated(root, archive, digest, gh_exit=1)
+            self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
+            self.assertEqual(len((root / 'gh-calls.jsonl').read_text(encoding='utf-8-sig').splitlines()), 1)
+
+    def test_authenticated_failure_never_falls_back_and_cleans_partial_files(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            archive, digest = self.archive(root)
+            result = self.install_authenticated(root, archive, digest, gh_exit=1)
+            self.assert_failed_cleanly(root, result, 'Authenticated release download failed')
+            self.assertNotIn('Anonymous download must not be called', result.stdout + result.stderr)
+            self.assertNotIn('synthetic-sensitive-auth-diagnostic', result.stdout + result.stderr)
+            self.assertEqual(list((root / 'cache').glob('*.part-*')), [])
+
+    def test_authenticated_asset_requires_expected_hash_and_matching_release_url(self):
+        cases = [('0' * 64, None, 'SHA256 verification failed'),
+                 (None, 'https://git.example.com/other/repo/releases/download/v1.0.0/postgres.zip', 'must match'),
+                 (None, 'https://git.example.com/gim-home/HindsightKit/releases/download/v2.0.0/postgres.zip', 'must match'),
+                 (None, 'https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0/*.zip', 'must match')]
+        for checksum, url, expected in cases:
+            with self.subTest(url=url), tempfile.TemporaryDirectory(dir=self.root) as directory:
+                root = Path(directory)
+                archive, digest = self.archive(root)
+                result = self.install_authenticated(root, archive, checksum or digest, url=url)
+                self.assert_failed_cleanly(root, result, expected)
+                if url:
+                    self.assertFalse((root / 'gh-calls.jsonl').exists())
 
     def test_compiler_path_mapping_removes_header_source_paths_and_preserves_options(self):
         with tempfile.TemporaryDirectory(prefix='compiler path ', dir=self.root) as directory:

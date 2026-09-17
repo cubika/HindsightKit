@@ -255,7 +255,7 @@ def configure_profile(args):
     manager.create_profile(PROFILE, args.port or 9077, config)
 
 
-def start():
+def start(*, remote_connections=True):
     require_local()
     from .postgres import Postgres, require_postgresql, check_external
     config, paths = profile_config()
@@ -276,6 +276,12 @@ def start():
             ensure_running(home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
         except RuntimeError as exc:
             print(f'Optional connectors: {exc}', file=sys.stderr)
+    if remote_connections:
+        from .remote import resume
+        try:
+            resume()
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(f'Remote connection needs attention: {exc}', file=sys.stderr)
     return f'http://127.0.0.1:{paths.port}', ui_url
 
 
@@ -399,6 +405,8 @@ async def ensure_bank(api_url: str, bank: str, api_key=None):
 
 
 def status():
+    from .remote import status as remote_status
+    remote_status()
     healthy = True
     path = connection.config_path()
     if path.is_file():
@@ -472,6 +480,8 @@ def stop_profile_services():
     """Stop only this installation's official services before replacing their runtime."""
     from .connectors import stop
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    from .remote import stop as stop_remote
+    stop_remote()
     stop(home() / 'connectors')
     manager = DaemonEmbedManager()
     if manager.is_ui_running(PROFILE):
@@ -601,7 +611,7 @@ def setup_server(args):
     return {'apiUrl': api_url, 'apiToken': key}
 
 
-def setup_client(args, *, local_server=None):
+def setup_client(args, *, local_server=None, transport=None):
     validate_setup_options(args)
     require_client_prerequisites()
     from hindsight_copilot.instructions import RULE_TEXT, write_rule
@@ -628,6 +638,8 @@ def setup_client(args, *, local_server=None):
     info = {'mode': 'client', 'routing': 'repository', 'activity': True,
             'connectors': discovered.get('connectors', []),
             'deviceId': connection.device_id(old.get('deviceId')), 'name': socket.gethostname()}
+    if transport:
+        info['transport'] = transport
     candidate['hindsightkit'] = info
     install_node_packages(client=True)
     selected_runtime = home() / 'client-runtime'
@@ -672,7 +684,7 @@ def clients():
 def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
-    sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,clients,ui,connectors,copilot}')
+    sub = parser.add_subparsers(dest='command', required=True)
     setup_parser = sub.add_parser('setup', help='Install a local server and client, or use --server URL to connect a client.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
@@ -685,6 +697,15 @@ def main(argv=None):
     setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
     for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
+    share_parser = sub.add_parser('share', help='After installation, prepare a connection code for another computer.')
+    share_parser.add_argument('--relay', action='store_true', help='Enable a private relay for computers that cannot connect directly.')
+    share_parser.add_argument('--address', help='Direct HTTP(S) address that the other computer can reach.')
+    sub.add_parser('unshare', help='Stop and disable the optional remote relay.')
+    connect_parser = sub.add_parser('connect', help='Connect this installed client to another computer, or restore local memory.')
+    destination = connect_parser.add_mutually_exclusive_group()
+    destination.add_argument('--server', help='Direct server address; its key is requested separately.')
+    destination.add_argument('--local', action='store_true', help='Use this computer\'s existing local memory server.')
+    connect_parser.add_argument('--api-key-env', help='Read the key for --server from an environment variable.')
     copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
     copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
     mcp_parser = sub.add_parser('mcp')
@@ -695,6 +716,12 @@ def main(argv=None):
     try:
         if args.command == 'setup':
             setup(args)
+        elif args.command in {'share', 'connect'}:
+            from . import remote
+            getattr(remote, args.command)(args)
+        elif args.command == 'unshare':
+            from .remote import unshare
+            unshare()
         elif args.command == 'mcp':
             from .mcp import serve
             serve(args.context)
@@ -702,8 +729,22 @@ def main(argv=None):
             from .hooks import run as run_hook
             run_hook(args.event)
         elif args.command == 'start':
-            start()
+            if connection.has_server():
+                start()
+            else:
+                from .remote import resume
+                resume()
         elif args.command == 'stop':
+            from .remote import stop as stop_remote
+            remote_error = None
+            try:
+                stop_remote()
+            except (RuntimeError, OSError, ValueError) as exc:
+                remote_error = exc
+            if not connection.has_server():
+                if remote_error:
+                    raise remote_error
+                return 0
             require_local()
             from .connectors import stop
             stop(home() / 'connectors')
@@ -714,6 +755,8 @@ def main(argv=None):
             database = Postgres(home() / 'postgresql')
             if database.state_path.is_file() and configured_url(config) == database.url:
                 database.stop()
+            if remote_error:
+                raise remote_error
         elif args.command == 'status':
             return 0 if status() else 1
         elif args.command == 'check':

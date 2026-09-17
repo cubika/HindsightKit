@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_VISIBILITY: ${{ github.event.repository.visibility }}
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,7 @@ jobs:
         shell: pwsh
         run: |
           $distribution = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres/pgsql'
-          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --postgres-directory $distribution --output dist/release
+          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --output dist/release
           if ($LASTEXITCODE) { throw 'Release packaging failed.' }
       - uses: actions/upload-artifact@v4
         with:
@@ -88,4 +89,4 @@ jobs:
         run: |
           set -euo pipefail
           export GH_HOST="${GITHUB_SERVER_URL#https://}"
-          gh release create "$RELEASE_TAG" --verify-tag --draft --title "HindsightKit $RELEASE_TAG" --notes-file release/release-notes.md release/install.ps1 release/hindsightkit-windows-x64.zip release/postgresql-18.6-pgvector-0.8.6-windows-x64.zip release/QUICKSTART.md release/release-notes.md release/SHA256SUMS
+          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "HindsightKit $RELEASE_TAG" --notes-file release/release-notes.md release/install.ps1 release/hindsightkit-windows-x64.zip release/postgresql-18.6-pgvector-0.8.6-windows-x64.zip release/QUICKSTART.md release/release-notes.md release/SHA256SUMS

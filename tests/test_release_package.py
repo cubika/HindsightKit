@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,7 @@ class ReleasePackageTests(unittest.TestCase):
         write(source, "distribution/install.ps1", "\n".join([
             "$version = '@@VERSION@@'", "$url = '@@RELEASE_URL@@'",
             "$name = '@@PACKAGE_NAME@@'", "$sha = '@@PACKAGE_SHA256@@'",
+            "$repository = '@@REPOSITORY@@'", "$requiresAuth = @@REQUIRES_AUTH@@",
         ]))
         for name in package.REQUIRED_POSTGRES:
             write(postgres, name)
@@ -83,13 +86,16 @@ class ReleasePackageTests(unittest.TestCase):
                                  | {"pgsql/" + package.POSTGRES_MANIFEST})
             base = "https://github.com/cubika/HindsightKit/releases/download/v0.1.0"
             self.assertEqual(release["release_url"], base)
+            self.assertIs(release["requires_auth"], False)
             self.assertEqual(release["postgres"]["url"], base + "/" + package.POSTGRES_NAME)
             self.assertEqual(release["postgres"]["sha256"], package.inspect_file(output / package.POSTGRES_NAME))
             installer = (output / "install.ps1").read_text()
             self.assertNotIn("@@", installer)
+            self.assertIn("$requiresAuth = $false", installer)
             self.assertIn(package.inspect_file(output / package.APP_NAME), installer)
             notes = (output / "QUICKSTART.md").read_text()
             self.assertIn(f"irm '{base}/install.ps1' | iex", notes)
+            self.assertNotIn("gh auth login", notes)
             self.assertIn("-ServerOnly", notes)
             self.assertIn("-Server 'http://server-host:9077'", notes)
             checksums = dict(line.split("  ", 1)[::-1] for line in (output / "SHA256SUMS").read_text().splitlines())
@@ -104,8 +110,9 @@ class ReleasePackageTests(unittest.TestCase):
             original_readme = (args["source_root"] / "README.md").read_bytes()
             package.package_release(**args)
             second = {**args, "output": root / "enterprise", "repository": "gim-home/HindsightKit",
-                      "server_url": "https://git.example.test"}
+                      "server_url": "https://git.example.test", "visibility": "internal"}
             release = package.package_release(**second)
+            self.assertIs(release["requires_auth"], True)
             self.assertEqual((args["source_root"] / "README.md").read_bytes(), original_readme)
             self.assertEqual((args["output"] / package.POSTGRES_NAME).read_bytes(),
                              (second["output"] / package.POSTGRES_NAME).read_bytes())
@@ -115,6 +122,11 @@ class ReleasePackageTests(unittest.TestCase):
                 content = (second["output"] / name).read_text()
                 self.assertIn(expected, content)
                 self.assertNotIn("cubika", content)
+            self.assertIn("$requiresAuth = $true", (second["output"] / "install.ps1").read_text())
+            notes = (second["output"] / "QUICKSTART.md").read_text()
+            self.assertIn("gh auth login --hostname 'git.example.test'", notes)
+            self.assertIn("--repo 'git.example.test/gim-home/HindsightKit'", notes)
+            self.assertNotIn("irm ", notes)
             repeated = {**args, "output": root / "repeated"}
             package.package_release(**repeated)
             for path in args["output"].iterdir():
@@ -125,7 +137,8 @@ class ReleasePackageTests(unittest.TestCase):
                    ("repository", "owner/repo'"), ("repository", "owner/../repo"),
                    ("server_url", "https://example.test/with/path"),
                    ("server_url", "https://name:pass@example.test"),
-                   ("server_url", "https://example.test?x='"), ("server_url", "http://example.test"))
+                   ("server_url", "https://example.test?x='"), ("server_url", "http://example.test"),
+                   ("visibility", "unknown"))
         for field, value in invalid:
             with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as directory:
                 args = self.fixture(Path(directory))
@@ -133,6 +146,51 @@ class ReleasePackageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     package.package_release(**args)
                 self.assertFalse(args["output"].exists())
+
+    def test_private_repository_requires_authenticated_downloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = {**self.fixture(Path(directory)), "visibility": "private"}
+            release = package.package_release(**args)
+            self.assertIs(release["requires_auth"], True)
+            with zipfile.ZipFile(args["output"] / package.APP_NAME) as archive:
+                self.assertIs(json.loads(archive.read("app/release.json"))["requires_auth"], True)
+            notes = (args["output"] / "release-notes.md").read_text()
+            self.assertIn("private repository", notes)
+            self.assertIn("gh auth login --hostname 'github.com'", notes)
+            self.assertIn("--repo 'github.com/cubika/HindsightKit'", notes)
+            self.assertNotIn("irm ", notes)
+
+    @unittest.skipUnless(os.name == "nt", "Generated Windows installation commands")
+    def test_authenticated_commands_check_download_before_running_each_role(self):
+        shell = shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("Windows PowerShell is not available")
+        notes = package.installation_notes("v0.1.0",
+            "https://github.com/gim-home/HindsightKit/releases/download/v0.1.0",
+            "gim-home/HindsightKit", "internal")
+        blocks = re.findall(chr(96) * 3 + r"powershell\n(.*?)\n" + chr(96) * 3, notes, re.S)
+        self.assertEqual(len(blocks), 4)
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "command.ps1"
+            for role, command in enumerate(blocks[1:]):
+                for outcome in ("success", "failed", "empty"):
+                    with self.subTest(role=role, outcome=outcome):
+                        payload = ("param([switch]$ServerOnly,[string]$Server) "
+                                   "Write-Output ('EXECUTED:' + [string]$ServerOnly + ':' + $Server)")
+                        output = "" if outcome == "empty" else "Write-Output @'\n" + payload + "\n'@"
+                        code = 1 if outcome == "failed" else 0
+                        script.write_text("$ErrorActionPreference = 'Stop'\n"
+                            "function gh {\n" + output + f"\n$global:LASTEXITCODE = {code}\n}}\n" + command,
+                            encoding="utf-8")
+                        result = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", str(script)], capture_output=True, text=True, timeout=30)
+                        if outcome == "success":
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                            expected = ("False:", "True:", "False:http://server-host:9077")[role]
+                            self.assertIn("EXECUTED:" + expected, result.stdout)
+                        else:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertNotIn("EXECUTED:", result.stdout)
 
     def test_changed_missing_untracked_or_private_postgres_files_are_rejected(self):
         changes = (lambda pg: write(pg, "bin/postgres.exe", "tampered"),
@@ -236,12 +294,14 @@ class ReleasePackageTests(unittest.TestCase):
     def test_cli_packages_fixture_without_building(self):
         with tempfile.TemporaryDirectory() as directory:
             args = self.fixture(Path(directory))
+            args["visibility"] = "internal"
             command = [sys.executable, str(ROOT / "distribution/package_release.py")]
             for name, value in args.items():
                 command.extend(["--" + name.replace("_", "-"), str(value)])
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["repository"], "cubika/HindsightKit")
+            self.assertIs(json.loads(result.stdout)["requires_auth"], True)
 
 
 if __name__ == "__main__":
