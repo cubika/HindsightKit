@@ -65,16 +65,17 @@ def _date(value):
         raise WorkIQError("workiq_date_invalid") from None
 
 
-def _metadata(value):
+def _metadata(value, *, require_identity=True):
     if not isinstance(value, dict):
         raise WorkIQError("workiq_message_invalid")
     for field in ("id", "parentFolderId"):
         _identifier(value.get(field))
-    source_key(value, "verified")
     _date(value.get("receivedDateTime"))
     source_version(value)
     if not isinstance(value.get("isDraft"), bool) or not isinstance(value.get("subject", ""), str):
         raise WorkIQError("workiq_message_invalid")
+    if require_identity:
+        source_key(value, "verified")
     return value
 
 
@@ -341,7 +342,8 @@ class WorkIQMailSource:
         page, = await self._fetch([link])
         if not isinstance(page.get("value"), list) or len(page["value"]) > self.page_size or "@odata.deltaLink" in page:
             raise WorkIQError("workiq_page_invalid")
-        messages = [_metadata(value) for value in page["value"]]
+        # Discovery records unusable mail identities after validating the page scope.
+        messages = [_metadata(value, require_identity=False) for value in page["value"]]
         seen = set()
         for message in messages:
             if message["id"] in seen or message["parentFolderId"] != folder_id or not start <= _date(message["receivedDateTime"]) < end:
@@ -386,7 +388,7 @@ class WorkIQMailSource:
             raise WorkIQError("workiq_thread_folder_excluded")
         conversation = conversation_id.replace("'", "''")
         filter_text = f"receivedDateTime lt {before_iso} and conversationId eq '{conversation}'"
-        metadata, seen, links = [], set(), set()
+        metadata, seen, graph_ids, links = [], set(), set(), set()
         for folder_id in selected:
             path = "/me/mailFolders/" + _identifier(folder_id) + "/messages"
             link = path + "?" + urlencode({"$filter": filter_text, "$select": METADATA_FIELDS, "$top": self.page_size})
@@ -398,17 +400,22 @@ class WorkIQMailSource:
                 if not isinstance(page.get("value"), list) or len(page["value"]) > self.page_size or "@odata.deltaLink" in page:
                     raise WorkIQError("workiq_thread_response_invalid")
                 for item in page["value"]:
-                    _metadata(item)
+                    _metadata(item, require_identity=False)
                     if item.get("conversationId") != conversation_id or item["parentFolderId"] != folder_id or _date(item["receivedDateTime"]) >= end:
                         raise WorkIQError("workiq_thread_outside_scope")
+                    if item["id"] in graph_ids:
+                        raise WorkIQError("workiq_thread_changed")
+                    graph_ids.add(item["id"])
+                    if len(graph_ids) > self.max_thread_messages:
+                        raise WorkIQError("workiq_thread_too_large")
+                    if item["isDraft"]:
+                        continue
+                    source_key(item, "verified")
                     identity = item["internetMessageId"]
                     if identity in seen:
                         raise WorkIQError("workiq_thread_changed")
                     seen.add(identity)
-                    if not item["isDraft"]:
-                        metadata.append(item)
-                    if len(seen) > self.max_thread_messages:
-                        raise WorkIQError("workiq_thread_too_large")
+                    metadata.append(item)
                 link = validate_next_link(page["@odata.nextLink"], path, METADATA_FIELDS, filter_text, self.page_size) if "@odata.nextLink" in page else None
         if not metadata:
             raise WorkIQError("workiq_thread_missing")

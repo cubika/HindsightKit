@@ -138,6 +138,40 @@ class ProtocolTests(unittest.TestCase):
 
 
 class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovery_keeps_invalid_identity_for_explicit_ledger_error(self):
+        source = WorkIQMailSource(page_size=2)
+        bad = mail(id='bad', internetMessageId='<' + 'a' * 246 + '@example', isDraft=False)
+        async def fetch(paths):
+            return [{'value': [mail(), bad], '@odata.nextLink': paths[0] + '&%24skip=2'}]
+        source._fetch = fetch
+        page = await source.page('inbox-id', '2026-09-01T00:00:00Z', '2026-09-16T00:00:00Z')
+        self.assertEqual([item['id'] for item in page['messages']], ['message', 'bad'])
+        self.assertIsNotNone(page['next_link'])
+        with self.assertRaisesRegex(WorkIQError, 'message_identity_missing'):
+            source_key(page['messages'][1], 'mailbox')
+        with self.assertRaisesRegex(WorkIQError, 'message_identity_missing'):
+            normalize_message(bad, 'mailbox')
+
+    async def test_bad_identity_does_not_bypass_discovery_scope_validation(self):
+        for changes in ({'parentFolderId': 'other'}, {'receivedDateTime': '2026-09-17T00:00:00Z'},
+                        {'id': '../ bad'}, {'receivedDateTime': None}, {'isDraft': 'false'},
+                        {'lastModifiedDateTime': None}):
+            with self.subTest(changes=changes):
+                source = WorkIQMailSource()
+                async def fetch(paths):
+                    return [{'value': [mail(internetMessageId='', **changes)]}]
+                source._fetch = fetch
+                with self.assertRaises(WorkIQError):
+                    await source.page('inbox-id', '2026-09-01T00:00:00Z', '2026-09-16T00:00:00Z')
+        for page in ({'value': [mail(internetMessageId=''), mail(internetMessageId='')]},
+                     {'value': [mail(internetMessageId='')], '@odata.nextLink': 'https://evil.test/messages'}):
+            source = WorkIQMailSource()
+            async def fetch(paths):
+                return [page]
+            source._fetch = fetch
+            with self.assertRaises(WorkIQError):
+                await source.page('inbox-id', '2026-09-01T00:00:00Z', '2026-09-16T00:00:00Z')
+
     async def test_session_lifetime_owned_by_one_task(self):
         owner, callers, commands = [], [], []
         @asynccontextmanager
@@ -269,6 +303,23 @@ class ThreadTests(unittest.IsolatedAsyncioTestCase):
         filter_text = parse_qs(urlsplit(paths[0]).query)['$filter'][0]
         self.assertEqual(filter_text, "receivedDateTime lt 2026-09-16T00:00:00Z and conversationId eq 'thread'")
         self.assertNotIn('subject', filter_text)
+
+    async def test_draft_without_internet_identity_does_not_block_thread(self):
+        source = self.source()
+        draft = mail(id='draft', internetMessageId=None, isDraft=True)
+        async def fetch(paths):
+            return [{'value': [draft, mail()]}]
+        source._fetch = fetch
+        page = await source.page('inbox-id', '2026-09-01T00:00:00Z', '2026-09-16T00:00:00Z')
+        self.assertEqual(len(page['messages']), 2)
+        rows = await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        self.assertEqual([row['raw']['id'] for row in rows], ['message'])
+        draft['isDraft'] = False
+        with self.assertRaisesRegex(WorkIQError, 'message_identity_missing'):
+            await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        draft.update(isDraft=True, parentFolderId='other')
+        with self.assertRaisesRegex(WorkIQError, 'outside_scope'):
+            await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
 
     async def test_thread_rejects_outside_scope_and_partial_reads(self):
         for row in (mail(conversationId='other'), mail(parentFolderId='other'), mail(receivedDateTime='2026-09-17T00:00:00Z')):

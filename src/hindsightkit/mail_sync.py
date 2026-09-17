@@ -80,8 +80,10 @@ class MailSync:
                 input_hash TEXT, outcome_hash TEXT, has_outcome INTEGER NOT NULL DEFAULT 0,
                 state TEXT NOT NULL DEFAULT 'dirty', target_revision INTEGER,
                 operation_id TEXT, payload TEXT, error TEXT);
-            CREATE TABLE IF NOT EXISTS discovery_errors (id TEXT PRIMARY KEY, folder TEXT, error TEXT);
+            CREATE TABLE IF NOT EXISTS discovery_errors (id TEXT PRIMARY KEY, folder TEXT, error TEXT, thread TEXT);
         ''')
+        if 'thread' not in {row['name'] for row in self.db.execute('PRAGMA table_info(discovery_errors)')}:
+            self.db.execute('ALTER TABLE discovery_errors ADD COLUMN thread TEXT')
         self.api_url, self.bank = api_url, bank
         self.source, self.client, self.builder = source, client, builder
         self._source_open = self._bank_ready = self._closed = False
@@ -322,28 +324,45 @@ class MailSync:
         return 'workiq-thread-' + _hash([self._get('identity'), conversation])
 
     def _record_sources(self, metadata):
-        from .mail_source import source_key, source_version
+        from .mail_source import WorkIQError, source_key, source_version
         for item in metadata:
+            # A Graph locator identifies a retry record, never an imported source.
+            locator = 'workiq-discovery-' + _hash([self._get('identity'), item['id']])
             if item.get('isDraft'):
+                self.db.execute('DELETE FROM discovery_errors WHERE id=?', (locator,))
                 continue
-            key = source_key(item, self._get('identity'))
+            if len(_json(item)) > 16000:
+                raise ValueError('Source metadata exceeds the ledger bound.')
             try:
                 thread = self._thread(item.get('conversationId'))
             except ValueError:
-                self.db.execute('INSERT OR REPLACE INTO discovery_errors VALUES (?,?,?)',
-                                (key, item['parentFolderId'], 'Missing conversation ID'))
+                thread = None
+            if thread:
+                if not self.db.execute('SELECT 1 FROM threads WHERE id=?', (thread,)).fetchone() and self.db.execute('SELECT COUNT(*) FROM threads').fetchone()[0] >= MAX_THREADS:
+                    raise ValueError('Thread ledger capacity reached; narrow the scan scope.')
+                self.db.execute('INSERT OR IGNORE INTO threads(id,conversation,subject) VALUES (?,?,?)',
+                                (thread, item['conversationId'], item.get('subject', '')))
+            try:
+                key = source_key(item, self._get('identity'))
+            except WorkIQError as exc:
+                if exc.code != 'workiq_message_identity_missing':
+                    raise
+                key = None
+            if key:
+                self.db.execute('DELETE FROM discovery_errors WHERE id=?', (key,))
+            if key is None or thread is None:
+                error = 'workiq_message_identity_missing' if key is None else 'Missing conversation ID'
+                old_error = self.db.execute('SELECT error,thread FROM discovery_errors WHERE id=?', (locator,)).fetchone()
+                if thread and (not old_error or old_error['error'] != error or old_error['thread'] != thread):
+                    self.db.execute("UPDATE threads SET revision=revision+1,state=CASE WHEN payload IS NULL THEN 'dirty' ELSE state END WHERE id=?", (thread,))
+                self.db.execute('INSERT OR REPLACE INTO discovery_errors(id,folder,error,thread) VALUES (?,?,?,?)',
+                                (locator, item['parentFolderId'], error, thread))
                 continue
-            self.db.execute('DELETE FROM discovery_errors WHERE id=?', (key,))
+            self.db.execute('DELETE FROM discovery_errors WHERE id=?', (locator,))
             version = source_version(item)
-            if len(_json(item)) > 16000:
-                raise ValueError('Source metadata exceeds the ledger bound.')
             old = self.db.execute('SELECT version,thread FROM sources WHERE id=?', (key,)).fetchone()
             if not old and self.db.execute('SELECT COUNT(*) FROM sources').fetchone()[0] >= MAX_SOURCES:
                 raise ValueError('Source ledger capacity reached; narrow the scan scope.')
-            if not self.db.execute('SELECT 1 FROM threads WHERE id=?', (thread,)).fetchone() and self.db.execute('SELECT COUNT(*) FROM threads').fetchone()[0] >= MAX_THREADS:
-                raise ValueError('Thread ledger capacity reached; narrow the scan scope.')
-            self.db.execute('INSERT OR IGNORE INTO threads(id,conversation,subject) VALUES (?,?,?)',
-                            (thread, item['conversationId'], item.get('subject', '')))
             if not old or old['version'] != version or old['thread'] != thread:
                 self.db.execute("UPDATE threads SET revision=revision+1,state=CASE WHEN payload IS NULL THEN 'dirty' ELSE state END WHERE id=?", (thread,))
             safe = {k: item[k] for k in ('id', 'internetMessageId', 'conversationId', 'parentFolderId', 'lastModifiedDateTime', 'receivedDateTime', 'sentDateTime', 'subject', 'isDraft') if k in item}
@@ -352,7 +371,14 @@ class MailSync:
 
     def _selected_threads(self):
         selected = set(self._get('config')['folder_ids'])
-        return {row['thread'] for row in self.db.execute('SELECT thread,folder FROM sources') if row['folder'] in selected}
+        return {row['thread'] for row in self.db.execute('SELECT thread,folder FROM sources UNION SELECT thread,folder FROM discovery_errors')
+                if row['thread'] and row['folder'] in selected}
+
+    def _require_complete_discovery(self, identity):
+        selected = set(self._get('config')['folder_ids'])
+        if any(row['folder'] in selected for row in self.db.execute('SELECT folder FROM discovery_errors WHERE thread=?', (identity,))):
+            from .mail_source import WorkIQError
+            raise WorkIQError('workiq_thread_identity_incomplete')
 
     async def _scan(self):
         config = self._get('config')
@@ -360,6 +386,11 @@ class MailSync:
             self._put('history_start', _iso(_now() - timedelta(days=config['lookback_days'])))
         window = self._get('window')
         if not window or window['index'] >= len(window['folders']):
+            watermarks = self._get('watermarks', {})
+            for row in self.db.execute('SELECT DISTINCT folder FROM discovery_errors'):
+                if row['folder'] in config['folder_ids']:
+                    watermarks.pop(row['folder'], None)
+            self._put('watermarks', watermarks)
             window = dict(end=_iso(_now()), folders=config['folder_ids'], index=0, next=None)
             self._put('window', window)
         while window['index'] < len(window['folders']):
@@ -388,7 +419,8 @@ class MailSync:
     @staticmethod
     def _error(exc):
         status = getattr(exc, 'status', None)
-        detail = str(exc) if type(exc).__name__ == 'OutcomeError' and str(exc).startswith('outcome_') else type(exc).__name__
+        safe = type(exc).__name__ == 'OutcomeError' and str(exc).startswith('outcome_') or type(exc).__name__ == 'WorkIQError' and str(exc).startswith('workiq_')
+        detail = str(exc) if safe else type(exc).__name__
         return detail + (f' (HTTP {status})' if status else '') + '. Retry to resume this thread.'
 
     async def _run(self):
@@ -402,6 +434,8 @@ class MailSync:
             self._validate_scope()
             phase = 'Hindsight configuration'
             await self._ensure_bank()
+            phase = 'mail discovery'
+            before = await self._scan()
             for row in self.db.execute('SELECT id FROM threads WHERE payload IS NOT NULL').fetchall():
                 try:
                     await self._deliver(row['id'])
@@ -410,8 +444,6 @@ class MailSync:
                         raise
                     failed.add(row['id'])
                     self._thread_error(row['id'], exc)
-            phase = 'mail discovery'
-            before = await self._scan()
             selected = self._selected_threads()
             for row in self.db.execute("SELECT id FROM threads WHERE state!='idle'").fetchall():
                 if row['id'] not in selected or row['id'] in failed:
@@ -423,7 +455,13 @@ class MailSync:
                         raise
                     failed.add(row['id'])
                     self._thread_error(row['id'], exc)
-            discovery_failures = sum(row['folder'] in self._get('config')['folder_ids'] for row in self.db.execute('SELECT folder FROM discovery_errors'))
+            discovery_failures = 0
+            for row in self.db.execute('SELECT folder,thread FROM discovery_errors'):
+                if row['folder'] in self._get('config')['folder_ids']:
+                    if row['thread']:
+                        failed.add(row['thread'])
+                    else:
+                        discovery_failures += 1
             self._put('window', None)
             self._run_update(state='error' if failed or discovery_failures else 'idle', failed=len(failed) + discovery_failures,
                 error=f'{len(failed) + discovery_failures} thread updates need attention.' if failed or discovery_failures else None,
@@ -455,6 +493,7 @@ class MailSync:
             raise
 
     async def _prepare(self, identity, before):
+        self._require_complete_discovery(identity)
         row = self.db.execute('SELECT * FROM threads WHERE id=?', (identity,)).fetchone()
         if row['payload']:
             await self._deliver(identity)
@@ -524,6 +563,7 @@ class MailSync:
             raise
 
     async def _deliver(self, identity):
+        self._require_complete_discovery(identity)
         row = self.db.execute('SELECT * FROM threads WHERE id=?', (identity,)).fetchone()
         if not row['payload']:
             return
