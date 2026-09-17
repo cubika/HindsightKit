@@ -11,3 +11,4 @@
 - After confirming the branch is merged and the worktree is clean, remove it with `git worktree remove <path>` and delete the branch with `git branch -d codex/<task>`. Verify the absolute path is this task's worktree inside the workspace; remove dependency junctions without traversing their targets. Never force cleanup of unmerged work.
 - Report the commit, validation results, and change totals. If validation is blocked, retain the worktree and report the unresolved issue.
 - Record connector test runs and conclusions in docs/connector-validation.md; keep design documents focused on stable requirements.
+- Keep account mappings and publication destinations in ignored local maintainer notes. Shipped documentation should describe only its own release and use generic fixture identities.

@@ -46,7 +46,7 @@ class ReleasePackageTests(unittest.TestCase):
             version = "0.8.6" if extension == "vector" else "1.0"
             write(postgres, f"share/extension/{extension}.control", f"default_version = '{version}'\n")
         self.manifest(postgres)
-        return {"version": "v0.1.0", "repository": "cubika/HindsightKit", "server_url": "https://github.com",
+        return {"version": "v0.1.0", "repository": "release-owner/HindsightKit", "server_url": "https://github.com",
                 "postgres_directory": postgres, "output": root / "release", "source_root": source}
 
     def manifest(self, postgres, **overrides):
@@ -84,7 +84,7 @@ class ReleasePackageTests(unittest.TestCase):
             with zipfile.ZipFile(output / package.POSTGRES_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"pgsql/" + name for name in package.REQUIRED_POSTGRES}
                                  | {"pgsql/" + package.POSTGRES_MANIFEST})
-            base = "https://github.com/cubika/HindsightKit/releases/download/v0.1.0"
+            base = "https://github.com/release-owner/HindsightKit/releases/download/v0.1.0"
             self.assertEqual(release["release_url"], base)
             self.assertIs(release["requires_auth"], False)
             self.assertEqual(release["postgres"]["url"], base + "/" + package.POSTGRES_NAME)
@@ -98,6 +98,12 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertNotIn("gh auth login", notes)
             self.assertIn("-ServerOnly", notes)
             self.assertIn("-Server 'http://server-host:9077'", notes)
+            self.assertIn("Windows x64, Git, and a GitHub account with Copilot access", notes)
+            self.assertLess(notes.index("hindsightkit share"), notes.index("Advanced installation"))
+            self.assertIn("hindsightkit connect", notes)
+            self.assertIn("TLS HandshakeFailure", notes)
+            self.assertIn("Keep TLS certificate verification enabled", notes)
+            self.assertIn("It does not include itself or GitHub's source archives", notes)
             checksums = dict(line.split("  ", 1)[::-1] for line in (output / "SHA256SUMS").read_text().splitlines())
             self.assertEqual(set(checksums), {path.name for path in output.iterdir()} - {"SHA256SUMS"})
             for name, checksum in checksums.items():
@@ -109,24 +115,27 @@ class ReleasePackageTests(unittest.TestCase):
             args = self.fixture(root)
             original_readme = (args["source_root"] / "README.md").read_bytes()
             package.package_release(**args)
-            second = {**args, "output": root / "enterprise", "repository": "gim-home/HindsightKit",
+            second = {**args, "output": root / "restricted", "repository": "restricted-owner/HindsightKit",
                       "server_url": "https://git.example.test", "visibility": "internal"}
             release = package.package_release(**second)
             self.assertIs(release["requires_auth"], True)
             self.assertEqual((args["source_root"] / "README.md").read_bytes(), original_readme)
             self.assertEqual((args["output"] / package.POSTGRES_NAME).read_bytes(),
                              (second["output"] / package.POSTGRES_NAME).read_bytes())
-            expected = "https://git.example.test/gim-home/HindsightKit/releases/download/v0.1.0"
+            expected = "https://git.example.test/restricted-owner/HindsightKit/releases/download/v0.1.0"
             self.assertEqual(release["release_url"], expected)
             for name in ("install.ps1", "QUICKSTART.md", "release-notes.md"):
                 content = (second["output"] / name).read_text()
-                self.assertIn(expected, content)
-                self.assertNotIn("cubika", content)
+                self.assertIn(expected if name == "install.ps1" else expected.replace("/download/", "/tag/"), content)
+                self.assertNotIn("release-owner", content)
             self.assertIn("$requiresAuth = $true", (second["output"] / "install.ps1").read_text())
             notes = (second["output"] / "QUICKSTART.md").read_text()
             self.assertIn("gh auth login --hostname 'git.example.test'", notes)
-            self.assertIn("--repo 'git.example.test/gim-home/HindsightKit'", notes)
+            self.assertIn("--repo 'git.example.test/restricted-owner/HindsightKit'", notes)
+            self.assertEqual(notes.count("gh release download"), 1)
             self.assertNotIn("irm ", notes)
+            self.assertNotIn("two remotes", notes)
+            self.assertNotIn("enterprise", notes.lower())
             repeated = {**args, "output": root / "repeated"}
             package.package_release(**repeated)
             for path in args["output"].iterdir():
@@ -157,7 +166,7 @@ class ReleasePackageTests(unittest.TestCase):
             notes = (args["output"] / "release-notes.md").read_text()
             self.assertIn("private repository", notes)
             self.assertIn("gh auth login --hostname 'github.com'", notes)
-            self.assertIn("--repo 'github.com/cubika/HindsightKit'", notes)
+            self.assertIn("--repo 'github.com/release-owner/HindsightKit'", notes)
             self.assertNotIn("irm ", notes)
 
     @unittest.skipUnless(os.name == "nt", "Generated Windows installation commands")
@@ -166,13 +175,16 @@ class ReleasePackageTests(unittest.TestCase):
         if not shell:
             self.skipTest("Windows PowerShell is not available")
         notes = package.installation_notes("v0.1.0",
-            "https://github.com/gim-home/HindsightKit/releases/download/v0.1.0",
-            "gim-home/HindsightKit", "internal")
+            "https://github.com/restricted-owner/HindsightKit/releases/download/v0.1.0",
+            "restricted-owner/HindsightKit", "internal")
         blocks = re.findall(chr(96) * 3 + r"powershell\n(.*?)\n" + chr(96) * 3, notes, re.S)
         self.assertEqual(len(blocks), 4)
+        download = blocks[1].rsplit("& ([scriptblock]::Create($hindsightkitInstaller))", 1)[0]
+        commands = [blocks[1], *(download + command for command in blocks[2:])]
+        self.assertEqual(notes.count("gh release download"), 1)
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "command.ps1"
-            for role, command in enumerate(blocks[1:]):
+            for role, command in enumerate(commands):
                 for outcome in ("success", "failed", "empty"):
                     with self.subTest(role=role, outcome=outcome):
                         payload = ("param([switch]$ServerOnly,[string]$Server) "
@@ -300,7 +312,7 @@ class ReleasePackageTests(unittest.TestCase):
                 command.extend(["--" + name.replace("_", "-"), str(value)])
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout)["repository"], "cubika/HindsightKit")
+            self.assertEqual(json.loads(result.stdout)["repository"], "release-owner/HindsightKit")
             self.assertIs(json.loads(result.stdout)["requires_auth"], True)
 
 

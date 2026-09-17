@@ -1,61 +1,42 @@
-# Release installation and publishing
+# Release maintenance
 
-Open Releases in the GitHub repository you are using. A published version includes a PowerShell command that downloads its installer and installs the server and local coding integrations together. Git must already be available for coding integrations. Copilot login and VS Code's MCP consent still require the user.
+This guide is for maintainers. Users should follow [installation](installation.md) and copy the command from the release page they are using.
 
-The installer accepts ServerOnly (false by default), Server, Model, ReasoningEffort, ModelDir, Port, ApiKeyEnv, NoOpen, and InstallDir. The generated QUICKSTART.md includes commands for local installation, a dedicated server, and a remote client.
+## Create a release
 
-Application files go into `%LOCALAPPDATA%\HindsightKit\versions\<version>-<package-hash>`. Python is managed under `%LOCALAPPDATA%\HindsightKit\python`. Dependencies and editor registrations refer to these installed paths, so a downloaded or cloned development repository can be removed. Memory and settings stay in their existing `~/.hindsightkit` and `~/.hindsight` locations.
+1. Update the project version and dependency locks as needed. Use a matching tag, such as `v0.1.0` for project version `0.1.0`.
+2. Push the commit and tag to the publishing repository. The release workflow also accepts manual dispatch with an existing tag.
+3. The Windows job checks out that tag, installs locked dependencies, runs the test suite, builds the pinned PostgreSQL/pgvector distribution, and checks a disposable database. These CI checks do not make Copilot model calls.
+4. The publish job uploads the assets and creates a draft prerelease. Inspect the checks and assets before publishing the draft.
 
-Rerun a version's installer to retry setup. Run a newer version's installer to upgrade. The installer checks the application archive's SHA256 before extraction, keeps version directories separate, and preserves existing data and settings. Setup restarts this installation's server processes to load the selected version. Close coding sessions before upgrading and reload VS Code afterward. Old version directories remain available; automatic pruning and database downgrades are not implemented. Client-only setup does not install a database or model. Release installers download a verified PostgreSQL/pgvector package and do not install a compiler.
+The workflow obtains the repository address and visibility from its GitHub context. Generated instructions reference only that release's repository. Public assets use anonymous downloads; restricted assets use the user's authenticated GitHub CLI. Do not put local remote names, account relationships, or publishing topology in user-facing documentation.
 
-Retrying also checks the installed application files. If those files were edited or damaged, setup stops and preserves them; choose a new InstallDir to install a clean copy. Dependency downloads can be retried in the same directory.
+## Assets and integrity
 
-## Two remotes
+| Asset | Contents |
+| --- | --- |
+| `install.ps1` | Generated bootstrap with the release address and application checksum |
+| `hindsightkit-windows-x64.zip` | Application, lockfiles, documentation, and release metadata |
+| `postgresql-18.6-pgvector-0.8.6-windows-x64.zip` | Official PostgreSQL, the compiled unmodified pgvector extension, Microsoft runtime DLLs, upstream notices, and a file manifest |
+| `QUICKSTART.md` and `release-notes.md` | Instructions generated for this release |
+| `SHA256SUMS` | Checksums for the other release assets |
 
-The same source commit is pushed to origin and enterprise. README content is identical in both repositories. It directs readers to the current repository's Releases instead of embedding one owner's download URL.
+The packager rejects changed PostgreSQL files, private runtime files, linked paths, and detected local build paths. The archives exclude database clusters, credentials, logs, and a developer's Python environment. The application archive still downloads Python/npm dependencies and the embedding model during installation.
 
-Each repository runs its own release workflow. The packager uses `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY` to generate install.ps1, QUICKSTART.md, and release notes for that repository. All downloads inside an installer use the version tag that produced it. The generated URL is stored in the installer; it does not depend on the user's Git remotes or working directory.
+## Validation and publication
 
-Pushing a branch alone does not publish an installer. Push a version tag to each intended remote, or run the workflow manually for a tag already present there. Each workflow creates a draft prerelease. Review its assets and publish that draft in the corresponding repository. Both repositories must permit Actions and release uploads. Public release instructions use anonymous `irm`. Private and internal releases generate authenticated GitHub CLI download commands; users sign in with an account that can read that repository. The installer uses the same account to download both application and database assets.
+CI covers package construction and isolated runtime checks. Before describing a release as fully installed on a clean machine, also check its downloads, Copilot login, model download, local installation, repeat setup, and an upgrade that preserves a disposable test memory. Keep these results separate from CI success; [release validation](release-validation.md) records the current evidence and known failures.
 
-If an interrupted upload leaves a draft, inspect that draft and remove it before rerunning the workflow for the same tag. The workflow does not overwrite an existing release. Use a new version tag for a release that has already been published.
+A draft in a public repository is not anonymously downloadable. Use a controlled test release for the public download path, or inspect draft assets with authenticated access. Restricted repositories always require an account with access. Never change a repository's visibility as an installation workaround without the owner's authorization.
 
-## Build and release
+If an interrupted upload leaves an unpublished draft, inspect that draft before removing and rebuilding it. The workflow does not overwrite an existing release. Use a new version for software changes after publication. Documentation corrections can update the release-page body; they do not change ZIP contents, tags, or checksums already distributed.
 
-1. Update the project version and dependency locks as needed. Create a matching tag such as v0.1.0.
-2. Push the commit and tag to the intended remote. Release Windows installer also supports manual dispatch with an existing tag.
-3. The Windows job installs locked dependencies, runs the test suite, builds official PostgreSQL/pgvector with Microsoft's toolchain, and checks a disposable database. It makes no Copilot model calls.
-4. Packaging produces the application ZIP, PostgreSQL ZIP, install.ps1, QUICKSTART.md, release notes, and SHA256SUMS. The publish job uploads these to a draft release in that same repository.
-5. Validate the public download path in a test repository before publishing the production releases. Draft assets are private, so their generated anonymous installer command cannot yet download them. A separate public test release gives the same workflow and installer a usable URL. On a clean x64 Windows machine with Copilot access, verify local installation, ServerOnly, remote client setup, repeat installation, and an upgrade preserving a test memory. Record actual results before describing a release as verified.
+## Package locally
 
-The PostgreSQL package contains the official distribution, the unmodified pgvector extension compiled for it, app-local Microsoft runtime DLLs, file hashes, and upstream notices. It never contains a database cluster, credentials, logs, or a developer's Python environment. Source installations continue to support building from the pinned upstream archives.
-
-For a local packaging check, use an existing verified PostgreSQL distribution:
+Use an existing verified PostgreSQL distribution and a new or empty output directory:
 
 ```powershell
-.venv/Scripts/python.exe distribution/package_release.py --version v0.1.0 --repository OWNER/HindsightKit --server-url https://github.com --postgres-directory C:\path\to\server-18.6 --output dist/release
+.venv/Scripts/python.exe distribution/package_release.py --version v0.1.0 --repository OWNER/REPOSITORY --server-url https://github.com --visibility public --postgres-directory C:\path\to\server-18.6 --output dist/release
 ```
 
-The output directory must be empty. The command packages files only; it does not publish a release or touch a database. The installer template in distribution/install.ps1 is not a standalone source installer. Use setup.ps1 from a checkout or the generated install.ps1 from a release.
-
-## Local verification, September 17, 2026
-
-The integrated suite passed 222 tests, including PowerShell pipe execution, both roles, repeat installation, upgrades into separate version directories, file integrity failures, and repository-specific packaging. The workflow YAML and PowerShell syntax checks passed. Both configured GitHub repositories produced their own fixed-tag installation commands and checksum files from the same source.
-
-PostgreSQL and pgvector were rebuilt from the checked upstream archives. The first attempt to package an older local build found a developer path in vector.dll; compiler path mapping removed it from the rebuilt binary. Both the rebuilt distribution and the packaged ZIP passed disposable database checks for extensions, restricted permissions, restart, and persistence across repeated setup. The packaged installation used a checked local download cache and no compiler. Test databases were removed; no model calls or mailbox reads were made.
-
-GitHub Actions execution, public release downloads, and a complete installation with fresh Python/npm/model downloads and Copilot login on a clean machine remain unverified. The local checks do not establish that those external steps have passed.
-
-## Connection commands and authenticated releases
-
-The final local suite passed 270 tests. Separate share/connect commands leave the installer unchanged. Tests cover direct discovery, invalid keys and certificates, failed-connection rollback, background process ownership, stable relay ports, and restoration of local memory. Private/internal release instructions and both authenticated asset download paths passed fixture checks.
-
-A disposable private Microsoft tunnel forwarded a synthetic HTTP response through the real relay service on this machine. The managed host/client processes started without visible terminals, reused their saved instance, stopped cleanly, and restarted on the same local port. The CLI selected another forwarding port when the server port was occupied; the stable proxy continued to work. All test tunnels and workers were removed. This did not read or forward existing memory. It validates the real relay service and local wrapper, not a second machine's account or network policy.
-
-## Published v0.1.0
-
-Both repositories published the Windows x64 prerelease from product commit 7a5bf66. The public [origin build](https://github.com/cubika/HindsightKit/actions/runs/35179116205) and authenticated [enterprise build](https://github.com/gim-home/HindsightKit/actions/runs/35179136182) each passed 270 tests, rebuilt the pinned PostgreSQL/pgvector distribution, and passed its disposable database checks. Downloaded release assets matched SHA256SUMS; all 4,474 database file hashes were checked. Public anonymous installer downloads and enterprise authenticated downloads were verified after publication.
-
-The first CI attempts exposed Windows 8.3 path comparisons and an absent _CL_ variable under PowerShell 7 StrictMode. The checks now compare file identity, and the compiler resolves long paths and handles an empty compiler environment. The regression compiles with both PowerShell versions, long/short paths, and absent/present compiler options. Unpublished draft assets and superseded tags were removed before rebuilding v0.1.0.
-
-Complete interactive setup with Copilot login and model downloads on another user's machine remains an acceptance step for this preview. The release does not claim Linux, macOS, or Windows ARM support.
+Use `--visibility internal` or `--visibility private` when access is restricted. Packaging reads and validates the inputs; it does not upload a release or start a database. The template at `distribution/install.ps1` cannot be run directly before its release fields are generated.

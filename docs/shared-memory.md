@@ -1,49 +1,48 @@
-# Server and client setup
+# Memory routing and server roles
 
-Install the server and local coding integrations together:
+HindsightKit stores memory on a Hindsight server and connects coding sessions to it. Follow [installation](installation.md) to install the required roles, then use the [connection guide](devtunnel.md) to connect another computer.
 
-```powershell
-.\setup.ps1
-```
+## Where a session reads and writes
 
-Setup installs and starts Hindsight, PostgreSQL, and the local dashboard, then connects VS Code and Copilot CLI to the local API. The authenticated API listens on IPv4 port 9077. It generates a connection key on first installation and reuses it for the local client. Use `.\setup.ps1 -ServerOnly` on a dedicated memory server to skip coding integrations. The server needs a Copilot login for its model calls. For a release installation without a checkout, use the command in that repository's release notes; it accepts the same role options.
+The managed coding integrations select memory from the session's Git repository:
 
-Install a client on each machine used for coding:
+| Session location | Reads | Writes |
+| --- | --- | --- |
+| Inside a Git repository | That repository's bank and the server's shared bank | The repository's bank |
+| Outside Git | The server's shared bank | The shared bank |
 
-```powershell
-.\setup.ps1 -Server http://memory-host:9077
-```
+Repository sessions can use shared context without writing repository details into shared memory. Other repositories are outside that session's selected scope. Retain, recall, and reflect use the official Hindsight API.
 
-Enter the server's connection key at the hidden prompt. A client connecting to the server on the same Windows account reuses its local key automatically. The machine name comes from the local hostname. No bank, device name, listening address, or tunnel ID is required. Client setup installs coding integrations without a database, models, dashboard, or server processes.
+Clones with the same normalized `origin` host and repository path use the same bank on the same server, even when their local directories differ. Standard HTTPS and SSH origins are normalized, including the standard Azure DevOps forms. Different SSH host aliases, path spellings, or nondefault ports can produce different identities; use a common origin URL when two clones should share memory. Repositories without a recognized origin use an identity based on the device and local repository. Git worktrees share their repository's memory.
 
-Bank selection is internal. Repository sessions keep their own memory and read shared memory; sessions outside Git use shared memory. Clones with the same Git origin share repository memory across machines, even when their local paths differ. Repositories without an origin stay device-local. HTTPS and SSH origins with the same canonical host/path are normalized, including Azure DevOps standard URLs. Custom SSH host aliases need a common origin URL on both machines. Setup does not combine unrelated repository memories.
+The selected scope stays fixed for a coding session. Use one repository per VS Code window. If its workspace roots change, restart the Hindsight MCP server before using memory. Start a fresh Copilot CLI session when switching repository context.
 
-## Local use and network transport
+## Server and client roles
 
-After installation, use `hindsightkit share` and `hindsightkit connect` to connect another computer. The [remote connection guide](devtunnel.md) covers direct access and the optional private relay without changing the installation flow.
+The server owns the database, embedding model, dashboard, and optional connector jobs. Its Copilot account supplies the model calls. Coding clients run the editor and CLI integrations and send memory requests to the selected server. A client-only installation has no local database or model, and an unreachable server does not cause it to create a replacement.
 
-Default setup already includes the local client. To add one to an installation previously made with ServerOnly:
+One computer can run both roles while its coding client uses a different server. Changing the client connection leaves the local dashboard, database, and connector jobs on their own server profile. A later default setup preserves an existing remote client selection. `ServerOnly` leaves client settings alone.
 
-```powershell
-.\setup.ps1 -Server http://127.0.0.1:9077
-```
+The roles also keep separate configuration: the default server profile is `%USERPROFILE%\.hindsight\profiles\hindsightkit.env`, and the coding client's selected API and key are in `%USERPROFILE%\.hindsight\coding-agent.json`. `HINDSIGHT_CONFIG` can select a different client file. See [file locations](installation.md#file-locations) for the full layout and the limits of directory overrides.
 
-The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Plain setup prepares the server and configures a local client when no remote client connection exists. It preserves an existing remote connection and prints a notice. ServerOnly leaves client settings alone. Running setup with a server address changes only the managed client connection after validation.
+## Permissions
 
-IP addresses, DNS names, and existing SSH forwards can be passed to `hindsightkit connect --server URL`. HindsightKit manages its own optional relay when a connection code includes one. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
+The server requires a connection key for its memory API. Default server setup listens on all IPv4 interfaces, using port 9077 unless configured otherwise. Firewall rules and the network determine which computers can reach it. Direct HTTP does not encrypt the key or memory traffic; transport choices are covered in the [connection guide](devtunnel.md).
 
-The server starts listening during setup. After reboot, run hindsightkit start; stop and ui manage only the local server. No login task or Windows service is installed. The status command reports installed roles. Client-only installations never launch a replacement local server when their connection is unavailable.
+Repository routing controls the scope exposed by the managed coding integrations. It is not per-repository authorization for people who hold the server key. The key grants access to the server, and the current setup has no per-device permissions or individual key revocation. Use this arrangement only among computers trusted with that server's memory.
+
+The optional private relay adds Dev Tunnels account authentication. It does not narrow the memory permissions of the server key. Stopping a relay or running `unshare` does not revoke that key or disable direct API access.
 
 ## Client activity
 
-The clients command lists registered machines and coding integrations, with last use and activity within five minutes. It counts configured integrations, not open windows or sessions. Registration is idempotent; the hostname is refreshed during setup. The list contains no memory content and does not implement per-device permissions.
+```powershell
+hindsightkit clients
+```
 
-## Upgrade and validation
+The inventory lists registered machines and integrations, including the last reported use. `Recent` means use within five minutes; it does not count open windows, sessions, or currently online devices. Reconnecting refreshes the hostname and reuses the device identity. The inventory contains no memory content and grants no permissions.
 
-Existing databases, memory banks, model configuration, and unrelated editor settings are preserved. Setup recognizes old repository mappings from local CLI session records and reuses their banks. Conflicting mappings stop setup rather than choosing one silently. Old banks with no surviving session or mapping record remain in Hindsight; their association cannot be reconstructed automatically. They can still be inspected in the server dashboard. Rerun client setup after upgrading the server. Server setup does not remove an already installed client. When both roles share this checkout, the Python environment retains server dependencies. A fresh client installation excludes them.
+`clients` queries the local server when one is installed. On a client-only computer it queries the configured remote server. The same destination precedence applies to `check`; `status` checks the coding client's selected destination as well as any installed local server.
 
-Advanced server model and port settings remain available through setup help. Automated deployment can supply an API key through -ApiKeyEnv NAME; secret values are never command-line arguments. A new server normally generates its own key.
+## Existing repository mappings
 
-Tests use temporary profiles, synthetic keys, HTTP fixtures, local TCP forwarding, and real stdio MCP sessions. Actual Dev Box networking, company login policy, and tunnel reconnect behaviour require a two-machine check. A fresh dependency download was previously blocked by files.pythonhosted.org TLS HandshakeFailure; this is separate from local runtime tests.
-
-Validated on 2026-09-17: 131 tests passed, including installation role separation, automatic repository routing, authenticated discovery, local TCP forwarding, and Windows process checks. After merging the latest interface changes, the 23 connector tests also passed. Actual two-machine networking and a fresh dependency download remain unverified.
+During setup, saved repository mappings and surviving local session records can associate an existing bank with its current repository identity. Conflicting mappings stop setup without moving memory. If no mapping or session record survives, the old bank remains on the server, but setup cannot reconstruct its repository association. Inspect those banks in the server dashboard before changing their mappings.

@@ -1,73 +1,69 @@
-# WorkIQ mail
+# WorkIQ email
 
-The importer maintains one current outcome per thread. Test procedures, observed results, and remaining limits are recorded in [connector validation](connector-validation.md).
+The optional WorkIQ connector keeps one current outcome for each useful email thread. It prepares the outcome through the official Copilot SDK, then uses the official Hindsight SDK to store and recall it. Hindsight stores each prepared outcome in `chunks` mode as one searchable world memory unit. Observations and automatic consolidation are disabled for this bank, so publication does not add a second model extraction pass.
 
-HindsightKit's optional WorkIQ adapter follows the [connector contract](connectors.md). WorkIQ must already be installed. Hindsight owns extraction, storage, consolidation, and recall. The adapter owns source scope, preparation of the current thread outcome, and reliable delivery through official APIs.
+## Configure mail synchronization
 
-## Configuration and acquisition
+WorkIQ 1.0.0 must already be installed and signed in. The current adapter verifies the supported Windows x64 executable. Outcome preparation requires the `github-copilot` provider and a configured model; it uses the existing model and reasoning settings.
 
-The settings page uses the current WorkIQ account without an account selector. Users select folders, a historical lookback, and a future synchronization interval. Zero minutes means manual runs. Default folder preferences include Inbox and the DSAPISOT subtree, excluding the Sev3 and PullRequests subtrees. Match actual folders and report unresolved selections. Interface text is English; source content keeps its original language.
+1. Run `hindsightkit connectors` on the server computer and open WorkIQ email.
+2. Discover the current account and its folders. Select the folders to read, a historical lookback, and a synchronization interval. Review the selection before saving it.
+3. Use **Preview source** to inspect cleaned messages. Preview does not prepare or publish outcomes.
+4. Use **Sync now** for one run or **Start sync** to enable synchronization. An interval of zero disables periodic scans; starting an enabled connector still triggers an initial run.
 
-An unused connector does not launch WorkIQ, read mail, or create a delivery ledger. Each run verifies the current account and binds reads to it. Pausing releases source resources and preserves accepted memory. Credentials stay with WorkIQ. The local settings service does not execute mail instructions, send mail, download attachments, or follow links in message bodies.
+The connector has no account selector. Reads are bound to the discovered account; an account change pauses synchronization. Credentials stay with WorkIQ, and authentication renewal may require signing in through WorkIQ.
 
-Current acquisition uses fixed time windows with a six-hour overlap, not delta or authoritative deletion tracking. This can miss older modifications and replies outside the selected range. Outcome updates need enough relevant thread context within the authorized scope; missing context must be reported, not treated as a complete investigation. Folder changes affect future reads and do not imply that existing conclusions are false.
+Closing the settings page leaves enabled synchronization running. **Pause sync** releases source resources and preserves imported outcomes. `hindsightkit stop` stops the importer before Hindsight; `hindsightkit start` resumes enabled connectors. Settings and delivery state are described in the [connector guide](connectors.md#stored-state).
 
-## One current outcome per thread
+The folder suggestions still contain rules for a specific mailbox layout. They may produce irrelevant recommendations or unresolved-folder warnings for other users, and folders marked excluded cannot be selected. The saved selection determines the read scope. This limitation has not been generalized in the current implementation.
 
-The durable unit is one current outcome document per thread. Replies update that document instead of creating additional permanent message copies or user-facing experiences. A thread can contain several related findings, but they belong in the same concise record.
+## What an outcome contains
 
-Keep the information useful after reading the investigation:
+An outcome records the problem, its latest supported conclusion, and the conditions needed to use that conclusion correctly. It includes a solution, owner, and verification only when the sources establish them. Proposed fixes remain labeled as proposals. Unresolved investigations can still contain useful findings. Status is recorded as unresolved, resolved, or decision.
 
-- The problem and the affected system or operation.
-- The supported conclusion, including any unresolved uncertainty.
-- Who owns or applied the fix, which solution was used, and whether it was verified.
-- Conditions and limitations needed to apply the conclusion correctly.
+Requests, guesses, courtesy replies, and routine status messages alone produce no durable outcome. Temporary PR comments and findings useful only within one PR, project, or repository are excluded from shared mail memory. A service investigation may refer to a PR as supporting context without becoming a code review. The applicable service and operation remain explicit.
 
-Omit fields the evidence does not establish. A suggested fix is not an implemented fix, and a plausible cause is not a confirmed cause. An unresolved thread can still contain a useful diagnostic finding. A thread containing only requests, guesses, courtesy, or routine status produces no durable record.
+The outcome omits the sequence of discussion steps. Relevant evidence is absorbed into the current result, with supporting message IDs and Outlook links retained for traceability. Original messages stay in the mailbox. Source preview preserves the source language; the outcome composer currently writes English.
 
-Do not store the sequence of discussion steps. Omit intermediate dialogue or incorporate the evidence needed to understand the outcome. Original messages remain in the mailbox; retain a small set of supporting message IDs and links instead of copying the complete correspondence into Hindsight.
+## Thread updates
 
-Exclude temporary PR comments and findings useful only within one PR, project, or repository from shared mail memory. Technical detail alone does not establish lasting usefulness. Do not manufacture a general lesson by rewriting a local review suggestion. Keep the applicable service and operation explicit when a conclusion does qualify.
-
-## Revision behavior
-
-Address a thread by verified mailbox identity and a stable conversation ID, using one deterministic Hindsight document ID. Do not group unrelated messages by subject. Coalesce new replies into one pending thread update, compare them with the existing outcome and necessary source context, and prepare a complete replacement.
+A verified mailbox identity and conversation ID determine the stable Hindsight document ID. Subjects do not identify threads. A scan collects changed threads across its pages before preparing a replacement, so several replies can become one update.
 
 | New evidence | Update to the current record |
 | --- | --- |
-| Adds a useful finding | Incorporate it into the same document. |
-| Confirms or corrects a finding | Revise the finding and its supporting sources. |
-| Establishes a fix | Add the actual owner, solution, verification, and conditions. |
-| Refutes an earlier claim | Remove or correct that claim. |
-| Leaves no lasting value | Withdraw the thread record and its searchable derivatives. |
-| Adds only courtesy or repetition | Do not write a new version. |
+| Adds or corrects a useful finding | Incorporate the finding and its supporting sources. |
+| Establishes and verifies a fix | Record the supported solution, owner when known, and verification. |
+| Refutes an earlier claim | Correct or remove the claim; withdraw the record when no useful result remains. |
+| Shows that the thread is an excluded repository review | Withdraw any previously imported record. |
+| Adds only courtesy or repetition | Leave the accepted outcome unchanged. |
+| Provides incomplete or unsupported context | Keep the accepted outcome and report the failed update. |
 
-Preserve a rejected explanation only if it is necessary to understand the final conclusion. These updates do not create separate experience objects for each action. There is no permanent history of drafts or per-reply source copies in the connector.
+Updates use official replacement and document APIs. A single writer, durable target revision, and operation UUID protect retries and restarts. The prepared replacement is validated before publication. A failed update leaves the accepted result available, and pending work remains visible for retry. A withdrawal removes the current document and its searchable memory.
 
-Use official replacement and document APIs. Serialize updates for a thread, persist the target revision and operation ID, and prevent stale retries from replacing newer outcomes. Validate the replacement before submitting it; do not delete the last accepted result before processing a new one. A failed update must leave that result available.
+Unchanged source content bypasses composition. A reply with no new finding can also return unchanged after composition without another Hindsight write. The connector keeps no permanent draft history or separate memory document for each reply.
 
-The adapter prepares one evidence-backed outcome through the configured official Copilot SDK. Each claim must cite an exact source excerpt; source IDs, numbers, status, and scope are checked before publication. A new unsupported result leaves the accepted outcome intact. The bounded outcome uses the official Hindsight chunks mode, with observations disabled: it becomes one searchable world unit in one document, without a second model extraction pass. Replacement and withdrawal are verified through the document API and live recall checks.
+## Evidence and provenance
 
-## Evidence and time
+Every published claim must cite an exact excerpt from a supplied message. Validation checks source IDs, excerpts, numeric values and units, supported status, and publication scope. Resolution requires explicit solution and verification evidence. Withdrawal based on a refutation requires a newer direct correction. These structural checks do not establish semantic accuracy on their own.
 
-Keep message sent time, synchronization time, and actual event or fix time distinct. A later message may add evidence, change the conclusion, or confirm resolution. It does not automatically override better evidence: a courtesy reply cannot undo a verified fix, and a proposal cannot replace an observed result. Account for late-arriving messages before publishing the current outcome.
+Message sent time, synchronization time, and actual event or fix time remain distinct. A later courtesy reply cannot undo a verified fix, and a proposed solution cannot establish resolution. The record preserves its latest supporting time and source references. Unknown authors and dates inside quotations remain unknown.
 
-Record the last supporting or confirming time and source references for the current conclusion. Unknown quoted authors and dates remain unknown; they do not inherit the outer email's attribution. Track which evidence changed or superseded a conclusion, rather than treating a shared thread ID as proof of that relationship.
+Each published document carries a title, source subject, supporting-message authors and dates, source folders, evidence, links, and revision. Message authors establish provenance; they are not inferred fix owners. Up to six supporting messages are attached to an outcome.
 
-Clean mail envelopes, recipient lists, signatures, boilerplate, repeated quotations, and executable or remote markup. Preserve substantive conditions and negation. Temporary processing payloads are bounded and removed after delivery. The operational ledger keeps IDs, revisions, hashes, and checkpoints, not a second searchable memory store.
+Tags identify source, record kind, status, and up to five distinctive terms that occur in the accepted outcome. Concepts, entities, APIs, and mechanisms use the same `topic:` namespace and validation rules. The outcome call also chooses these tags. Updates refresh connector-owned labels and preserve unrelated user labels.
 
-Metadata remains separate from outcome prose. Each published thread carries its title, source subject, supporting-message authors and dates, source folders, evidence, links, last-supported time, and revision. Source-message authors describe provenance; they do not automatically become fix owners or authors of quoted claims. Tags provide compact filters for source, record kind, current status, and up to five distinctive content concepts or entities grounded in the accepted outcome. Dynamic labels share one topic namespace; systems, APIs, exceptions and mechanisms use the same selection and validation rules. They are produced in the existing outcome call, not a separate tagging pass. Only connector-owned tags are refreshed; unrelated user tags survive subsequent updates. These labels do not create additional memory records.
+## Scope and limits
 
-## Presentation and acceptance
+Acquisition uses received-time windows with a six-hour overlap. When a thread changes within that window, the reader fetches its earlier context from the selected folders. It cannot establish completeness outside those folders. Changing the selected folders affects future reads and does not withdraw existing outcomes.
 
-Present one current thread outcome with source links, last update, and resolved or unresolved status. Count source messages separately from retained outcomes. More replies must not cause unbounded growth in durable documents or obsolete recall results.
+Polling does not mirror mailbox deletions or guarantee detection of edits to older messages. Deleting outcomes in the official UI is not automatically reconciled with the delivery ledger. Rebuilding after an external reset requires a matching empty ledger. A new ledger refuses a nonempty bank, and nonempty legacy message-import ledgers are also refused.
 
-Validation must replay an initial report, diagnosis, correction, fix, and verification. Check one current document, useful final content, obsolete-claim removal, unchanged-reply idempotency, failed-update recovery, out-of-order updates, source traceability, PR/repository exclusions, and long-thread limits. Maintain the procedures and results in [connector validation](connector-validation.md), updating that file after every new run.
+A protected, missing, ambiguous, or oversized thread fails without publishing a partial replacement. The default bounds are 100 messages and 100,000 cleaned characters per thread, with at most 6,000 characters in the outcome. The UI distinguishes messages scanned from current outcomes, and reports imports, updates, withdrawals, failures, and pending threads separately.
 
-## Implementation limits
+The reader removes message envelopes, signatures, boilerplate, repeated quotations, and executable or remote markup while preserving substantive conditions and negation. It does not send mail, download attachments, or follow links in message bodies. Full source bodies are used during preparation and are not stored in the delivery ledger. The ledger retains settings, source metadata, revisions, hashes, and checkpoints; prepared outcomes and their evidence remain pending only until delivery completes.
 
-Thread context is fetched within the selected folders, including older replies needed to understand a recently changed thread. A protected, missing, ambiguous, or oversized thread is held for review instead of publishing a partial replacement. The limit is 100 messages and 100,000 cleaned characters per thread; outcome content is capped at 6,000 characters. A single writer lock, durable target revision, and operation UUID protect retries and restarts. Original message bodies are not kept in the delivery ledger.
+The composer uses an isolated Copilot session with only its structured result tool. Filesystem, shell, mailbox, MCP, skills, and memory tools are unavailable to that session. Its temporary session directory is removed when preparation ends.
 
-The composer uses one isolated Copilot session per changed thread and permits only its structured result tool. It has no filesystem, shell, mailbox, MCP, skills, or memory tools. The configured model and reasoning settings are preserved. Unchanged source content bypasses composition; a no-op reply can return unchanged without another Hindsight write.
+## Validation requirements
 
-Window polling does not guarantee detection of older mailbox edits or deletions. Deleting outcomes manually in the official UI is not automatically reconciled with the local delivery ledger; rebuilding after an external reset needs a matching empty ledger. Existing message-level ledgers and nonempty unowned banks are refused rather than silently mixed with thread outcomes. HindsightKit does not migrate the deleted pre-rename test installation.
+Connector changes must check replacement, withdrawal, unchanged-reply idempotency, failed-update recovery, out-of-order evidence, provenance, repository exclusions, and long-thread limits. Lifecycle checks must verify one current document and the removal of obsolete recall results. Record procedures, measured results, cleanup, and limitations in [connector validation](connector-validation.md); historical message-level tests do not validate the current thread contract.

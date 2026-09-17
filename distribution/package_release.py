@@ -251,8 +251,8 @@ def installation_notes(version: str, release_url: str, repository: str, visibili
     else:
         host = urlsplit(release_url).netloc
         login = f"""
-This {visibility} repository requires GitHub CLI and an account with repository access.
-Sign in before downloading the installer:
+This {visibility} repository also requires GitHub CLI and an account with repository access.
+Sign in once:
 
 {fence}powershell
 gh auth login --hostname '{host}'
@@ -264,39 +264,71 @@ if ($LASTEXITCODE -ne 0) {{ throw 'GitHub sign-in failed.' }}
                     "if ($LASTEXITCODE -ne 0) { throw 'Installer download failed.' }\n"
                     "if ([string]::IsNullOrWhiteSpace($hindsightkitInstaller)) { throw 'Installer download was empty.' }\n")
         local = download + "& ([scriptblock]::Create($hindsightkitInstaller))"
-        server = local + " -ServerOnly"
-        client = local + " -Server 'http://server-host:9077'"
+        server = "& ([scriptblock]::Create($hindsightkitInstaller)) -ServerOnly"
+        client = "& ([scriptblock]::Create($hindsightkitInstaller)) -Server 'http://server-host:9077'"
+    advanced = ("Use one of these commands instead of the default installation command."
+                if visibility == "public" else
+                "Download and check the installer as above, then replace its final invocation with one of these commands.")
+    download_issue = ""
+    if version == "v0.1.0":
+        download_issue = f"""
+## Known v0.1.0 download issue
+
+Python dependency downloads have failed with {tick}TLS HandshakeFailure{tick} on some networks.
+A retry using the system certificate store also failed in the reported case.
+If this occurs, check access to {tick}files.pythonhosted.org{tick} and your proxy or certificate
+configuration before rerunning setup. Keep TLS certificate verification enabled.
+"""
     return f"""# HindsightKit {version}
 
-Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
-The default command installs the local server and connects this computer in one run.
+Requires Windows x64, Git, and a GitHub account with Copilot access.
+Use Windows PowerShell 5.1 or PowerShell 7. Setup asks you to sign in to Copilot if needed.
+
+The default installation sets up the memory server and coding integrations on this computer in one run.
+No repository download is needed.
 {login}
 {fence}powershell
 {local}
 {fence}
 
-To install a server without connecting the current computer:
+After setup, reload VS Code and allow its Hindsight MCP server when prompted.
+Open a new Copilot CLI session. Setup checks a temporary memory through Copilot and removes it afterward;
+this uses a small amount of Copilot allowance.
+
+## Connect another computer later
+
+After installation, run {tick}hindsightkit share{tick} on the memory server and
+{tick}hindsightkit connect{tick} on the other computer. Paste the connection code at the hidden prompt.
+The code contains a server key; transfer it privately and keep it out of Git and command-line arguments.
+
+If direct networking is unavailable, use {tick}hindsightkit share --relay{tick}.
+The private relay uses Microsoft Dev Tunnels and requires the same account on both computers.
+
+## Advanced installation
+
+{advanced}
+
+For a dedicated server:
 
 {fence}powershell
 {server}
 {fence}
 
-To connect another computer to an existing server:
+For a client without a local database or model, replace the example address with your server's address:
 
 {fence}powershell
 {client}
 {fence}
+{download_issue}
+## Downloads
 
-The installer downloads the pinned application and verifies its SHA256 checksum.
-Server setup downloads the PostgreSQL component for this release, including pgvector
-and the required C++ runtime DLLs. Users do not need a C++ compiler.
-Python and Node.js dependencies download during setup. Existing Copilot authentication
-and any required model-provider configuration still apply.
+The installer verifies the application and PostgreSQL archives with SHA256.
+PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
+Python, Node.js dependencies, and the embedding model download during setup.
 
-These commands download assets from {release_url}.
-All downloads in this installer use the fixed {tick}{version}{tick} tag.
-
-{tick}SHA256SUMS{tick} lists the checksums of every release asset.
+Assets come from [this release]({release_url.replace('/download/', '/tag/')}) and use the fixed {tick}{version}{tick} tag.
+{tick}SHA256SUMS{tick} covers the two ZIP packages, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
+and {tick}release-notes.md{tick}. It does not include itself or GitHub's source archives.
 """
 
 

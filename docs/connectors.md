@@ -1,15 +1,38 @@
 # Optional connectors
 
-Here, registry means the Python list of supported adapters. It has no connection to the Windows Registry.
+Connectors import selected sources into the official Hindsight memory service. Core memory works without them. WorkIQ email is the currently registered connector.
 
-Connectors are optional adapters around the official memory service. Installing or starting HindsightKit does not install WorkIQ, open its login flow, scan mail, or create a mail delivery ledger. Users can use all core memory features without a connector.
+## Open connector settings
 
-The connector registry declares each adapter's ID, settings view, data directory, and module. The shared host provides discovery, HTTP routing, and lifecycle management. Each adapter owns its prerequisites, settings validation, state, source access, and optional recall tools. Modules are loaded by registered ID; configuration cannot name arbitrary Python modules or executables. Adding another connector requires one adapter, a settings view, and a registry entry. Mail-specific parsing and ingestion stay in the WorkIQ adapter.
+After installing HindsightKit, run this command on the computer hosting the server:
 
-The settings catalog is available even when a dependency is missing. WorkIQ must already be installed at the supported version before its connector can discover the account, preview, start, or synchronize. The prerequisite check reads installed files without launching WorkIQ or installing anything. A missing dependency affects only that connector.
+```powershell
+hindsightkit connectors
+```
 
-Opening a settings page can inspect saved configuration and dependency status, but does not create a delivery ledger or model client. Starting HindsightKit resumes only connectors whose saved configuration is enabled. Pausing releases the WorkIQ process and stops future acquisition while preserving configuration and imported memory. Existing mail state remains in `~/.hindsightkit/mail`; no data migration or deletion is needed. Previously imported mail stays available through its read-only recall tool after acquisition is paused.
+The command opens a local settings catalog and starts the installed server if needed. Connector setup is unavailable on a client-only installation. The catalog remains available when an optional dependency is missing.
 
-Tests cover unused connectors, missing dependencies, independent adapters, disabled and enabled restart behavior, unknown IDs, and cleanup after one adapter fails. Source extraction and model behavior are unchanged by this separation.
+For mail, follow the [WorkIQ guide](workiq-mail.md). WorkIQ must already be installed at the supported version and signed in. Prerequisite checks inspect its executable without launching it. For an unused connector, installation and catalog viewing do not open a login flow or read mail. Account discovery, preview, and synchronization are explicit actions. A previously enabled connector resumes when HindsightKit starts.
 
-Recorded test runs and limitations belong in [connector validation](connector-validation.md).
+Closing the browser leaves enabled synchronization running. Pausing stops acquisition and releases the WorkIQ process while preserving saved settings and imported outcomes. Previously imported mail remains available through the connector's read-only recall tool where that tool is registered. `hindsightkit stop` stops connector workers before the memory service.
+
+## Stored state
+
+Connector state belongs to the HindsightKit data directory, which defaults to `%USERPROFILE%\.hindsightkit` on Windows and can be changed with `HINDSIGHTKIT_HOME`. It is separate from downloaded release versions; see [installation](installation.md).
+
+| Subdirectory | Contents |
+| --- | --- |
+| `connectors` | Settings host process record and log |
+| `mail` | WorkIQ settings, source metadata, and delivery ledger |
+
+Opening the catalog reads dependency status and saved settings without creating a mail ledger or model client. WorkIQ retains its credentials. Hindsight stores accepted mail outcomes in the `hindsightkit-mail` bank.
+
+## Adapter contract
+
+The connector registry is a Python list of supported adapters. It is unrelated to the Windows Registry. Each entry declares an ID, module, data subdirectory, settings view, and allowed web assets. The shared host handles catalog discovery, local HTTP routing, and lifecycle management.
+
+Each adapter owns its prerequisite checks, configuration validation, source access, delivery state, and optional recall tools. Adding a connector requires an adapter, its settings view, and a registry entry. Source-specific parsing stays in the adapter. Configuration cannot name arbitrary Python modules or executables.
+
+A missing dependency or a failed adapter must leave the rest of the catalog usable. The host resumes only enabled adapters, and each adapter must release its resources on pause or shutdown. Opening an unused connector's settings page must not start source acquisition.
+
+Test scope, measured results, and limitations are recorded in [connector validation](connector-validation.md).

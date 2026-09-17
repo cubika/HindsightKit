@@ -105,8 +105,8 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_authenticated_manifest_passes_repository_and_tag_to_installer(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = self.manifest()
-            manifest.update(requires_auth=True, repository='gim-home/HindsightKit',
-                            release_url='https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0')
+            manifest.update(requires_auth=True, repository='restricted-owner/HindsightKit',
+                            release_url='https://git.example.com/restricted-owner/HindsightKit/releases/download/v1.0.0')
             manifest['postgres']['url'] = manifest['release_url'] + '/postgres.zip'
             path = Path(directory) / 'release.json'
             path.write_text(json.dumps(manifest), encoding='utf-8')
@@ -121,7 +121,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 postgres.Postgres(Path(directory) / 'postgresql').install()
             self.assertEqual(popen.call_args.args[0][-8:],
                              ['-DistributionUrl', manifest['postgres']['url'], '-DistributionSha256', 'AB' * 32,
-                              '-ReleaseRepository', 'gim-home/HindsightKit', '-ReleaseTag', 'v1.0.0'])
+                              '-ReleaseRepository', 'restricted-owner/HindsightKit', '-ReleaseTag', 'v1.0.0'])
 
     def test_authenticated_manifest_rejects_nonboolean_or_mismatched_release(self):
         cases = [('requires_auth', 'true'), ('requires_auth', 1), ('repository', 'other/repo'),
@@ -248,8 +248,8 @@ Add-Type -TypeDefinition 'public class VersionFixture {
         return subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                                str(self.auth_harness), '-Installer', str(self.installer), '-Root', str(root),
                                '-Archive', str(archive), '-Sha256', digest, '-GhExit', str(gh_exit),
-                               '-Repository', 'gim-home/HindsightKit', '-Tag', 'v1.0.0',
-                               '-Url', url or 'https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0/postgres.zip'],
+                               '-Repository', 'restricted-owner/HindsightKit', '-Tag', 'v1.0.0',
+                               '-Url', url or 'https://git.example.com/restricted-owner/HindsightKit/releases/download/v1.0.0/postgres.zip'],
                               env=self.environment, capture_output=True, text=True, timeout=60)
 
     def assert_failed_cleanly(self, root, result, message):
@@ -283,7 +283,7 @@ Add-Type -TypeDefinition 'public class VersionFixture {
             calls = [json.loads(line) for line in (root / 'gh-calls.jsonl').read_text(encoding='utf-8-sig').splitlines()]
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][:-1], ['release', 'download', 'v1.0.0', '--repo',
-                             'git.example.com/gim-home/HindsightKit', '--pattern', 'postgres.zip', '--output'])
+                             'git.example.com/restricted-owner/HindsightKit', '--pattern', 'postgres.zip', '--output'])
             self.assertIn('.part-', calls[0][-1])
             self.assertNotIn('synthetic-sensitive-auth-diagnostic', result.stdout + result.stderr)
             installed = root / 'installed'
@@ -308,8 +308,8 @@ Add-Type -TypeDefinition 'public class VersionFixture {
     def test_authenticated_asset_requires_expected_hash_and_matching_release_url(self):
         cases = [('0' * 64, None, 'SHA256 verification failed'),
                  (None, 'https://git.example.com/other/repo/releases/download/v1.0.0/postgres.zip', 'must match'),
-                 (None, 'https://git.example.com/gim-home/HindsightKit/releases/download/v2.0.0/postgres.zip', 'must match'),
-                 (None, 'https://git.example.com/gim-home/HindsightKit/releases/download/v1.0.0/*.zip', 'must match')]
+                 (None, 'https://git.example.com/restricted-owner/HindsightKit/releases/download/v2.0.0/postgres.zip', 'must match'),
+                 (None, 'https://git.example.com/restricted-owner/HindsightKit/releases/download/v1.0.0/*.zip', 'must match')]
         for checksum, url, expected in cases:
             with self.subTest(url=url), tempfile.TemporaryDirectory(dir=self.root) as directory:
                 root = Path(directory)
