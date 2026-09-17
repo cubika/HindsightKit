@@ -316,6 +316,77 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics['attempted_threads'], 1)
         self.assertNotIn('Initial finding', json.dumps(metrics))
 
+    async def test_systemic_source_failure_cancels_workers_without_marking_threads_failed(self):
+        for index in range(1, 8):
+            self.append(str(index), 'Pending finding', thread=f'thread-{index}')
+        failures = [WorkIQError(code) for code in ('workiq_eula_required', 'workiq_tool_failed',
+                    'workiq_transport_failed', 'workiq_not_connected')]
+        failures.extend(WorkIQError('workiq_fetch_failed', status) for status in (401, 403))
+        for failure in failures:
+            with self.subTest(failure=failure, status=failure.status):
+                await self.sync.configure({'parallel_threads': 4, 'enabled': True, 'interval_minutes': 30})
+                entered = []
+                cancelled = []
+                four_started = asyncio.Event()
+                async def prepare(identity, before):
+                    entered.append(identity)
+                    if len(entered) == 4:
+                        four_started.set()
+                    if identity == entered[0]:
+                        await four_started.wait()
+                        raise failure
+                    try:
+                        await asyncio.Event().wait()
+                    except asyncio.CancelledError:
+                        cancelled.append(identity)
+                        raise
+                with patch.object(self.sync, '_prepare', prepare):
+                    result = await self.run_sync()
+                self.assertEqual(len(entered), 4)
+                self.assertEqual(len(cancelled), 3)
+                self.assertFalse(result['config']['enabled'])
+                self.assertIsNone(result['run']['next_run'])
+                self.assertEqual(result['run']['state'], 'error')
+                self.assertIn(failure.code, result['run']['error'])
+                self.assertNotIn('Retry to resume this thread', result['run']['error'])
+                self.assertEqual(result['run']['active_threads'], 0)
+                self.assertEqual(result['run']['failed'], 0)
+                self.assertEqual(result['run']['pending'], 8)
+                self.assertTrue(all(row['state'] == 'dirty' and row['error'] is None
+                                    for row in self.sync.db.execute('SELECT state,error FROM threads')))
+                self.assertFalse(self.client.submissions)
+                self.assertIsNotNone(self.sync._get('window'))
+
+    async def test_thread_content_failures_stay_local_and_other_threads_finish(self):
+        self.append('too-large', 'Oversized finding', thread='too-large')
+        self.append('valid', 'Valid finding', thread='valid')
+        original = self.source.thread
+        async def thread(conversation, *args):
+            if conversation in {'discussion', 'too-large'}:
+                raise WorkIQError('workiq_thread_incomplete' if conversation == 'discussion' else 'workiq_thread_too_large')
+            return await original(conversation, *args)
+        self.source.thread = thread
+        await self.sync.configure({'enabled': True, 'interval_minutes': 30})
+        result = await self.run_sync()
+        self.assertTrue(result['config']['enabled'])
+        self.assertIsNotNone(result['run']['next_run'])
+        self.assertEqual(result['run']['failed'], 2)
+        self.assertEqual(result['run']['outcomes'], 1)
+        self.assertEqual(len(self.client.docs), 1)
+
+    async def test_eula_discovery_failure_stops_schedule_before_import(self):
+        async def discover():
+            raise WorkIQError('workiq_eula_required')
+        self.source.discover = discover
+        await self.sync.configure({'enabled': True, 'interval_minutes': 30})
+        result = await self.run_sync()
+        self.assertFalse(result['config']['enabled'])
+        self.assertIsNone(result['run']['next_run'])
+        self.assertIn('workiq_eula_required', result['run']['error'])
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertFalse(self.source.reads)
+        self.assertFalse(self.client.submissions)
+
     async def test_import_settings_validate_and_persist(self):
         for settings in ({'parallel_threads':0},{'parallel_threads':5},{'parallel_threads':True},
                          {'model':'bad model'},{'reasoning_effort':'invalid'}):

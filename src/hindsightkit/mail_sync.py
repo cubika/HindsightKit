@@ -454,11 +454,22 @@ class MailSync:
         return window['end']
 
     @staticmethod
+    def _systemic_error(exc):
+        from .mail_source import WorkIQError
+        return getattr(exc, 'status', None) in {401, 403} or (isinstance(exc, WorkIQError) and exc.code in {
+            'workiq_eula_required', 'workiq_tool_failed', 'workiq_transport_failed', 'workiq_not_connected'})
+
+    @staticmethod
     def _error(exc):
         status = getattr(exc, 'status', None)
         safe = type(exc).__name__ == 'OutcomeError' and str(exc).startswith('outcome_') or type(exc).__name__ == 'WorkIQError' and str(exc).startswith('workiq_')
         detail = str(exc) if safe else type(exc).__name__
-        return detail + (f' (HTTP {status})' if status else '') + '. Retry to resume this thread.'
+        detail += f' (HTTP {status})' if status else ''
+        if getattr(exc, 'code', None) == 'workiq_eula_required':
+            return detail + '. WorkIQ requires license acceptance before mail access. Review the WorkIQ terms before resuming.'
+        if MailSync._systemic_error(exc):
+            return detail + '. Import paused. Restore the source or connection before resuming.'
+        return detail + '. Retry to resume this thread.'
 
     async def _run(self):
         phase = 'account verification'
@@ -480,7 +491,7 @@ class MailSync:
                 try:
                     await self._deliver(row['id'])
                 except Exception as exc:
-                    if getattr(exc, 'status', None) in {401, 403}:
+                    if self._systemic_error(exc):
                         raise
                     failed.add(row['id'])
                     self._thread_error(row['id'], exc)
@@ -507,7 +518,7 @@ class MailSync:
             pass
         except Exception as exc:
             self._run_update(state='error', error=f'{phase} failed: {self._error(exc)}')
-            if getattr(exc, 'status', None) in {401, 403}:
+            if self._systemic_error(exc):
                 self._put('config', {**self._get('config'), 'enabled': False})
         finally:
             config = self._get('config')
@@ -530,7 +541,7 @@ class MailSync:
                     await self._prepare(identity, before)
                     attempted = True
                 except Exception as exc:
-                    if getattr(exc, 'status', None) in {401, 403}:
+                    if self._systemic_error(exc):
                         raise
                     failed.add(identity)
                     self._thread_error(identity, exc)

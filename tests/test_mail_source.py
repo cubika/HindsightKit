@@ -107,6 +107,22 @@ class CleaningTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_eula_error_is_safe_and_only_detected_in_failed_tool_responses(self):
+        prompt = 'You must accept the EULA before using this tool. Please use the accept_eula tool to continue.'
+        for flag in ('isError', 'is_error'):
+            with self.subTest(flag=flag):
+                with self.assertRaises(WorkIQError) as raised:
+                    _unpack({flag: True, 'content': [{'type': 'text', 'text': prompt + ' private upstream detail'}]}, 1)
+                self.assertEqual(str(raised.exception), 'workiq_eula_required')
+        data = {'body': {'content': prompt}}
+        payload = {'results': [{'statusCode': 200, 'data': data}]}
+        self.assertEqual(_unpack({'structuredContent': payload}, 1), [data])
+        self.assertEqual(_unpack({'content': [{'type': 'text', 'text': json.dumps(payload)}]}, 1), [data])
+        for content in (None, 'unexpected shape', [{'type': 'text', 'text': 'Private failure mentioning EULA'}],
+                        [{'type': 'image', 'text': prompt}], [{'type': 'text', 'text': None}]):
+            with self.subTest(content=content), self.assertRaisesRegex(WorkIQError, '^workiq_tool_failed$'):
+                _unpack({'isError': True, 'content': content}, 1)
+
     def test_structured_and_text_results(self):
         payload = {"results": [{"statusCode": 200, "data": {"id": "a"}}]}
         for root in ({"structuredContent": payload}, {"structured_content": payload}, {"content": [{"type": "text", "text": json.dumps(payload)}]}):
@@ -138,6 +154,47 @@ class ProtocolTests(unittest.TestCase):
 
 
 class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_session_group_preserves_safe_failure_during_initialization(self):
+        for failure, code, status in (
+                (WorkIQError('workiq_eula_required'), 'workiq_eula_required', None),
+                (WorkIQError('workiq_fetch_failed', 401), 'workiq_fetch_failed', 401),
+                (RuntimeError('Private transport details'), 'workiq_transport_failed', None)):
+            with self.subTest(code=code):
+                source = WorkIQMailSource()
+                @asynccontextmanager
+                async def session(*args):
+                    try:
+                        yield object()
+                    except Exception as error:
+                        raise ExceptionGroup('Private transport details', [RuntimeError('Private cleanup detail'),
+                            ExceptionGroup('Nested private context', [error])])
+                async def account(session):
+                    raise failure
+                source._session, source._read_account = session, account
+                with patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'):
+                    with self.assertRaises(WorkIQError) as raised:
+                        await source.__aenter__()
+                self.assertEqual(str(raised.exception), code)
+                self.assertEqual(raised.exception.status, status)
+                self.assertIsNone(raised.exception.__context__)
+                self.assertIsNone(source._owner)
+
+    async def test_active_session_group_preserves_eula_error(self):
+        source = WorkIQMailSource()
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                raise ExceptionGroup('Private upstream details', [WorkIQError('workiq_eula_required')])
+        @asynccontextmanager
+        async def session(*args):
+            yield Session()
+        async def account(session):
+            return {'id': 'mailbox', 'userPrincipalName': 'user@example.invalid'}
+        source._session, source._read_account = session, account
+        with patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'):
+            async with source:
+                with self.assertRaisesRegex(WorkIQError, '^workiq_eula_required$'):
+                    await source._fetch(['/me'])
+
     async def test_discovery_keeps_invalid_identity_for_explicit_ledger_error(self):
         source = WorkIQMailSource(page_size=2)
         bad = mail(id='bad', internetMessageId='<' + 'a' * 246 + '@example', isDraft=False)

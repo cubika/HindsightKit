@@ -30,6 +30,21 @@ class WorkIQError(RuntimeError):
         self.status = status
 
 
+def _safe_transport_error(error):
+    pending, errors = [error], []
+    while pending:
+        current = pending.pop()
+        if isinstance(current, WorkIQError):
+            errors.append(current)
+        elif isinstance(current, BaseExceptionGroup):
+            pending.extend(reversed(current.exceptions))
+    if not errors:
+        return WorkIQError("workiq_transport_failed")
+    selected = next((item for item in errors if item.code == "workiq_eula_required"),
+                    next((item for item in errors if item.status in {401, 403}), errors[0]))
+    return WorkIQError(selected.code, selected.status)
+
+
 def _hash(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
@@ -104,7 +119,14 @@ def find_workiq(binary=None):
 def _unpack(result, count, allow_missing=False):
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True)
-    if not isinstance(result, dict) or result.get("isError") or result.get("is_error"):
+    if not isinstance(result, dict):
+        raise WorkIQError("workiq_tool_failed")
+    if result.get("isError") or result.get("is_error"):
+        blocks = result.get("content")
+        if isinstance(blocks, list) and any(
+                isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+                and "you must accept the eula before using this tool." in block["text"].lower() for block in blocks):
+            raise WorkIQError("workiq_eula_required")
         raise WorkIQError("workiq_tool_failed")
     payload = result.get("structuredContent") or result.get("structured_content")
     if payload is None:
@@ -265,12 +287,12 @@ class WorkIQMailSource:
                             values = _unpack(result, len(paths), allow_missing)
                     except Exception as error:
                         if not future.done():
-                            future.set_exception(error if isinstance(error, WorkIQError) else WorkIQError("workiq_transport_failed"))
+                            future.set_exception(_safe_transport_error(error))
                     else:
                         if not future.done():
                             future.set_result(values)
         except Exception as error:
-            failure = error if isinstance(error, WorkIQError) else WorkIQError("workiq_transport_failed")
+            failure = _safe_transport_error(error)
             if not self._ready.done():
                 self._ready.set_exception(failure)
             while not self._queue.empty():
