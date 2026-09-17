@@ -542,15 +542,29 @@ class MailSync:
             return
         operation = row['operation_id']
         result = await self._operation(operation)
+        current = await self._document(identity)
+        if current and result['status'] != 'completed':
+            managed = set(json.loads((current.get('document_metadata') or {}).get('managed_tags', '[]')))
+            target['user_tags'] = sorted(set(current.get('tags') or []) - managed)
+            with self.db:
+                self.db.execute('UPDATE threads SET payload=? WHERE id=?', (_json(target), identity))
         if result['status'] == 'cancelled':
             operation = str(uuid.uuid4())
             with self.db:
                 self.db.execute("UPDATE threads SET operation_id=?,state='prepared' WHERE id=?", (operation, identity))
             result = {'status': 'not_found'}
         if result['status'] == 'not_found':
+            from .mail_metadata import tags_for
             meta = {**target['metadata'], 'source': 'workiq-thread', 'thread_id': row['conversation'], 'revision': str(row['target_revision'])}
+            if 'tags' not in target:
+                previous = await self._document(identity) or {}
+                target['tags'], managed = tags_for(meta, previous.get('tags') or [], previous.get('document_metadata') or {})
+                target['metadata']['managed_tags'] = _json(managed)
+                with self.db:
+                    self.db.execute('UPDATE threads SET payload=? WHERE id=?', (_json(target), identity))
+            meta['managed_tags'] = target['metadata']['managed_tags']
             await self.client.aretain(bank_id=self.bank, content=target['content'], metadata=meta, timestamp='unset',
-                document_id=identity, tags=['source:workiq-thread'], update_mode='replace', retain_async=True, operation_id=operation)
+                document_id=identity, tags=target['tags'], update_mode='replace', retain_async=True, operation_id=operation)
             with self.db:
                 self.db.execute("UPDATE threads SET state='submitted' WHERE id=?", (identity,))
         elif result['status'] == 'failed':
@@ -568,6 +582,14 @@ class MailSync:
         document = await self._document(identity)
         if not document or document.get('memory_unit_count') != 1 or document.get('original_text') != target['content']:
             raise RuntimeError('Published thread outcome failed verification.')
+        if 'user_tags' in target:
+            from hindsight_client_api.models import UpdateDocumentRequest
+            managed = set(json.loads(target['metadata']['managed_tags']))
+            additions = set(document.get('tags') or []) - set(target['tags'])
+            reconciled = sorted(managed | set(target['user_tags']) | additions)
+            if set(document.get('tags') or []) != set(reconciled):
+                await self.client.documents.update_document(bank_id=self.bank, document_id=identity,
+                    update_document_request=UpdateDocumentRequest(tags=reconciled))
         self._finish(identity, target, row['target_revision'])
 
     def _finish(self, identity, target, revision):
