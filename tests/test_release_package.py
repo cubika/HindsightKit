@@ -1,7 +1,9 @@
 from pathlib import Path
 import base64
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -29,7 +31,7 @@ def write(root, name, content="fixture"):
 
 class ReleasePackageTests(unittest.TestCase):
     def fixture(self, root):
-        source, postgres, python = root / "source", root / "postgres", root / "python"
+        source, postgres, python, node = root / "source", root / "postgres", root / "python", root / "node"
         for name in package.APP_FILES:
             write(source, name)
         write(source, "pyproject.toml", '[project]\nname = "hindsightkit"\nversion = "0.1.1"\n'
@@ -39,7 +41,6 @@ class ReleasePackageTests(unittest.TestCase):
               '[[package]]\nname = "hindsightkit"\nversion = "0.1.1"\nsource = { editable = "." }\n'
               'dependencies = []\n[package.optional-dependencies]\nserver = []\n')
         write(source, "src/hindsightkit/__init__.py")
-        write(source, "src/hindsightkit/client/package-lock.json", "{}")
         write(source, "docs/install.md")
         write(source, "distribution/install.ps1", "\n".join([
             "$version = '@@VERSION@@'", "$url = '@@RELEASE_URL@@'",
@@ -53,18 +54,63 @@ class ReleasePackageTests(unittest.TestCase):
             version = "0.8.6" if extension == "vector" else "1.0"
             write(postgres, f"share/extension/{extension}.control", f"default_version = '{version}'\n")
         self.manifest(postgres)
+        self.node_bundle(node, source)
         self.python_bundle(python, source)
         return {"version": "v0.1.1", "repository": "release-owner/HindsightKit", "server_url": "https://github.com",
-                "postgres_directory": postgres, "python_directory": python,
+                "postgres_directory": postgres, "python_directory": python, "node_directory": node,
                 "output": root / "release", "source_root": source}
+
+    def node_bundle(self, directory, source):
+        directory.mkdir(parents=True)
+        manifest = {"schema": 1, "platform": "windows-x64", "bundles": {}}
+        for role in ("client", "server", "copilot"):
+            root = source / "src/hindsightkit"
+            if role != "server":
+                root /= role
+            dependencies = ({"@github/copilot": "1.0.85"} if role == "copilot" else
+                            {"@vectorize-io/hindsight-coding-agents": "0.6.1", "jsonc-parser": "3.3.1"})
+            if role == "server":
+                dependencies["@vectorize-io/hindsight-control-plane"] = "0.10.0"
+            if role == "copilot":
+                dependencies["@github/copilot-win32-x64"] = "1.0.85"
+            project = {"name": "fixture-" + role, "version": "1.0.0", "private": True, "dependencies": dependencies}
+            lock = {**project, "lockfileVersion": 3, "requires": True, "packages": {"": project}}
+            files = {}
+            for name, version in dependencies.items():
+                path = "node_modules/" + name
+                lock["packages"][path] = {"version": version, "resolved": f"https://registry.npmjs.org/{name}/-/fixture.tgz",
+                                            "integrity": "sha512-" + base64.b64encode(bytes(64)).decode()}
+                files[path + "/package.json"] = json.dumps({"name": name, "version": version})
+                files[path + "/LICENSE"] = "Original fixture license.\n"
+                if role == "copilot":
+                    files[path + "/LICENSE.md"] = "Original Copilot fixture license.\n"
+            entries = (["@github/copilot/npm-loader.js"] if role == "copilot" else
+                       ["@vectorize-io/hindsight-coding-agents/dist/installer.js",
+                        "@vectorize-io/hindsight-coding-agents/dist/copilot-stop-hook.js",
+                        "jsonc-parser/lib/umd/main.js"])
+            if role == "server":
+                entries.append("@vectorize-io/hindsight-control-plane/standalone/server.js")
+            files.update({"node_modules/" + entry: "// upstream fixture\n" for entry in entries})
+            write(root, "package.json", json.dumps(project))
+            lock_path = write(root, "package-lock.json", json.dumps(lock))
+            archive_path = directory / (role + ".zip")
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                for name, content in sorted(files.items()):
+                    info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+                    info.external_attr = 0o100644 << 16
+                    archive.writestr(info, content)
+            manifest["bundles"][role] = {"archive": archive_path.name, "sha256": package.inspect_file(archive_path),
+                                           "lock_sha256": package.inspect_file(lock_path)}
+        write(directory, "node-bundle.json", json.dumps(manifest, sort_keys=True))
+        return manifest
 
     def python_bundle(self, directory, source):
         wheel = directory / "wheels/hindsightkit-0.1.1-py3-none-any.whl"
         wheel.parent.mkdir(parents=True, exist_ok=True)
         dist_info = "hindsightkit-0.1.1.dist-info"
         content = {
-            "hindsightkit/__init__.py": (source / "src/hindsightkit/__init__.py").read_bytes(),
-            "hindsightkit/client/package-lock.json": (source / "src/hindsightkit/client/package-lock.json").read_bytes(),
+            **{path.relative_to(source / "src").as_posix(): path.read_bytes()
+               for path in (source / "src/hindsightkit").rglob("*") if path.is_file()},
             dist_info + "/METADATA": b"Metadata-Version: 2.4\nName: hindsightkit\nVersion: 0.1.1\nRequires-Python: >=3.12,<3.13\nProvides-Extra: server\n\n",
             dist_info + "/WHEEL": b"Wheel-Version: 1.0\nGenerator: release-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             dist_info + "/licenses/LICENSE": b"Test fixture license retained byte for byte.\n",
@@ -117,13 +163,18 @@ class ReleasePackageTests(unittest.TestCase):
                 "release-notes.md", "SHA256SUMS"})
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
-                    "app/src/hindsightkit/__init__.py", "app/src/hindsightkit/client/package-lock.json",
+                    "app/src/hindsightkit/__init__.py",
+                    *("app/src/hindsightkit/" + prefix + name for prefix in ("", "client/", "copilot/")
+                      for name in ("package.json", "package-lock.json")),
                     "app/docs/install.md", "app/release.json", "app/python/python-bundle.json",
                     "app/python/requirements-client.txt", "app/python/requirements-server.txt",
-                    "app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"})
+                    "app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl",
+                    "app/node/node-bundle.json", "app/node/client.zip", "app/node/server.zip", "app/node/copilot.zip"})
                 self.assertEqual(json.loads(archive.read("app/release.json")), release)
                 self.assertEqual(release["package_role"], "full")
                 self.assertTrue(all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist()))
+                for path in args["node_directory"].iterdir():
+                    self.assertEqual(archive.read("app/node/" + path.name), path.read_bytes())
                 for path in args["python_directory"].rglob("*"):
                     if path.is_file():
                         self.assertEqual(archive.read("app/python/" + path.relative_to(args["python_directory"]).as_posix()),
@@ -131,6 +182,13 @@ class ReleasePackageTests(unittest.TestCase):
             with zipfile.ZipFile(output / package.CLIENT_APP_NAME) as archive:
                 client_release = json.loads(archive.read("app/release.json"))
                 self.assertEqual(client_release["package_role"], "client")
+                self.assertNotIn("app/node/server.zip", archive.namelist())
+                client_node = json.loads(archive.read("app/node/node-bundle.json"))
+                self.assertEqual(set(client_node["bundles"]), {"client", "copilot"})
+                self.assertEqual(client_release["node"]["components"], ["client", "copilot"])
+                for role in ("client", "copilot"):
+                    self.assertEqual(archive.read("app/node/" + role + ".zip"),
+                                     (args["node_directory"] / (role + ".zip")).read_bytes())
                 self.assertNotIn("app/python/requirements-server.txt", archive.namelist())
                 self.assertEqual(json.loads(archive.read("app/python/python-bundle.json"))["profile"], "client")
                 self.assertEqual(archive.read("app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"),
@@ -141,6 +199,7 @@ class ReleasePackageTests(unittest.TestCase):
             base = "https://github.com/release-owner/HindsightKit/releases/download/v0.1.1"
             self.assertEqual(release["release_url"], base)
             self.assertEqual(release["python"], {"version": "3.12", "platform": "windows-x64", "packages": 1})
+            self.assertEqual(release["node"], {"platform": "windows-x64", "components": ["client", "copilot", "server"]})
             self.assertIs(release["requires_auth"], False)
             self.assertEqual(release["postgres"]["url"], base + "/" + package.POSTGRES_NAME)
             self.assertEqual(release["postgres"]["sha256"], package.inspect_file(output / package.POSTGRES_NAME))
@@ -295,6 +354,200 @@ class ReleasePackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "overlaps"):
                 package.package_release(**args)
             self.assertFalse(args["output"].exists())
+
+    def test_missing_tampered_or_private_node_bundle_is_rejected_before_output(self):
+        changes = (lambda root: (root / "node-bundle.json").unlink(),
+                   lambda root: (root / "copilot.zip").unlink(),
+                   lambda root: write(root, "client.zip", "tampered"),
+                   lambda root: write(root, ".npmrc", "//registry.example.test/:_authToken=secret"))
+        for index, change in enumerate(changes):
+            with self.subTest(change=index), tempfile.TemporaryDirectory() as directory:
+                args = self.fixture(Path(directory))
+                change(args["node_directory"])
+                with self.assertRaises((ValueError, OSError)):
+                    package.package_release(**args)
+                self.assertFalse(args["output"].exists())
+
+    def test_node_bundle_validator_receives_exact_inputs_and_cannot_be_bypassed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            with patch.object(package, "validate_node_bundle", side_effect=ValueError("invalid bundle")) as validate:
+                with self.assertRaisesRegex(ValueError, "invalid bundle"):
+                    package.package_release(**args)
+            validate.assert_called_once_with(args["node_directory"], args["source_root"] / "src/hindsightkit")
+            self.assertFalse(args["output"].exists())
+
+    def test_node_bundle_changed_after_validation_is_rejected(self):
+        for changed in ("client.zip", "node-bundle.json", "unexpected.txt"):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                args = self.fixture(Path(directory))
+                original = package.validate_node_bundle
+                def validate_then_change(root, source):
+                    manifest = original(root, source)
+                    write(root, changed, "changed after validation")
+                    return manifest
+                with patch.object(package, "validate_node_bundle", side_effect=validate_then_change):
+                    with self.assertRaisesRegex(ValueError, "changed"):
+                        package.package_release(**args)
+                self.assertFalse(args["output"].exists())
+
+    def test_node_bundle_lock_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            manifest_path = args["node_directory"] / "node-bundle.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["bundles"]["client"]["lock_sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                package.package_release(**args)
+            self.assertFalse(args["output"].exists())
+
+    def test_node_bundle_output_overlap_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            args["output"] = args["node_directory"] / "release"
+            with self.assertRaisesRegex(ValueError, "overlaps"):
+                package.package_release(**args)
+            self.assertFalse(args["output"].exists())
+
+    def test_node_builder_uses_clean_isolated_configs_and_retains_upstream_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            spec = importlib.util.spec_from_file_location("build_node_bundle", ROOT / "distribution/build_node_bundle.py")
+            builder = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {"package_release": package}):
+                spec.loader.exec_module(builder)
+            from hindsightkit import node_bundle
+            binary = write(Path(directory), "tools/node.exe")
+            write(binary.parent, "node_modules/npm/bin/npm-cli.js")
+            output = Path(directory) / "built-node"
+            installs = []
+            checked = []
+            def run(command, *, cwd, env=None, capture=False):
+                values = [str(value) for value in command]
+                if capture:
+                    return json.dumps({"version": "22.23.2", "platform": "win32", "arch": "x64"})
+                if "ci" in values:
+                    role = Path(cwd).name
+                    installs.append(role)
+                    user_config = Path(values[values.index("--userconfig") + 1])
+                    global_config = Path(values[values.index("--globalconfig") + 1])
+                    self.assertNotEqual(user_config, global_config)
+                    self.assertEqual(user_config.read_text(), "")
+                    self.assertEqual(global_config.read_text(), "")
+                    self.assertIn("--registry=https://registry.npmjs.org", values)
+                    self.assertIn("--include=optional", values)
+                    self.assertIn("--ignore-scripts=false", values)
+                    with zipfile.ZipFile(args["node_directory"] / (role + ".zip")) as archive:
+                        archive.extractall(cwd)
+                else:
+                    self.assertTrue(values[1].endswith("verify_node_install.py"))
+                    self.assertTrue(output.is_dir())
+                    checked.append(node_bundle.validate_bundle(
+                        Path(values[values.index("--bundle") + 1]), args["source_root"] / "src/hindsightkit"))
+            output_text = io.StringIO()
+            with (patch.object(builder.sys, "platform", "win32"),
+                  patch.object(builder.platform, "machine", return_value="AMD64"),
+                  patch.object(builder.shutil, "which", return_value=str(binary)),
+                  patch.object(builder, "run", side_effect=run), patch.object(sys, "path", list(sys.path)),
+                  contextlib.redirect_stdout(output_text)):
+                manifest = builder.build_bundle(source_root=args["source_root"], output=output)
+            self.assertEqual(installs, ["client", "server", "copilot"])
+            self.assertEqual(len(checked), 1)
+            self.assertEqual(set(manifest["bundles"]), set(installs))
+            self.assertIn("npm completed for server; inspecting files", output_text.getvalue())
+            self.assertIn("Packing server.zip:", output_text.getvalue())
+            self.assertIn("Packed copilot.zip", output_text.getvalue())
+            for role in installs:
+                with (zipfile.ZipFile(args["node_directory"] / (role + ".zip")) as original,
+                      zipfile.ZipFile(output / (role + ".zip")) as built):
+                    self.assertEqual(set(original.namelist()), set(built.namelist()))
+                    for name in original.namelist():
+                        self.assertEqual(original.read(name), built.read(name))
+                    self.assertTrue(any(name.endswith("/LICENSE") for name in built.namelist()))
+                    self.assertTrue(all(name.startswith("node_modules/") for name in built.namelist()))
+
+    def test_archive_progress_reports_files_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = {}
+            for index in range(2):
+                path = write(root, f"file-{index}.txt")
+                files[path.name] = (path, package.inspect_file(path))
+            with (patch.object(package.time, "monotonic", side_effect=range(0, 100, 11)),
+                  contextlib.redirect_stdout(io.StringIO()) as output):
+                package.write_archive(root / "progress.zip", files, progress_label="fixture.zip")
+            self.assertIn("Packing fixture.zip: 1/2 files", output.getvalue())
+            self.assertIn("Packing fixture.zip: 2/2 files", output.getvalue())
+
+    def test_node_builder_retains_archives_when_offline_runtime_verification_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            spec = importlib.util.spec_from_file_location("build_node_bundle", ROOT / "distribution/build_node_bundle.py")
+            builder = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {"package_release": package}):
+                spec.loader.exec_module(builder)
+            from hindsightkit import node_bundle
+            binary = write(Path(directory), "tools/node.exe")
+            write(binary.parent, "node_modules/npm/bin/npm-cli.js")
+            output = Path(directory) / "failed-build"
+            def run(command, *, cwd, env=None, capture=False):
+                values = [str(value) for value in command]
+                if capture:
+                    return json.dumps({"version": "22.23.2", "platform": "win32", "arch": "x64"})
+                if "ci" in values:
+                    with zipfile.ZipFile(args["node_directory"] / (Path(cwd).name + ".zip")) as archive:
+                        archive.extractall(cwd)
+                    return
+                self.assertEqual(Path(values[values.index("--bundle") + 1]), output)
+                raise subprocess.CalledProcessError(7, values)
+            with (patch.object(builder.sys, "platform", "win32"),
+                  patch.object(builder.platform, "machine", return_value="AMD64"),
+                  patch.object(builder.shutil, "which", return_value=str(binary)),
+                  patch.object(builder, "run", side_effect=run), patch.object(sys, "path", list(sys.path)),
+                  contextlib.redirect_stdout(io.StringIO())):
+                with self.assertRaisesRegex(ValueError, "Build is incomplete; archives were retained") as failure:
+                    builder.build_bundle(source_root=args["source_root"], output=output)
+                self.assertIn("verify_node_install.py --bundle", str(failure.exception))
+                manifest = node_bundle.validate_bundle(output, args["source_root"] / "src/hindsightkit")
+                self.assertEqual(set(manifest["bundles"]), {"client", "server", "copilot"})
+                original = {path.name: path.read_bytes() for path in output.iterdir()}
+                with self.assertRaisesRegex(ValueError, "must be new or empty"):
+                    builder.build_bundle(source_root=args["source_root"], output=output)
+                self.assertEqual(original, {path.name: path.read_bytes() for path in output.iterdir()})
+
+    def test_node_builder_rejects_missing_copilot_redistribution_licenses(self):
+        spec = importlib.util.spec_from_file_location("build_node_bundle", ROOT / "distribution/build_node_bundle.py")
+        builder = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"package_release": package}):
+            spec.loader.exec_module(builder)
+        for missing in ("@github/copilot", "@github/copilot-win32-x64"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for name in ("@github/copilot", "@github/copilot-win32-x64"):
+                    write(root, f"node_modules/{name}/LICENSE.md", "Upstream license\n")
+                (root / "node_modules" / missing / "LICENSE.md").unlink()
+                with self.assertRaisesRegex(ValueError, "redistribution license is missing"):
+                    builder.check_copilot_licenses(root)
+
+    def test_packaging_rejects_rehashed_bundle_missing_copilot_license(self):
+        for missing in ("@github/copilot", "@github/copilot-win32-x64"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                args = self.fixture(Path(directory))
+                path = args["node_directory"] / "copilot.zip"
+                with zipfile.ZipFile(path) as original:
+                    retained = {name: original.read(name) for name in original.namelist()
+                                if name != "node_modules/" + missing + "/LICENSE.md"}
+                with zipfile.ZipFile(path, "w") as archive:
+                    for name, content in retained.items():
+                        archive.writestr(name, content)
+                manifest_path = args["node_directory"] / "node-bundle.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["bundles"]["copilot"]["sha256"] = package.inspect_file(path)
+                manifest_path.write_text(json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, "redistribution license is missing"):
+                    package.package_release(**args)
+                self.assertFalse(args["output"].exists())
 
     def test_tag_mismatch_and_template_injection_are_rejected_before_output(self):
         invalid = (("version", "v0.2.0"), ("version", "v0.1.1'; Write-Host 'bad"),

@@ -96,6 +96,30 @@ function Invoke-Checked {
     if ($Capture) { return ($captured -join [Environment]::NewLine).Trim() }
 }
 
+function Get-UsableNode([string]$Binary, [string]$RequiredVersion) {
+    if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) { return }
+    $npm = Join-Path (Split-Path -Parent $Binary) 'node_modules/npm/bin/npm-cli.js'
+    if (-not (Test-Path -LiteralPath $npm -PathType Leaf)) {
+        Write-InstallStatus "Skipping Node.js at ${Binary}: npm is missing."
+        return
+    }
+    try { $version = Invoke-Checked $Binary @('--version') -Capture } catch {
+        Write-InstallStatus "Skipping Node.js at ${Binary}: version check failed."
+        return
+    }
+    if ($version -notmatch '^v([0-9]+)\.[0-9]+\.[0-9]+$' -or [int]$Matches[1] -lt 22) {
+        Write-InstallStatus "Skipping Node.js at ${Binary}: Node.js 22+ is required (found $version)."
+        return
+    }
+    if ($RequiredVersion -and $version -ne "v$RequiredVersion") { return }
+    try { $architecture = Invoke-Checked $Binary @('-p', 'process.arch') -Capture } catch { return }
+    if ($architecture -ne 'x64') {
+        Write-InstallStatus "Skipping Node.js at ${Binary}: an x64 runtime is required (found $architecture)."
+        return
+    }
+    return [pscustomobject]@{ Binary = [IO.Path]::GetFullPath($Binary); Version = $version }
+}
+
 $releaseInstall = [bool]$env:HINDSIGHTKIT_RELEASE_MANIFEST
 $serverProfile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
 $hadServer = (Test-Path -LiteralPath $serverProfile -PathType Leaf) -or
@@ -150,20 +174,19 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     $nodeVersion = '22.23.2'
     $bundledNodeDirectory = Join-Path $toolsDirectory "node-v$nodeVersion-win-x64"
     $bundledNode = Join-Path $bundledNodeDirectory 'node.exe'
-    if ($releaseInstall) {
-        # Release commands must survive removal of a previous source checkout.
-        $nodeReady = $false
-        if (Test-Path -LiteralPath $bundledNode -PathType Leaf) {
-            $installedNodeVersion = Invoke-Checked $bundledNode @('--version') -Capture
-            $nodeReady = $installedNodeVersion -eq "v$nodeVersion"
+    $selectedNode = $null
+    foreach ($candidate in @(Get-Command node.exe -CommandType Application -All -ErrorAction SilentlyContinue)) {
+        if ($releaseInstall -and $candidate.Source -match '^(.*)[\\/]\.runtime[\\/]tools[\\/]node-[^\\/]+[\\/]node.exe$' -and
+            (Test-Path -LiteralPath (Join-Path $Matches[1] 'setup.ps1')) -and
+            (Test-Path -LiteralPath (Join-Path $Matches[1] 'pyproject.toml'))) {
+            # A release must survive removal of an old checkout or version directory.
+            continue
         }
-    } else {
-        $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
-        $installedNodeVersion = if ($nodeCommand) { Invoke-Checked $nodeCommand.Source @('--version') -Capture } else { '' }
-        $nodeMajor = if ($installedNodeVersion -match '^v([0-9]+)\.') { [int]$Matches[1] } else { 0 }
-        $nodeReady = $nodeMajor -ge 22
+        $selectedNode = Get-UsableNode $candidate.Source
+        if ($selectedNode) { break }
     }
-    if (-not $nodeReady) {
+    if (-not $selectedNode) { $selectedNode = Get-UsableNode $bundledNode $nodeVersion }
+    if (-not $selectedNode) {
         # Official portable Node includes npm and needs no administrator installation.
         $archiveName = "node-v$nodeVersion-win-x64.zip"
         $nodeArchive = Join-Path $toolsDirectory $archiveName
@@ -175,16 +198,13 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
         $expected = ($checksumLine.Trim() -split '\s+')[0]
         if ((Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash -ne $expected) { throw 'Node.js checksum mismatch.' }
         Expand-Archive -LiteralPath $nodeArchive -DestinationPath $toolsDirectory -Force
-        $installedNodeVersion = Invoke-Checked $bundledNode @('--version') -Capture
-        if ($installedNodeVersion -ne "v$nodeVersion") { throw 'The installed Node.js version does not match the pinned runtime.' }
-        Write-InstallStatus "Installed Node.js $installedNodeVersion at $bundledNode"
+        $selectedNode = Get-UsableNode $bundledNode $nodeVersion
+        if (-not $selectedNode) { throw 'The installed Node.js must match the pinned runtime and include npm.' }
+        Write-InstallStatus "Installed Node.js $($selectedNode.Version) at $($selectedNode.Binary)"
     } else {
-        $selectedNode = if ($releaseInstall) { $bundledNode } else { $nodeCommand.Source }
-        Write-InstallStatus "Reusing Node.js $installedNodeVersion at $selectedNode"
+        Write-InstallStatus "Reusing Node.js $($selectedNode.Version) at $($selectedNode.Binary)"
     }
-    if ($releaseInstall -or -not $nodeReady) {
-        $env:PATH = $bundledNodeDirectory + ';' + $env:PATH
-    }
+    $env:PATH = (Split-Path -Parent $selectedNode.Binary) + ';' + $env:PATH
     Write-InstallStatus 'Completed: Prepare Node.js'
 
     $env:UV_CACHE_DIR = Join-Path $PSScriptRoot '.runtime/uv-cache'
@@ -224,11 +244,9 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     }
     Write-InstallStatus "Completed: $stage"
     $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
-    if ($releaseInstall) {
-        # prepare_env reads this before selecting Node, so replace any old checkout path.
-        New-Item -ItemType Directory -Path $commandRoot -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path $commandRoot 'node-path.txt'), $bundledNode, (New-Object Text.UTF8Encoding($false)))
-    }
+    # prepare_env reads this before selecting Node; keep the choice from this run.
+    New-Item -ItemType Directory -Path $commandRoot -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $commandRoot 'node-path.txt'), $selectedNode.Binary, (New-Object Text.UTF8Encoding($false)))
     $stage = if ($clientOnly) { 'Configure client integrations' } else { 'Configure HindsightKit and verify memory' }
     Write-InstallStatus "Starting: $stage"
     $setupArgs = @('-m', 'hindsightkit.cli', 'setup')

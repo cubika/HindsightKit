@@ -1,19 +1,19 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.2 Windows x64 preview. The `-ClientOnly` entry requires v0.1.2 or later. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks and publication status.
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.3 Windows x64 preview. The `-ClientOnly` entry requires v0.1.2 or later. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks and publication status.
 
 ## Before installing
 
 - Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
 - Install Git for coding integrations, and have a Copilot account available for sign-in. A dedicated server installed with ServerOnly does not need Git for client routing.
-- Allow downloads from GitHub, npm, and Node.js. Python packages come in the release archive, but the interpreter, Node.js, and npm components still download. A new local server also downloads the embedding model and database distribution.
+- Allow downloads from GitHub and Node.js. Python and npm packages come in the release archive; the interpreter and, when needed, Node.js still download. A new local server also downloads the embedding model and database distribution.
 - For a private or internal release, install GitHub CLI and sign in with an account that can read the repository. The release page provides its authenticated command. A browser login does not authenticate PowerShell downloads.
 
 The installer uses the default Copilot profile. A custom `COPILOT_HOME` must be unset before setup. WorkIQ is optional and is not installed by HindsightKit.
 
 ## What setup does
 
-Default setup installs the local server and coding integrations. It prepares a managed Python 3.12 environment and Node.js, installs the bundled Python packages with hash checks and package-index access disabled, then downloads the remaining components and precompiled database distribution. It checks Copilot authentication, starts Hindsight and its dashboard, verifies a temporary memory through retain/recall, and registers the client. The test bank is removed afterward. The check uses the server's Copilot allowance.
+Default setup installs the local server and coding integrations. It prepares a managed Python 3.12 environment and Node.js, installs bundled Python and npm packages with hash checks, then downloads the precompiled database distribution and embedding model when needed. It checks Copilot authentication, starts Hindsight and its dashboard, verifies a temporary memory through retain/recall, and registers the client. The test bank is removed afterward. The check uses the server's Copilot allowance.
 
 The release installer prints the current stage and log location. Runtime messages distinguish `Downloading`, `Installed`, and `Reusing`, with the version and path. A completed Node.js stage does not mean that the later Python or server setup stages have succeeded.
 
@@ -25,7 +25,7 @@ An existing remote client connection is preserved by default setup. Use the sepa
 
 ## Prepare a client for another server
 
-Use the v0.1.2 release page's `-ClientOnly` command. On a fresh client it selects the smaller archive, containing the 87 locked client Python packages, and prepares the command and Copilot components. It does not invent a default endpoint, contact a memory server, or install a local dashboard, database, or model.
+Use the release page's `-ClientOnly` command. On a fresh client it selects the smaller archive, containing the 87 locked client Python packages, and prepares the command and Copilot components. It does not invent a default endpoint, contact a memory server, or install a local dashboard, database, or model.
 
 After preparation, choose the server:
 
@@ -121,33 +121,19 @@ An existing external PostgreSQL URL is retained and checked. Its administrator m
 
 The release installer prints the failed stage, the first matching dependency error, and a log path under `<InstallDir>\logs`. With the default directory, logs are in `%LOCALAPPDATA%\HindsightKit\logs`. The installer restricts this directory to the current user and SYSTEM.
 
-The log contains stage messages and dependency-command output, not a complete terminal transcript. In v0.1.2, npm output is also logged during client or server integration installation. Copilot login and connection-key prompts remain excluded. Keep the relevant console error if the failure occurs during an interactive stage.
+The log contains stage messages and dependency-command output, not a complete terminal transcript. Source installations also log npm output. Copilot login and connection-key prompts remain excluded. Keep the relevant console error if the failure occurs during an interactive stage.
 
-### npm installation takes time
+### Dependency installation and retries
 
-The v0.1.2 installer displays npm output and the working directory, then prints `Still installing ... elapsed ...` every ten seconds while the process runs. Completion includes elapsed time. These messages report a running process; they do not estimate a completion percentage. Matching installed components print `Reusing` instead of running npm again.
+Release installation uses bundled Python wheels and npm components, including the official Copilot CLI. It verifies the archives and installed entry points. Missing or damaged bundles stop setup; it does not fall back to package downloads. Source setup still uses npm and respects its registry, proxy, and CA configuration.
 
-An earlier hosted run spent about five minutes installing dashboard npm components before moving to client integration. A wait of several minutes is possible, but that measurement does not identify the reason for another machine's wait. Use the current npm output and installation log to distinguish a slow download from an error. Failure summaries preserve the first error, recent output, exit code, working directory, and log path; credentials in npm output are redacted.
+Setup reuses x64 Node.js 22+ with npm from PATH. Otherwise it reuses the current installation's portable Node.js or downloads the pinned official runtime. It skips runtimes inside another HindsightKit checkout or release directory.
 
-An active Copilot session does not determine npm's download progress. Reload VS Code and start a new Copilot CLI session after installation to load updated hooks and configuration. Restarting those clients is not a remedy for a stalled npm request.
-
-### Python packages fail to install
-
-Release installation uses `--offline`, `--no-index`, and `--require-hashes` for Python packages. It stops on a missing bundle or checksum failure instead of falling back to PyPI. Use the complete application archive selected by the installer. The Python interpreter is a separate download; check the stage name to distinguish it from package installation.
-
-In v0.1.0, the locked `hindsight-api-slim 0.10.0` wheel failed with TLS `HandshakeFailure` on `files.pythonhosted.org` while the index remained reachable. The error was reproduced locally and also appeared in the second machine's supplied log. Switching to the system certificate store did not resolve the locally reproduced failure. The network component responsible was not identified.
-
-An older source installation may keep working because its packages and cache already exist. Each release has a separate environment and cache, so an existing working checkout does not validate a new download. Source setup still uses the lockfile and package hosts; the bundled-package change applies to release installation. Keep TLS verification enabled.
-
-### Node.js output is unclear
-
-The output distinguishes three states: `Downloading Node.js` starts the transfer, `Installed Node.js` follows extraction and version verification, and `Reusing Node.js` confirms an existing suitable runtime. Release installs use the pinned managed copy so they do not depend on a source checkout. Source setup can reuse a suitable Node.js from PATH.
-
-The v0.1.0 message `Installing Node.js...` only marked entry into the download/install path; reuse was silent. A later uv error means the installation stopped after that stage.
+Rerun the same installer after an interrupted dependency installation. No uninstall or cache cleanup is needed. Keep memory, connection settings, and Copilot configuration. Installation checks existing npm files and repairs damaged dependencies from the bundle.
 
 ### Retry reports changed application files
 
-The release installer verifies installed application files on retry. It stops if they are edited, missing, or damaged. Use a new `-InstallDir` for a clean copy; existing settings and database paths remain unchanged. Dependency downloads can otherwise be retried in the same version directory.
+The release installer verifies installed application files on retry. It stops if they are edited, missing, or damaged. Use a new `-InstallDir` for a clean copy; existing settings and database paths remain unchanged. Dependency installation can otherwise be retried in the same version directory.
 
 ### Command or editor still uses an older installation
 

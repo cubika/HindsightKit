@@ -82,6 +82,29 @@ class InstallProgressTests(unittest.TestCase):
                 self.assertIn("registry.example.test/package", recorded)
                 self.assertIn("[REDACTED]", recorded)
 
+    def test_tls_failure_explains_retry_even_when_error_has_left_the_tail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "tls.log"
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(install_progress.InstallError) as failure:
+                install_progress.run_install([sys.executable, "-u", "-c",
+                    "import sys; print('npm error earlier failure'); "
+                    "print('npm http fetch attempt 1 failed with ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE'); "
+                    "[print('detail '+str(i)) for i in range(12)]; sys.exit(1)"],
+                    cwd=directory, label="npm dependencies", log_path=log)
+            for recorded in (str(failure.exception), log.read_text(encoding="utf-8")):
+                self.assertIn("registry, proxy, and CA settings", recorded)
+                self.assertIn("NODE_EXTRA_CA_CERTS", recorded)
+                self.assertIn("no uninstall or npm cache cleanup", recorded)
+                self.assertIn("Keep certificate verification enabled", recorded)
+
+    def test_recovered_tls_retry_does_not_report_installation_failure(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()) as output:
+            install_progress.run_install([sys.executable, "-c",
+                "print('npm http fetch attempt 1 failed with ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE')"],
+                cwd=directory, label="npm dependencies")
+        self.assertIn("Completed npm dependencies", output.getvalue())
+        self.assertNotIn("Check the registry", output.getvalue())
+
     def test_spawn_failure_is_explained_and_logged_without_command_arguments(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "failure.log"

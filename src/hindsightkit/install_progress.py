@@ -20,6 +20,9 @@ _SECRET = re.compile(
     r"api[_-]?key|(?:npm|node_auth|github|gh)[_-]?token|password|passwd|secret|token)"
     r"[\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;]+)")
 _ERROR = re.compile(r"(?i)\bnpm\s+err!|\b(?:error|fatal|exception|failed)\b")
+_TLS_ERROR = re.compile(
+    r"(?i)ERR_SSL|ERR_TLS|HANDSHAKE_FAILURE|HandshakeFailure|CERT_HAS_EXPIRED|"
+    r"SELF_SIGNED_CERT|UNABLE_TO_(?:VERIFY_LEAF_SIGNATURE|GET_ISSUER_CERT)")
 
 
 def redact(text: str) -> str:
@@ -73,6 +76,7 @@ def run_install(command, *, cwd, label, log_path=None, heartbeat_seconds=10):
     process = reader = None
     tail = deque(maxlen=8)
     first_error = None
+    tls_error = False
 
     def elapsed():
         return f"{time.monotonic() - started:.1f}s"
@@ -133,6 +137,7 @@ def run_install(command, *, cwd, label, log_path=None, heartbeat_seconds=10):
                     output_done = True
                 elif message is not None:
                     safe = emit(message)
+                    tls_error = tls_error or bool(_TLS_ERROR.search(safe))
                     if safe.strip():
                         tail.append(safe)
                         if first_error is None and _ERROR.search(safe):
@@ -147,6 +152,13 @@ def run_install(command, *, cwd, label, log_path=None, heartbeat_seconds=10):
                     summary += "\nFirst error: " + first_error
                 if tail:
                     summary += "\nLast output:\n" + "\n".join(tail)
+                if tls_error:
+                    summary += ("\nA TLS connection or certificate check failed. Check the registry, proxy, "
+                                "and CA settings used by npm on this machine. HindsightKit honors .npmrc "
+                                "and npm_config_* environment settings; for a private CA, use npm cafile "
+                                "or NODE_EXTRA_CA_CERTS. Keep certificate verification enabled. "
+                                "After fixing network access, rerun the same installer; no uninstall or "
+                                "npm cache cleanup is needed.")
                 raise InstallError(emit(summary), code)
             emit(f"Completed {label} (elapsed {elapsed()}).")
         except KeyboardInterrupt:

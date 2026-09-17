@@ -20,7 +20,7 @@ concurrency:
 jobs:
   package:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_VISIBILITY: ${{ github.event.repository.visibility }}
@@ -64,11 +64,16 @@ jobs:
           if ($LASTEXITCODE) { throw 'Python package bundle failed.' }
           .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/python --uv uv
           if ($LASTEXITCODE) { throw 'Offline Python installation validation failed.' }
+      - name: Build and verify offline Node components
+        shell: pwsh
+        run: |
+          .venv/Scripts/python.exe distribution/build_node_bundle.py --source-root . --output dist/node
+          if ($LASTEXITCODE) { throw 'Node component bundle or offline validation failed.' }
       - name: Package validated release assets
         shell: pwsh
         run: |
           $distribution = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres/pgsql'
-          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --python-directory dist/python --output dist/release
+          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --python-directory dist/python --node-directory dist/node --output dist/release
           if ($LASTEXITCODE) { throw 'Release packaging failed.' }
       - name: Verify Python installation from the final application archive
         shell: pwsh
@@ -79,6 +84,10 @@ jobs:
           Expand-Archive -LiteralPath dist/release/hindsightkit-client-windows-x64.zip -DestinationPath dist/verified-client
           .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/verified-client/app/python --uv uv
           if ($LASTEXITCODE) { throw 'Client package offline installation failed.' }
+          .venv/Scripts/python.exe distribution/verify_node_install.py --bundle dist/verified-application/app/node --package dist/verified-application/app/src/hindsightkit
+          if ($LASTEXITCODE) { throw 'Packaged server Node installation failed.' }
+          .venv/Scripts/python.exe distribution/verify_node_install.py --bundle dist/verified-client/app/node --package dist/verified-client/app/src/hindsightkit
+          if ($LASTEXITCODE) { throw 'Packaged client Node installation failed.' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release

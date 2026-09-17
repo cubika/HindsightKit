@@ -21,6 +21,30 @@ def options(**values):
         server_only=False, client_only=False, model_dir=None, port=None, reasoning_effort=None, no_open=True), **values))
 
 
+def powershell_environment(root, **updates):
+    environment = {key: value for key, value in os.environ.items()
+                   if key.lower() != 'psmodulepath' and not key.upper().startswith('HINDSIGHTKIT_')}
+    for name, relative in [('LOCALAPPDATA', 'AppData/Local'), ('APPDATA', 'AppData/Roaming')]:
+        directory = root / relative
+        directory.mkdir(parents=True, exist_ok=True)
+        environment[name] = str(directory)
+    environment.update(USERPROFILE=str(root), COPILOT_HOME='', HINDSIGHTKIT_HOME=str(root / 'state'))
+    environment['PATH'] = os.pathsep.join(part for part in os.environ['PATH'].split(os.pathsep)
+                                        if part and not (Path(part) / 'node.exe').is_file())
+    return {**environment, **updates}
+
+
+def offline_setup_command(shell, script, arguments=()):
+    wrapper = script.with_name('invoke-test.ps1')
+    quoted = [value if value.startswith('-') and value[1:].isalpha()
+              else "'" + value.replace("'", "''") + "'" for value in arguments]
+    wrapper.write_text("$ErrorActionPreference = 'Stop'\n"
+                       'function Invoke-WebRequest { throw "Unexpected download in setup fixture." }\n'
+                       "& (Join-Path $PSScriptRoot 'setup.ps1') " + ' '.join(quoted) +
+                       '\nexit $LASTEXITCODE\n', encoding='utf-8')
+    return [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(wrapper)]
+
+
 class RemoteSetupTests(unittest.TestCase):
     @contextlib.contextmanager
     def client_environment(self, root):
@@ -287,7 +311,7 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-            command = [shell, '-NoProfile', '-File', str(script)]
+            environment = powershell_environment(root)
             for arguments in [['-Server', 'ftp://invalid.example'], ['-Server', 'http://host/path'],
                               ['-Server', 'http://host', '-Model', 'server-only'],
                               ['-Server', 'http://host', '-ServerOnly'], ['-Port', '65536'],
@@ -295,7 +319,8 @@ class RemoteSetupTests(unittest.TestCase):
                               ['-Bank', 'hidden'], ['-DeviceName', 'automatic'], ['-ApiUrl', 'http://host'],
                               ['-Share'], ['-Listen', '0.0.0.0'], ['-Local'], ['-ReplaceConnection']]:
                 with self.subTest(arguments=arguments):
-                    result = subprocess.run(command + arguments, capture_output=True, timeout=15)
+                    result = subprocess.run(offline_setup_command(shell, script, arguments),
+                        env=environment, capture_output=True, timeout=15)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse((root / '.runtime').exists())
 
@@ -310,52 +335,66 @@ class RemoteSetupTests(unittest.TestCase):
             for changes, message in [({'PATH': '', 'COPILOT_HOME': ''}, 'Git must be installed'),
                                      ({'COPILOT_HOME': str(root / 'custom-copilot')}, 'Unset COPILOT_HOME')]:
                 with self.subTest(changes=changes):
-                    result = subprocess.run([shell, '-NoProfile', '-File', str(script)],
-                        env={**os.environ, **changes}, capture_output=True, text=True, encoding='utf-8', timeout=15)
+                    result = subprocess.run(offline_setup_command(shell, script),
+                        env=powershell_environment(root, **changes), capture_output=True, text=True, encoding='utf-8', timeout=15)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(message, result.stderr)
                     self.assertFalse((root / '.runtime').exists())
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows setup dependency selection')
     def test_client_release_upgrade_retains_installed_server_dependencies(self):
-        shell = shutil.which('pwsh') or shutil.which('powershell')
-        if not shell:
-            self.skipTest('PowerShell is not available.')
-        for installed_server in [None, 'profile', 'runtime']:
-            with self.subTest(installed_server=installed_server), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                release = root / 'new-release'
-                release.mkdir()
-                script = release / 'setup.ps1'
-                shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-                if installed_server == 'profile':
-                    profile = root / '.hindsight/profiles/hindsightkit.env'
-                    profile.parent.mkdir(parents=True)
-                    profile.write_text('HINDSIGHT_API_PORT=18077\n', encoding='utf-8')
-                elif installed_server == 'runtime':
-                    (release / '.venv/Lib/site-packages/hindsight_api').mkdir(parents=True)
-                binary = root / 'bin'
-                binary.mkdir()
-                (binary / 'node.ps1').write_text("Write-Output 'v22.23.2'\n", encoding='utf-8')
-                (binary / 'uv.ps1').write_text(
-                    'if ($args[0] -eq "--version") { Write-Output "uv 0.12.15"; $global:LASTEXITCODE = 0; return }\n'
-                    'ConvertTo-Json -InputObject @($args) | Set-Content -LiteralPath $env:TEST_SYNC_ARGS\n'
-                    '$global:LASTEXITCODE = 71\n', encoding='utf-8')
-                trace = root / 'sync-args.json'
-                environment = {**os.environ, 'USERPROFILE': str(root), 'COPILOT_HOME': '',
-                    'PATH': str(binary) + os.pathsep + os.environ['PATH'], 'TEST_SYNC_ARGS': str(trace)}
-                result = subprocess.run([shell, '-NoProfile', '-File', str(script), '-Server', 'http://remote.invalid'],
-                    env=environment, capture_output=True, text=True, encoding='utf-8', timeout=15)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('exit 71', result.stderr)
-                arguments = json.loads(trace.read_text(encoding='utf-8-sig'))
-                self.assertEqual(arguments[:2], ['sync', '--project'])
-                self.assertTrue(Path(arguments[2]).samefile(release))
-                self.assertEqual('--extra' in arguments, installed_server is not None)
-                if installed_server:
-                    self.assertEqual(arguments[-2:], ['--extra', 'server'])
-                if installed_server == 'profile':
-                    self.assertFalse((release / '.venv').exists())
-                    self.assertEqual(profile.read_text(encoding='utf-8'), 'HINDSIGHT_API_PORT=18077\n')
+        compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        shells = list(dict.fromkeys(filter(None, [shutil.which('powershell.exe'), shutil.which('pwsh')])))
+        if not shells or not compiler.is_file():
+            self.skipTest('PowerShell and the Windows .NET compiler are required.')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'node.cs'
+            source.write_text('class Node { static void Main(string[] args) { System.Console.WriteLine(args[0] == "-p" ? "x64" : "v22.23.2"); } }', encoding='utf-8')
+            native = root / 'node.exe'
+            subprocess.run([str(compiler), '/nologo', '/out:' + str(native), str(source)],
+                           check=True, capture_output=True, timeout=30)
+            for shell in shells:
+                for installed_server in [None, 'profile', 'runtime']:
+                    with self.subTest(shell=Path(shell).name, installed_server=installed_server):
+                        case = root / Path(shell).stem / str(installed_server)
+                        release = case / 'new-release'
+                        release.mkdir(parents=True)
+                        script = release / 'setup.ps1'
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+                        if installed_server == 'profile':
+                            profile = case / '.hindsight/profiles/hindsightkit.env'
+                            profile.parent.mkdir(parents=True)
+                            profile.write_text('HINDSIGHT_API_PORT=18077\n', encoding='utf-8')
+                        elif installed_server == 'runtime':
+                            (release / '.venv/Lib/site-packages/hindsight_api').mkdir(parents=True)
+                        binary = case / 'bin'
+                        binary.mkdir()
+                        shutil.copyfile(native, binary / 'node.exe')
+                        npm = binary / 'node_modules/npm/bin/npm-cli.js'
+                        npm.parent.mkdir(parents=True)
+                        npm.write_text('// fixture')
+                        (binary / 'uv.ps1').write_text(
+                            'if ($args[0] -eq "--version") { Write-Output "uv 0.12.15"; $global:LASTEXITCODE = 0; return }\n'
+                            'ConvertTo-Json -InputObject @($args) | Set-Content -LiteralPath $env:TEST_SYNC_ARGS\n'
+                            '$global:LASTEXITCODE = 71\n', encoding='utf-8')
+                        trace = case / 'sync-args.json'
+                        environment = powershell_environment(case, TEST_SYNC_ARGS=str(trace))
+                        environment['PATH'] = str(binary) + os.pathsep + environment['PATH']
+                        result = subprocess.run(offline_setup_command(shell, script, ['-Server', 'http://remote.invalid']),
+                            env=environment, capture_output=True, text=True, encoding='utf-8', timeout=30)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('exit 71', result.stderr)
+                        self.assertIn('Reusing Node.js v22.23.2 at ' + str(binary / 'node.exe'), result.stdout)
+                        arguments = json.loads(trace.read_text(encoding='utf-8-sig'))
+                        self.assertEqual(arguments[:2], ['sync', '--project'])
+                        self.assertTrue(Path(arguments[2]).samefile(release))
+                        self.assertEqual('--extra' in arguments, installed_server is not None)
+                        if installed_server:
+                            self.assertEqual(arguments[-2:], ['--extra', 'server'])
+                        if installed_server == 'profile':
+                            self.assertFalse((release / '.venv').exists())
+                            self.assertEqual(profile.read_text(encoding='utf-8'), 'HINDSIGHT_API_PORT=18077\n')
 
     @unittest.skipUnless(os.name == 'nt', 'Release installer runs on Windows.')
     def test_release_setup_uses_its_own_node_and_reuses_the_verified_version(self):
@@ -366,15 +405,16 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / 'node.cs'
-            source.write_text('class Node { static void Main() { System.Console.WriteLine("v22.23.2"); } }', encoding='utf-8')
+            source.write_text('class Node { static void Main(string[] args) { System.Console.WriteLine(args[0] == "-p" ? "x64" : "v22.23.2"); } }', encoding='utf-8')
             fake_node = root / 'node.exe'
             subprocess.run([str(compiler), '/nologo', '/out:' + str(fake_node), str(source)], check=True, capture_output=True, timeout=30)
-            source.write_text('class Node { static void Main() { System.Console.WriteLine("v22.18.0"); } }', encoding='utf-8')
+            source.write_text('class Node { static void Main() { System.Console.WriteLine("v20.18.0"); } }', encoding='utf-8')
             old_node = root / 'old-node.exe'
             subprocess.run([str(compiler), '/nologo', '/out:' + str(old_node), str(source)], check=True, capture_output=True, timeout=30)
             archive = root / 'fixture.zip'
             with zipfile.ZipFile(archive, 'w') as fixture:
                 fixture.write(fake_node, 'node-v22.23.2-win-x64/node.exe')
+                fixture.writestr('node-v22.23.2-win-x64/node_modules/npm/bin/npm-cli.js', '// fixture')
             checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
             for bundled in [None, 'matching', 'outdated']:
                 with self.subTest(bundled=bundled):
@@ -391,6 +431,9 @@ class RemoteSetupTests(unittest.TestCase):
                     if bundled:
                         selected_node.parent.mkdir(parents=True)
                         shutil.copyfile(fake_node if bundled == 'matching' else old_node, selected_node)
+                        npm = selected_node.parent / 'node_modules/npm/bin/npm-cli.js'
+                        npm.parent.mkdir(parents=True)
+                        npm.write_text('// fixture')
                     binary = case / 'old-checkout-bin'
                     binary.mkdir()
                     (binary / 'node.ps1').write_text('throw "Old checkout Node must not be selected."\n', encoding='utf-8')
@@ -409,13 +452,14 @@ class RemoteSetupTests(unittest.TestCase):
                         '  if (-not $UseBasicParsing) { throw "Missing basic parsing." }\n'
                         '  Add-Content -LiteralPath $env:TEST_DOWNLOADS -Value $Uri\n'
                         '  if ($Uri.EndsWith("SHASUMS256.txt")) { return @{ Content = $env:TEST_CHECKSUM + "  node-v22.23.2-win-x64.zip" } }\n'
+                        '  if (-not $Uri.EndsWith("node-v22.23.2-win-x64.zip")) { throw "Unexpected download: $Uri" }\n'
                         '  Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $OutFile\n'
                         '}\n& $env:TEST_SETUP -Server http://remote.invalid\nexit $LASTEXITCODE\n', encoding='utf-8')
-                    environment = {**os.environ, 'USERPROFILE': str(case), 'COPILOT_HOME': '',
-                        'HINDSIGHTKIT_HOME': str(state), 'HINDSIGHTKIT_RELEASE_MANIFEST': str(release / 'release.json'),
-                        'PATH': str(binary) + os.pathsep + os.environ['PATH'], 'TEST_ARCHIVE': str(archive),
-                        'TEST_CHECKSUM': checksum, 'TEST_SETUP': str(script), 'TEST_DOWNLOADS': str(requests)}
-                    result = subprocess.run([shell, '-NoProfile', '-File', str(wrapper)], env=environment,
+                    environment = powershell_environment(case,
+                        HINDSIGHTKIT_HOME=str(state), HINDSIGHTKIT_RELEASE_MANIFEST=str(release / 'release.json'),
+                        TEST_ARCHIVE=str(archive), TEST_CHECKSUM=checksum, TEST_SETUP=str(script), TEST_DOWNLOADS=str(requests))
+                    environment['PATH'] = str(binary) + os.pathsep + environment['PATH']
+                    result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(wrapper)], env=environment,
                         capture_output=True, text=True, encoding='utf-8', timeout=30)
                     # Stop at fixture venv creation after Node selection, without installing dependencies.
                     self.assertNotEqual(result.returncode, 0)
@@ -437,8 +481,8 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(directory)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-            result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script), '-ServerOnly'],
-                env={**os.environ, 'COPILOT_HOME': '', 'HINDSIGHTKIT_RELEASE_MANIFEST': str(root / 'release.json')},
+            result = subprocess.run(offline_setup_command(shell, script, ['-ServerOnly']),
+                env=powershell_environment(root, HINDSIGHTKIT_RELEASE_MANIFEST=str(root / 'release.json')),
                 capture_output=True, text=True, encoding='utf-8', timeout=15)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Python bundle is missing requirements-client.txt', result.stderr)
@@ -454,14 +498,14 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(directory)
             native_source = root / 'fixture.cs'
             native_source.write_text('''using System;
-class Runtime { static void Main() {
+class Runtime { static void Main(string[] args) {
   string name = System.IO.Path.GetFileName(Environment.GetCommandLineArgs()[0]);
   if (name == "uv-error.exe") {
     Console.Error.WriteLine("error: synthetic dependency failed");
     Console.Error.WriteLine("Caused by: original TLS HandshakeFailure fixture");
     Environment.Exit(73);
   }
-  Console.WriteLine(name == "node.exe" ? "v22.23.2" : (Environment.GetEnvironmentVariable("TEST_PYTHON_VERSION") ?? "Python 3.12.11"));
+  Console.WriteLine(name == "node.exe" ? (args[0] == "-p" ? "x64" : "v22.23.2") : (Environment.GetEnvironmentVariable("TEST_PYTHON_VERSION") ?? "Python 3.12.11"));
 } }
 ''', encoding='utf-8')
             native = root / 'runtime.exe'
@@ -484,6 +528,9 @@ class Runtime { static void Main() {
                         node = app / '.runtime/tools/node-v22.23.2-win-x64/node.exe'
                         node.parent.mkdir(parents=True)
                         shutil.copyfile(native, node)
+                        npm = node.parent / 'node_modules/npm/bin/npm-cli.js'
+                        npm.parent.mkdir(parents=True)
+                        npm.write_text('// fixture')
                         python = app / '.venv/Scripts/python.exe'
                         if existing:
                             python.parent.mkdir(parents=True)
@@ -508,13 +555,13 @@ if ($args[0] -eq 'venv') {
 & $env:TEST_UV_ERROR
 $global:LASTEXITCODE = $LASTEXITCODE
 ''', encoding='utf-8')
-                        environment = {**os.environ, 'USERPROFILE': str(case), 'COPILOT_HOME': '',
-                            'HINDSIGHTKIT_HOME': str(case / 'state'), 'HINDSIGHTKIT_RELEASE_MANIFEST': str(app / 'release.json'),
-                            'HINDSIGHTKIT_INSTALL_LOG': str(log), 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
-                            'TEST_UV_CALLS': str(trace), 'TEST_NATIVE': str(native), 'TEST_UV_ERROR': str(native_error),
-                            'TEST_PYTHON_VERSION': 'Python 3.11.8' if role == 'wrong-python' else 'Python 3.12.11'}
+                        environment = powershell_environment(case,
+                            HINDSIGHTKIT_RELEASE_MANIFEST=str(app / 'release.json'), HINDSIGHTKIT_INSTALL_LOG=str(log),
+                            TEST_UV_CALLS=str(trace), TEST_NATIVE=str(native), TEST_UV_ERROR=str(native_error),
+                            TEST_PYTHON_VERSION='Python 3.11.8' if role == 'wrong-python' else 'Python 3.12.11')
+                        environment['PATH'] = str(binary) + os.pathsep + environment['PATH']
                         arguments = [] if role == 'server' else ['-Server', 'http://remote.invalid']
-                        result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(app / 'setup.ps1'), *arguments],
+                        result = subprocess.run(offline_setup_command(shell, app / 'setup.ps1', arguments),
                             env=environment, capture_output=True, text=True, encoding='utf-8', timeout=30)
                         self.assertNotEqual(result.returncode, 0)
                         calls = [json.loads(line) for line in trace.read_text(encoding='utf-8-sig').splitlines()] if trace.exists() else []

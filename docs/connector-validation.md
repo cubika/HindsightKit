@@ -109,3 +109,5 @@ The final v0.1.1 release builds also passed 303 tests, including those fixtures.
 The v0.1.2 client-installation candidate passed 323 tests, including connector fixtures. No live mailbox acquisition was used. Client-only setup on an existing full installation left its server and database configuration unchanged; packaging and installation evidence is in [release validation](release-validation.md).
 
 The published v0.1.2 builds also passed 323 tests and final full/client package checks. No mailbox reads or model calls were part of the isolated client-installation acceptance.
+
+The v0.1.3 installation changes, integrated with the current mail connector changes, passed all 358 repository tests. Connector checks used fixtures; no mailbox reads or model calls were made.

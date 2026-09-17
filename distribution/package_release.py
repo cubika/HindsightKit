@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import tempfile
+import time
 import tomllib
 from urllib.parse import urlsplit
 import zipfile
@@ -27,7 +28,7 @@ VECTOR_URL = "https://github.com/pgvector/pgvector/archive/refs/tags/v0.8.6.zip"
 VECTOR_SHA256 = "e93a1567219c9ce523ca16473f6c41cc80e01345b2d91ccdee40b473b7c5dd0a"
 EXTENSIONS = ("vector", "pg_trgm", "btree_gin", "btree_gist", "pg_stat_statements",
               "unaccent", "pgcrypto", "uuid-ossp")
-APP_FILES = ("setup.ps1", "pyproject.toml", "uv.lock", "README.md")
+APP_FILES = ("setup.ps1", "pyproject.toml", "uv.lock", "README.md", "THIRD_PARTY_NOTICES.md")
 APP_DIRECTORIES = ("src", "docs")
 SKIP_DIRECTORIES = {"__pycache__", "node_modules", ".venv", ".runtime", ".git",
                     ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
@@ -207,6 +208,38 @@ def python_bundle_module():
     return module
 
 
+def validate_node_bundle(bundle_directory: Path, package_directory: Path) -> dict:
+    spec = importlib.util.spec_from_file_location(
+        "hindsightkit_node_bundle", Path(__file__).resolve().parents[1] / "src/hindsightkit/node_bundle.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_bundle(bundle_directory, package_directory)
+
+
+def node_files(root: Path, package_directory: Path, needles: tuple[bytes, ...]):
+    manifest_path = ordinary_path(root / "node-bundle.json")
+    manifest_hash = inspect_file(manifest_path, needles)
+    manifest = validate_node_bundle(root, package_directory)
+    with zipfile.ZipFile(root / manifest["bundles"]["copilot"]["archive"]) as archive:
+        for package_name in ("@github/copilot", "@github/copilot-win32-x64"):
+            name = "node_modules/" + package_name + "/LICENSE.md"
+            if name not in archive.namelist() or not archive.read(name):
+                raise ValueError(f"Copilot redistribution license is missing: {name}")
+    expected = {"node-bundle.json": manifest_hash,
+                **{item["archive"]: item["sha256"] for item in manifest["bundles"].values()}}
+    files = {}
+    for path in tree_files(root):
+        name = path.relative_to(root).as_posix()
+        # Archives retain upstream bytes, licenses, and native Windows modules.
+        digest = inspect_file(path, () if path.suffix == ".zip" else needles)
+        if digest != expected.get(name):
+            raise ValueError(f"Node bundle changed after validation: {name}")
+        files["app/node/" + name] = (path, digest)
+    if set(name.removeprefix("app/node/") for name in files) != set(expected):
+        raise ValueError("Node bundle files changed after validation")
+    return files, manifest
+
+
 def validate_python_bundle(bundle_directory: Path, source_root: Path, *, profile="full") -> dict:
     return python_bundle_module().validate_bundle(bundle_directory, source_root, profile=profile)
 
@@ -251,7 +284,9 @@ def release_identity(version: str, repository: str, server_url: str) -> str:
     return f"{server_url.rstrip('/')}/{repository}/releases/download/{version}"
 
 
-def write_archive(destination: Path, files, extra=None):
+def write_archive(destination: Path, files, extra=None, *, progress_label=None):
+    started = last_progress = time.monotonic()
+    written = 0
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for name, (path, expected) in sorted(files.items()):
             relative_name(name)
@@ -266,6 +301,10 @@ def write_archive(destination: Path, files, extra=None):
                     target.write(chunk)
             if digest.hexdigest() != expected:
                 raise ValueError(f"Release input changed during packaging: {name}")
+            written += 1
+            if progress_label and time.monotonic() - last_progress >= 10:
+                print(f"Packing {progress_label}: {written}/{len(files)} files (elapsed {time.monotonic() - started:.1f}s).", flush=True)
+                last_progress = time.monotonic()
         for name, content in sorted((extra or {}).items()):
             relative_name(name)
             if name in files:
@@ -321,9 +360,12 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
 """
     python_downloads = ("Python, Node.js dependencies, and the embedding model download during setup."
                         if version == "v0.1.0" else
-                        "Pinned Python packages are bundled in the application archive from this release; "
+                        "Pinned Python packages are bundled in the application archive; "
                         "setup installs them without contacting PyPI.\n"
-                        "The Python interpreter, Node.js, and npm dependencies still download during setup. "
+                        "The archive also contains the locked npm components and official Copilot CLI. "
+                        "Setup verifies and extracts these files without contacting npm.\n"
+                        "The Python interpreter still downloads. Setup reuses suitable Node.js 22+ from PATH "
+                        "or downloads the official portable runtime. "
                         "A local server also downloads the embedding model.")
     client_download = ("Run this on the other computer:" if visibility == "public" else
                        "Sign in and download the installer as above, then use this final invocation on the other computer:")
@@ -378,7 +420,7 @@ For a client without a local database or model, replace the example address with
 ## Downloads
 
 The installer verifies the application and PostgreSQL archives with SHA256.
-New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains only client Python packages.
+New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains client dependencies and Copilot CLI.
 The default installation uses {tick}{APP_NAME}{tick}. Computers with an existing local server
 keep the full package so their server can still be managed.
 PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
@@ -391,7 +433,8 @@ and {tick}release-notes.md{tick}. It does not include itself or GitHub's source 
 
 
 def package_release(*, version: str, repository: str, server_url: str,
-                    postgres_directory: Path, python_directory: Path, output: Path, source_root: Path,
+                    postgres_directory: Path, python_directory: Path, node_directory: Path,
+                    output: Path, source_root: Path,
                     visibility: str = "public"):
     release_url = release_identity(version, repository, server_url)
     if visibility not in {"public", "private", "internal"}:
@@ -400,12 +443,13 @@ def package_release(*, version: str, repository: str, server_url: str,
     source_root = ordinary_path(source_root)
     postgres_directory = ordinary_path(postgres_directory)
     python_directory = ordinary_path(python_directory)
+    node_directory = ordinary_path(node_directory)
     output = ordinary_path(output)
     if not source_root.is_dir():
         raise ValueError("Source root is missing")
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValueError("Output must be a new or empty directory")
-    for input_root in (postgres_directory, python_directory, source_root / "src",
+    for input_root in (postgres_directory, python_directory, node_directory, source_root / "src",
                        source_root / "docs", source_root / "distribution"):
         if output == input_root or output.is_relative_to(input_root) or input_root.is_relative_to(output):
             raise ValueError("Output overlaps release inputs")
@@ -413,7 +457,7 @@ def package_release(*, version: str, repository: str, server_url: str,
     config = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
     if version != "v" + config.get("project", {}).get("version", ""):
         raise ValueError("Release tag does not match pyproject.toml version")
-    needles = machine_paths(source_root, postgres_directory, python_directory)
+    needles = machine_paths(source_root, postgres_directory, python_directory, node_directory)
     application = {}
     for name in APP_FILES:
         path = ordinary_path(source_root / name)
@@ -425,7 +469,8 @@ def package_release(*, version: str, repository: str, server_url: str,
             relative = path.relative_to(source_root).as_posix()
             application["app/" + relative] = (path, inspect_file(path, needles))
     bundled_python, python_summary = python_files(python_directory, source_root, needles)
-    full_application = {**application, **bundled_python}
+    bundled_node, node_manifest = node_files(node_directory, source_root / "src/hindsightkit", needles)
+    full_application = {**application, **bundled_python, **bundled_node}
     if len({name.lower() for name in full_application}) != len(full_application):
         raise ValueError("Duplicate Windows path in application package")
     postgres = postgres_files(postgres_directory, needles)
@@ -444,18 +489,25 @@ def package_release(*, version: str, repository: str, server_url: str,
         client_directory = Path(temporary) / "python"
         python_bundle_module().create_client_bundle(python_directory, client_directory, source_root)
         client_python, client_summary = python_files(client_directory, source_root, needles, profile="client")
+        client_node_manifest = {**node_manifest, "bundles": {role: node_manifest["bundles"][role]
+                                                              for role in ("client", "copilot")}}
+        client_node = {"app/node/" + item["archive"]: bundled_node["app/node/" + item["archive"]]
+                       for item in client_node_manifest["bundles"].values()}
         output.mkdir(parents=True, exist_ok=True)
         pg_hash = write_archive(output / POSTGRES_NAME, postgres)
         release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
                    "requires_auth": requires_auth, "package_role": "full",
                    "python": python_summary,
+                   "node": {"platform": node_manifest["platform"], "components": sorted(node_manifest["bundles"])},
                    "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
                                 "postgres_version": POSTGRES_VERSION, "vector_version": VECTOR_VERSION}}
         app_hash = write_archive(output / APP_NAME, full_application,
                                  {"app/release.json": json.dumps(release, indent=2) + "\n"})
-        client_release = {**release, "package_role": "client", "python": client_summary}
-        client_hash = write_archive(output / CLIENT_APP_NAME, {**application, **client_python},
-                                    {"app/release.json": json.dumps(client_release, indent=2) + "\n"})
+        client_release = {**release, "package_role": "client", "python": client_summary,
+                          "node": {"platform": node_manifest["platform"], "components": ["client", "copilot"]}}
+        client_hash = write_archive(output / CLIENT_APP_NAME, {**application, **client_python, **client_node},
+                                    {"app/release.json": json.dumps(client_release, indent=2) + "\n",
+                                     "app/node/node-bundle.json": json.dumps(client_node_manifest, indent=2) + "\n"})
     substitutions["@@PACKAGE_SHA256@@"] = app_hash
     substitutions["@@CLIENT_PACKAGE_SHA256@@"] = client_hash
     for token, value in substitutions.items():
@@ -478,6 +530,7 @@ def main(argv=None):
     parser.add_argument("--visibility", choices=("public", "private", "internal"), default="public")
     parser.add_argument("--postgres-directory", type=Path, required=True)
     parser.add_argument("--python-directory", type=Path, required=True)
+    parser.add_argument("--node-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)

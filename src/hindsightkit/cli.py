@@ -95,28 +95,49 @@ def runtime() -> Path:
 
 
 def install_node_packages(client=False):
+    install_node_role('client' if client else 'server')
+
+
+def install_node_role(role):
     from filelock import FileLock
     from .install_progress import run_install
-    directory = home() / ('client-runtime' if client else 'runtime')
+    from .node_bundle import install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
+    directory = home() / {'client': 'client-runtime', 'server': 'runtime', 'copilot': 'copilot'}[role]
     directory.mkdir(parents=True, exist_ok=True)
-    source_root = PACKAGE / 'client' if client else PACKAGE
+    source_root = package_directory(PACKAGE, role)
     lock = source_root / 'package-lock.json'
     stamp = directory / '.installed-lock'
     digest = hashlib.sha256(lock.read_bytes()).hexdigest()
-    component = 'hindsight-coding-agents/dist/installer.js' if client else 'hindsight-control-plane/standalone/server.js'
-    label = 'Copilot client integration' if client else 'Hindsight dashboard and server integration'
+    label = {'client': 'Copilot client integration', 'server': 'Hindsight dashboard and server integration',
+             'copilot': 'official Copilot CLI'}[role]
+    bundle = release_bundle()
     with FileLock(str(directory / '.install.lock'), timeout=60):
-        if stamp.is_file() and stamp.read_text() == digest and (directory / 'node_modules/@vectorize-io' / component).is_file():
-            print(f'Reusing {label} at {directory}.', flush=True)
-            return
+        if stamp.is_file() and stamp.read_bytes() == digest.encode('ascii'):
+            print(f'Checking installed {label}...', flush=True)
+            try:
+                if bundle is not None:
+                    verify_bundle_files(bundle, PACKAGE, role, directory)
+                verify_installed(directory, PACKAGE, role, node())
+            except (OSError, ValueError, subprocess.SubprocessError):
+                print(f'Repairing incomplete {label} at {directory}.', flush=True)
+            else:
+                print(f'Reusing {label} at {directory}.', flush=True)
+                return
+        # A failed repair must not retain an earlier success stamp.
+        stamp.unlink(missing_ok=True)
+        if bundle is not None:
+            print(f'Installing bundled {label} at {directory}...', flush=True)
+            install_bundle(bundle, PACKAGE, role, directory, node())
+        else:
+            for name in ['package.json', 'package-lock.json']:
+                shutil.copyfile(source_root / name, directory / name)
+            run_install(npm() + ['ci', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=info',
+                                '--foreground-scripts'], cwd=directory, label=label)
+            verify_installed(directory, PACKAGE, role, node())
         for name in ['package.json', 'package-lock.json']:
-            source = source_root / name
-            if source.is_file():
-                shutil.copyfile(source, directory / name)
-        run_install(npm() + ['ci', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=info',
-                            '--foreground-scripts', '--registry', 'https://registry.npmjs.org'],
-                    cwd=directory, label=label)
+            shutil.copyfile(source_root / name, directory / name)
         stamp.write_text(digest)
+        print(f'Verified {label}.', flush=True)
 
 
 async def copilot_authenticated():
@@ -136,10 +157,9 @@ async def copilot_authenticated():
 
 def ensure_copilot():
     command = copilot_command()
-    if command is None:
-        print('Installing the official Copilot CLI...', flush=True)
-        run(npm() + ['install', '--prefix', home() / 'copilot', '--no-audit', '--no-fund',
-                     '--registry', 'https://registry.npmjs.org', '@github/copilot@1.0.85'])
+    managed_loader = home() / 'copilot/node_modules/@github/copilot/npm-loader.js'
+    if command is None or any(str(part) == str(managed_loader) for part in command):
+        install_node_role('copilot')
         command = copilot_command()
     print('Checking Copilot authentication...', flush=True)
     if asyncio.run(copilot_authenticated()):
@@ -546,6 +566,11 @@ def can_connect_local_client(api_url):
 
 def setup(args):
     validate_setup_options(args)
+    from .node_bundle import release_bundle, validate_bundle
+    bundled = release_bundle()
+    if bundled is not None:
+        roles = ('client', 'copilot') if args.server or getattr(args, 'client_only', False) else ('client', 'server', 'copilot')
+        validate_bundle(bundled, PACKAGE, roles=roles)
     if not getattr(args, 'server_only', False):
         require_client_prerequisites()
     if args.server:
