@@ -148,7 +148,7 @@ exit $LASTEXITCODE
                         if not reused:
                             self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
                         self.assertIn('Reusing Node.js' if reused else 'Installed Node.js', result.stdout)
-                        self.assertEqual(Path(trace.read_text().split(os.pathsep)[0]), expected.parent)
+                        self.assertTrue(Path(trace.read_text().split(os.pathsep)[0]).samefile(expected.parent))
                         with patch.dict(os.environ, env, clear=True), patch.object(cli, 'home', return_value=state):
                             cli.prepare_env()
-                            self.assertEqual(Path(os.environ['PATH'].split(os.pathsep)[0]), expected.parent)
+                            self.assertTrue(Path(os.environ['PATH'].split(os.pathsep)[0]).samefile(expected.parent))

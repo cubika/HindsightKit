@@ -187,4 +187,4 @@ class NodeBundleTests(unittest.TestCase):
             (app / 'release.json').write_text('{}')
             with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': ''}), \
                  patch.object(node_bundle.sys, 'executable', str(app / '.venv/Scripts/python.exe')):
-                self.assertEqual(node_bundle.release_bundle(), app / 'node')
+                self.assertEqual(node_bundle.release_bundle(), app.resolve() / 'node')
