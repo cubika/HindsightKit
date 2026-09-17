@@ -4,15 +4,25 @@ These records separate completed checks from pending acceptance work. They do no
 
 ## v0.1.1 candidate, September 17, 2026
 
-Release acceptance is pending. The candidate includes a Python wheel bundle in the application archive, with separate client/server requirements and SHA256 hashes. Release setup uses that bundle with package-index access disabled. The Python interpreter, Node.js, npm components, and embedding model remain downloads. Source setup continues to use the dependency lock and package hosts.
+Hosted packaging, affected-machine installation, and repeat-install acceptance passed for candidate commit `091711b`. The candidate is ready for release; publication is pending. It includes a Python wheel bundle in the application archive, with separate client/server requirements and SHA256 hashes. Release setup uses that bundle with package-index access disabled. The Python interpreter, Node.js, npm components, and embedding model remain downloads. Source setup continues to use the dependency lock and package hosts.
 
 The candidate also records installation stages and dependency-command output under `<InstallDir>\logs`, prints the failed stage and first matching dependency error, and distinguishes Node.js download, completed installation, and reuse. Interactive setup output is excluded from the log so Copilot login and connection-key prompts remain in the console.
 
 The final targeted release-packaging run passed 20 tests using synthetic wheel and PostgreSQL fixtures. It checked mandatory bundle validation, missing or changed files, private files, changes after validation, path overlap, generated installation commands, deterministic archives, and byte-for-byte wheel preservation. This test run did not install the real dependency bundle or verify a user's setup.
 
-The workflow now supports manual candidate builds that upload artifacts without creating a release. It is configured to validate new client and server Python environments with separate empty caches, package-index access disabled, and an unreachable proxy. It repeats installation, checks imports and dependency consistency, and runs again from the final application archive. These are validation procedures; a configured CI step is not a recorded pass.
+The manual hosted build passed 303 repository tests and produced a verified bundle of 194 wheels. Fresh client and server Python environments passed installation, import checks, dependency consistency, CLI help, and repeat synchronization with separate empty caches, package-index access disabled, and an unreachable proxy. The checks passed both before packaging and from the final application archive. Manual dispatch uploaded candidate artifacts without creating a release.
 
-Still pending for this candidate: the complete hosted build, installation from its real bundle on an affected connection, and full setup through model download, Copilot authentication, retain/recall, repeat installation, and preservation of existing memory. Record actual outcomes before publishing or describing the installation fix as accepted.
+The machine that reproduced the v0.1.0 wheel failure then passed the same isolated client/server package checks using its existing uv 0.8.18. These checks used new environments and empty caches, so they did not rely on its previously installed Python packages.
+
+The generated candidate bootstrap was also executed with the exact application archive supplied through a local download cache. It created a new version directory under the default installation root, downloaded and verified Node.js, used Python 3.12.11, and installed all 194 Python packages with index access disabled. Copilot authentication checks, the temporary retain/recall test, client registration, and launcher verification completed with exit code 0. The installed services were healthy afterward.
+
+The existing server-profile and database-cluster metadata hashes were unchanged. A synthetic memory created before installation was recalled afterward. This demonstrates preservation on the tested machine; the run reused its existing configuration and does not establish a first-ever Copilot sign-in or a fresh model download.
+
+Repeating the same generated installer completed with exit code 0. It reported reuse of uv 0.8.18, Node.js 22.23.2, and Python 3.12.11, including their paths. The Python stage audited 194 packages in 92 ms without contacting PyPI. The real retain/recall check passed again, the server-profile and cluster-metadata hashes stayed unchanged, and the pre-install synthetic memory was recalled after the repeat. Its temporary bank was then deleted and absence confirmed through the official bank-list API. Client connection, API, dashboard, and database checks were healthy.
+
+After installation, requesting the original v0.1.0 wheel URL still failed with `SSLV3_ALERT_HANDSHAKE_FAILURE`. The successful candidate installs therefore did not depend on that connection recovering.
+
+The local cached archive preserved the candidate's exact packaged bytes and checksum checks, but did not exercise a newly published release's download URL. Tag-triggered builds and published asset downloads remain release steps. These results establish the installation fix on the tested machine and retain the fresh-sign-in and model-download limits described above.
 
 ## v0.1.0, September 17, 2026
 

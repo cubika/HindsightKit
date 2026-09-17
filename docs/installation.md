@@ -1,6 +1,6 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.1 Windows x64 candidate, whose release acceptance is still pending. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks.
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.1 Windows x64 preview. Linux, macOS, and Windows ARM are not supported. Installation checks and their scope are recorded in [release validation](release-validation.md).
 
 ## Before installing
 

@@ -1,6 +1,6 @@
 # Release maintenance
 
-This guide is for maintainers. Users should follow [installation](installation.md) and copy the command from their published release page. The v0.1.1 candidate has not completed release acceptance; record its results in [release validation](release-validation.md).
+This guide is for maintainers. Users should follow [installation](installation.md) and copy the command from their published release page. Validation results and publication status are recorded in [release validation](release-validation.md).
 
 ## Validate a candidate
 

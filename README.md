@@ -4,15 +4,15 @@ HindsightKit installs a [Hindsight](https://github.com/vectorize-io/hindsight) m
 
 ## Install from a release
 
-The preview supports **Windows x64** with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in. The v0.1.1 candidate described here is awaiting release acceptance; use only a published release's installation command.
+The v0.1.1 preview supports **Windows x64** with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in.
 
 1. Open **Releases** in this repository and select a published version.
 2. Copy its installation command into PowerShell. A restricted repository requires GitHub CLI sign-in as shown on that release page.
 3. Finish any Copilot login prompt. After setup succeeds, reload VS Code, allow the Hindsight MCP server, and start a new Copilot CLI session.
 
-The default command installs the local server and coding integrations together. The v0.1.1 candidate bundles pinned Python packages in the application archive and installs them locally with hash verification. The Python interpreter, Node.js, npm components, embedding model, and precompiled PostgreSQL/pgvector distribution still require downloads. No source checkout or C++ compiler is needed. Setup checks a temporary memory through the real model provider and removes the test bank afterward; this uses Copilot allowance.
+The default command installs the local server and coding integrations together. Version 0.1.1 bundles pinned Python packages in the application archive and installs them locally with hash verification. The Python interpreter, Node.js, npm components, embedding model, and precompiled PostgreSQL/pgvector distribution still require downloads. No source checkout or C++ compiler is needed. Setup checks a temporary memory through the real model provider and removes the test bank afterward; this uses Copilot allowance.
 
-The v0.1.0 preview has a confirmed Python wheel download failure on affected networks. The v0.1.1 candidate removes that PyPI download step, distinguishes downloaded and reused Node.js runtimes, and records installation stages in a log. Candidate validation and the remaining acceptance checks are tracked in [release validation](docs/release-validation.md).
+Version 0.1.1 removes the PyPI wheel download step that failed on affected v0.1.0 installations. It distinguishes downloaded and reused Node.js runtimes and records installation stages in a log. The tests and installation checks are recorded in [release validation](docs/release-validation.md).
 
 See [installation, upgrades, and file locations](docs/installation.md) for details. Building or installing from a checkout is covered separately in [development](docs/development.md).
 

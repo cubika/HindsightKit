@@ -101,3 +101,5 @@ Integration of metadata changes with the release installer passed 222 repository
 The subsequent connection-command and authenticated-release regression passed 270 tests, including connector fixtures. It made no mailbox reads, model calls, or imported-memory changes. A private relay check used synthetic HTTP responses and removed its workers and tunnels.
 
 The v0.1.0 hosted release CI runs also passed all 270 tests without a mailbox account or Copilot model calls. Packaging and installation results are recorded in [release verification](release-validation.md). These fixture and packaging passes do not establish that every user's dependency downloads or fresh installation will succeed.
+
+The v0.1.1 candidate CI passed 303 repository tests, including connector fixtures, without live mailbox reads. Its installation acceptance used a disposable synthetic memory to verify upgrade preservation and then removed that bank. Python bundle and affected-network installation evidence is recorded in [release verification](release-validation.md).
