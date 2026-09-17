@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch, AsyncMock
@@ -7,6 +9,26 @@ from hindsightkit import postgres
 
 
 class PostgresTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell integration')
+    def test_installer_finds_builtin_modules_despite_inherited_powershell_core_path(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'PSModulePath': directory}), \
+             patch.object(postgres, 'private_directory'):
+            original_run = subprocess.run
+            def probe(command, **kwargs):
+                return original_run([command[0], '-NoProfile', '-Command',
+                    '$ErrorActionPreference="Stop"; (Get-Command Get-FileHash).Name'], **kwargs)
+            with patch.object(postgres.subprocess, 'run', side_effect=probe):
+                postgres.Postgres(Path(directory)).install()
+            self.assertEqual(os.environ['PSModulePath'], directory)
+
+    def test_installer_failure_includes_actionable_stderr(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(postgres, 'private_directory'), \
+             patch.object(postgres.shutil, 'which', return_value='powershell.exe'), \
+             patch.object(postgres.subprocess, 'run', return_value=Mock(returncode=1, stdout='', stderr='extension build failed')):
+            with self.assertRaisesRegex(RuntimeError, 'extension build failed'):
+                postgres.Postgres(Path(directory)).install()
+
     def test_profile_write_preserves_settings_and_replaces_only_connection(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'profile.env'

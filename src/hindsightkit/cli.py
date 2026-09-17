@@ -564,7 +564,7 @@ def setup_client(args):
     if discovered.get('protocol') != 1 or discovered.get('routing') != 'repository':
         raise RuntimeError('The server does not support this client. Run setup on the server first.')
     shared_bank = connection.validate_bank(discovered.get('sharedBank', ''))
-    asyncio.run(connection.request(candidate, 'GET', '/v1/default/banks/' + shared_bank))
+    asyncio.run(connection.request(candidate, 'GET', '/v1/default/banks/' + shared_bank + '/stats'))
     info = {'mode': 'client', 'routing': 'repository', 'activity': True,
             'connectors': discovered.get('connectors', []),
             'deviceId': connection.device_id(old.get('deviceId')), 'name': socket.gethostname()}

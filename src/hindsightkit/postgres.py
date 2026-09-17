@@ -111,14 +111,20 @@ class Postgres:
         if not shell:
             raise RuntimeError('PowerShell is required to install PostgreSQL on Windows.')
         print('Installing standalone PostgreSQL and pgvector...', flush=True)
+        # PowerShell 7's inherited module path can hide Windows PowerShell's built-ins.
+        env = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
         # The installer checks hashes, compiler prerequisites and installed versions.
         result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                                  str(Path(__file__).with_name('postgres_install.ps1')),
                                  '-Destination', str(self.distribution),
                                  '-CacheDirectory', str(self.root / 'downloads')],
+                                env=env, capture_output=True, text=True, encoding='utf-8', errors='replace',
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         if result.returncode:
-            raise RuntimeError('PostgreSQL distribution installation failed. Resolve the reported error and rerun setup.')
+            detail = (result.stderr or result.stdout)[-3000:]
+            raise RuntimeError('PostgreSQL distribution installation failed: ' + detail)
+        if result.stdout:
+            print(result.stdout, end='', flush=True)
 
     def initialize(self):
         private_directory(self.root)

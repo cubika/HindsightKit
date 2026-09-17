@@ -48,6 +48,13 @@ class RemoteSetupTests(unittest.TestCase):
             integrate = stack.enter_context(patch.object(cli, 'integrate', side_effect=integration))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
             request.return_value = {'protocol': 1, 'routing': 'repository', 'sharedBank': 'hindsightkit-shared'}
+            async def response(config, method, endpoint, **kwargs):
+                if endpoint == '/ext/hindsightkit/connection':
+                    return request.return_value
+                if endpoint == '/v1/default/banks/hindsightkit-shared/stats':
+                    return {'bank_id': 'hindsightkit-shared', 'total_nodes': 0}
+                raise RuntimeError('Unexpected endpoint: ' + endpoint)
+            request.side_effect = response
             register = stack.enter_context(patch.object(connection, 'register', new_callable=AsyncMock))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield SimpleNamespace(path=path, profile_path=profile_path, packages=packages,
