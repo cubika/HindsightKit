@@ -20,7 +20,7 @@ Use the intended company account on both Dev Boxes. The default tunnel is privat
 On the machine that stores memory, run from the HindsightKit checkout:
 
 ```powershell
-.\setup.ps1
+.\setup.ps1 -ServerOnly
 hindsightkit status
 ```
 

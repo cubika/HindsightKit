@@ -36,7 +36,7 @@ User review identified two gaps in the preceding acceptance criteria: temporary 
 
 This records a design decision, not a new runtime result. The thread outcome implementation is pending. Future runs must validate replacement, withdrawal, idempotency, out-of-order updates, provenance, and bounded memory growth against the [WorkIQ design](workiq-mail.md). The preceding extraction results do not establish that these requirements passed.
 
-The renamed project is HindsightKit at C:/Users/bili1/source/HindsightKit. This documentation change moved the recorded results without changing their measurements, clarified planned versus existing behavior, and updated documentation links. It did not run new email/model tests, alter stored memory, or verify whether old installation data remains after the rename.
+The renamed project is HindsightKit. This documentation change moved the recorded results without changing their measurements, clarified planned versus existing behavior, and updated documentation links. It did not run new email/model tests, alter stored memory, or verify whether old installation data remains after the rename.
 
 ## September 17, 2026: one current outcome implementation
 

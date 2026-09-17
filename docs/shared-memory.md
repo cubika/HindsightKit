@@ -1,12 +1,12 @@
 # Server and client setup
 
-Install the server on the machine that stores memory:
+Install the server and local coding integrations together:
 
 ```powershell
 .\setup.ps1
 ```
 
-Setup installs and starts Hindsight, PostgreSQL, and the local dashboard. The authenticated API listens on IPv4 port 9077. It generates a connection key on first installation and saves it in a private local file; setup reports that file's location. Server setup does not register editor MCP servers, hooks, or client activity. The server still needs a Copilot login for its model calls.
+Setup installs and starts Hindsight, PostgreSQL, and the local dashboard, then connects VS Code and Copilot CLI to the local API. The authenticated API listens on IPv4 port 9077. It generates a connection key on first installation and reuses it for the local client. Use `.\setup.ps1 -ServerOnly` on a dedicated memory server to skip coding integrations. The server needs a Copilot login for its model calls. For a release installation without a checkout, use the command in that repository's release notes; it accepts the same role options.
 
 Install a client on each machine used for coding:
 
@@ -22,13 +22,13 @@ Bank selection is internal. Repository sessions keep their own memory and read s
 
 For two Dev Boxes connected through Microsoft Dev Tunnels, follow the [step-by-step tunnel guide](devtunnel.md). It includes commands for both machines, the address to pass to client setup, and reconnect checks.
 
-To use memory on the server machine, install the client there too:
+Default setup already includes the local client. To add one to an installation previously made with ServerOnly:
 
 ```powershell
 .\setup.ps1 -Server http://127.0.0.1:9077
 ```
 
-The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Running plain setup always prepares the server and leaves existing client settings alone. Running setup with a server address changes only the managed client connection after validation.
+The two roles keep separate settings. Installing a client on the server does not redirect the server dashboard, database, or import jobs. Plain setup prepares the server and configures a local client when no remote client connection exists. It preserves an existing remote connection and prints a notice. ServerOnly leaves client settings alone. Running setup with a server address changes only the managed client connection after validation.
 
 IP addresses, DNS names, and local ports forwarded by Dev Tunnels or SSH use the same command. For an established tunnel, use its local forwarded address as the server URL. HindsightKit does not manage tunnel IDs, accounts, or processes. Direct HTTP is for trusted private networks; use HTTPS through an existing reverse proxy elsewhere. Use the final API origin without redirects. Setup does not change firewall rules.
 

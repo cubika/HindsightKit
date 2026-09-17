@@ -89,6 +89,44 @@ def ident(value):
     return '"' + value.replace('"', '""') + '"'
 
 
+def release_distribution():
+    manifest_path = os.environ.get('HINDSIGHTKIT_RELEASE_MANIFEST')
+    if manifest_path is None:
+        # Release setup uses uv's editable app/src/hindsightkit package. Keep
+        # later CLI setup calls on that app's release without searching ancestors.
+        adjacent = Path(__file__).resolve().parents[2] / 'release.json'
+        if not adjacent.exists():
+            return None
+        manifest_path = str(adjacent)
+    try:
+        if not manifest_path:
+            raise ValueError('manifest path is empty')
+        manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
+        if not isinstance(manifest, dict) or type(manifest.get('schema')) is not int or manifest['schema'] != 1:
+            raise ValueError('unsupported schema')
+        if not all(isinstance(manifest.get(name), str) and manifest[name].strip()
+                   for name in ('version', 'repository', 'release_url')):
+            raise ValueError('release metadata is missing')
+        distribution = manifest.get('postgres')
+        if not isinstance(distribution, dict):
+            raise ValueError('PostgreSQL distribution is missing')
+        if (distribution.get('postgres_version') != POSTGRES_VERSION
+                or distribution.get('vector_version') != VECTOR_VERSION):
+            raise ValueError('PostgreSQL or pgvector version differs from this runtime')
+        url = distribution.get('url')
+        if not isinstance(url, str) or any(char.isspace() for char in url):
+            raise ValueError('PostgreSQL URL is invalid')
+        parsed = urlsplit(url)
+        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+            raise ValueError('PostgreSQL URL must use HTTPS without credentials or a fragment')
+        digest = distribution.get('sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', digest):
+            raise ValueError('PostgreSQL SHA256 is invalid')
+        return url, digest.upper()
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f'Invalid HindsightKit release manifest {manifest_path!r}: {exc}') from exc
+
+
 class Postgres:
     def __init__(self, root: Path):
         reject_links(root)
@@ -106,6 +144,7 @@ class Postgres:
         return self.distribution / 'bin' / (name + ('.exe' if os.name == 'nt' else ''))
 
     def install(self):
+        distribution = release_distribution()
         private_directory(self.root)
         shell = shutil.which('powershell.exe') or shutil.which('pwsh')
         if not shell:
@@ -113,18 +152,23 @@ class Postgres:
         print('Installing standalone PostgreSQL and pgvector...', flush=True)
         # PowerShell 7's inherited module path can hide Windows PowerShell's built-ins.
         env = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
-        # The installer checks hashes, compiler prerequisites and installed versions.
-        result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                                 str(Path(__file__).with_name('postgres_install.ps1')),
-                                 '-Destination', str(self.distribution),
-                                 '-CacheDirectory', str(self.root / 'downloads')],
-                                env=env, capture_output=True, text=True, encoding='utf-8', errors='replace',
-                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        if result.returncode:
-            detail = (result.stderr or result.stdout)[-3000:]
-            raise RuntimeError('PostgreSQL distribution installation failed: ' + detail)
-        if result.stdout:
-            print(result.stdout, end='', flush=True)
+        command = [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                   str(Path(__file__).with_name('postgres_install.ps1')),
+                   '-Destination', str(self.distribution),
+                   '-CacheDirectory', str(self.root / 'downloads')]
+        if distribution:
+            command += ['-DistributionUrl', distribution[0], '-DistributionSha256', distribution[1]]
+        # Stream every stage immediately, retaining a bounded tail for failures.
+        detail = ''
+        with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, encoding='utf-8', errors='replace', bufsize=1,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0) as process:
+            for line in process.stdout:
+                print(line, end='', flush=True)
+                detail = (detail + line)[-3000:]
+            code = process.wait()
+        if code:
+            raise RuntimeError(f'PostgreSQL distribution installation failed (exit {code}): {detail}')
 
     def initialize(self):
         private_directory(self.root)

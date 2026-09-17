@@ -1,9 +1,10 @@
 from pathlib import Path
+import io
 import os
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
 from hindsightkit import postgres
 
@@ -14,20 +15,44 @@ class PostgresTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {'PSModulePath': directory}), \
              patch.object(postgres, 'private_directory'):
-            original_run = subprocess.run
+            original_popen = subprocess.Popen
             def probe(command, **kwargs):
-                return original_run([command[0], '-NoProfile', '-Command',
+                return original_popen([command[0], '-NoProfile', '-Command',
                     '$ErrorActionPreference="Stop"; (Get-Command Get-FileHash).Name'], **kwargs)
-            with patch.object(postgres.subprocess, 'run', side_effect=probe):
+            with patch.object(postgres.subprocess, 'Popen', side_effect=probe):
                 postgres.Postgres(Path(directory)).install()
             self.assertEqual(os.environ['PSModulePath'], directory)
 
     def test_installer_failure_includes_actionable_stderr(self):
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.stdout = io.StringIO('extension build failed\n')
+        process.wait.return_value = 1
         with tempfile.TemporaryDirectory() as directory, patch.object(postgres, 'private_directory'), \
              patch.object(postgres.shutil, 'which', return_value='powershell.exe'), \
-             patch.object(postgres.subprocess, 'run', return_value=Mock(returncode=1, stdout='', stderr='extension build failed')):
+             patch.object(postgres.subprocess, 'Popen', return_value=process):
             with self.assertRaisesRegex(RuntimeError, 'extension build failed'):
                 postgres.Postgres(Path(directory)).install()
+
+    def test_installer_streams_output_before_waiting_for_exit(self):
+        output = io.StringIO()
+        process = MagicMock()
+        process.__enter__.return_value = process
+        def lines():
+            yield 'Downloading PostgreSQL...\n'
+            self.assertIn('Downloading PostgreSQL...', output.getvalue())
+            process.wait.assert_not_called()
+            yield 'Verified release.\n'
+        process.stdout = lines()
+        process.wait.return_value = 0
+        with tempfile.TemporaryDirectory() as directory, patch.object(postgres, 'private_directory'), \
+             patch.object(postgres.shutil, 'which', return_value='powershell.exe'), \
+             patch.dict(os.environ, {}, clear=True), patch('sys.stdout', output), \
+             patch.object(postgres.subprocess, 'Popen', return_value=process) as popen:
+            postgres.Postgres(Path(directory)).install()
+        self.assertIn('Verified release.', output.getvalue())
+        self.assertNotIn('-DistributionUrl', popen.call_args.args[0])
+        self.assertEqual(popen.call_args.kwargs['stderr'], subprocess.STDOUT)
 
     def test_profile_write_preserves_settings_and_replaces_only_connection(self):
         with tempfile.TemporaryDirectory() as directory:
