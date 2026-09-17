@@ -109,7 +109,7 @@ class RelayConfigurationTests(unittest.TestCase):
                     relay.ensure_cli(False)
                 environment = run.call_args.kwargs['env']
                 self.assertEqual(environment['HINDSIGHTKIT_RELAY_DOWNLOAD'], '')
-                self.assertEqual(environment['HINDSIGHTKIT_RELAY_BINARY'], str(binary))
+                self.assertTrue(Path(environment['HINDSIGHTKIT_RELAY_BINARY']).samefile(binary))
                 self.assertIn('Get-AuthenticodeSignature', run.call_args.args[0][-1])
                 self.assertIn('O=Microsoft Corporation', run.call_args.args[0][-1])
                 self.assertEqual(binary.read_bytes(), b'fixture')

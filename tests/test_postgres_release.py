@@ -325,6 +325,7 @@ Add-Type -TypeDefinition 'public class VersionFixture {
             source = root / 'pgvector'
             (source / 'src').mkdir(parents=True)
             (root / 'cache').mkdir()
+            (root / 'pgsql').mkdir()
             (source / 'src/header.h').write_text('''#if !defined(FROM_CL) || !defined(FROM_TRAILING_CL)
 #error Existing compiler options were lost
 #endif
@@ -337,7 +338,7 @@ probe.obj: src/probe.c src/header.h
 install: all
 ''', encoding='utf-8')
             harness = root / 'build-fixture.ps1'
-            harness.write_text('''param([string]$Installer, [string]$Root)
+            harness.write_text('''param([string]$Installer, [string]$Root, [switch]$ShortPath)
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
@@ -349,20 +350,48 @@ foreach ($statement in $ast.EndBlock.Statements) {
 }
 $installation = Find-CppTools
 if (-not $installation) { Write-Host 'SKIP_NO_COMPILER'; exit 0 }
+if ($ShortPath) {
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+using System.Text;
+public static class FixtureShortPath {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+    public static extern uint GetShortPathNameW(string path, StringBuilder result, uint capacity);
+}
+'@
+    $buffer = New-Object Text.StringBuilder 32768
+    $length = [FixtureShortPath]::GetShortPathNameW($Root, $buffer, $buffer.Capacity)
+    if ($length -eq 0 -or $length -ge $buffer.Capacity) { throw 'Cannot obtain short fixture path' }
+    $Root = $buffer.ToString()
+    if ($Root -notmatch '~[0-9]') { Write-Host 'SKIP_NO_SHORT_PATH'; exit 0 }
+    [IO.File]::WriteAllText((Join-Path $Root 'short-path.txt'), $Root)
+}
 $CacheDirectory = Join-Path $Root 'cache'
 $PostgresVersion = '18.6'; $VectorVersion = '0.8.6'
 Build-Vector $installation (Join-Path $Root 'pgsql') (Join-Path $Root 'pgvector') $Root
 ''', encoding='utf-8')
             environment = dict(self.environment, CL='/DFROM_CL=1', _CL_='/DFROM_TRAILING_CL=1')
-            result = subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                                     str(harness), '-Installer', str(self.installer), '-Root', str(root)],
-                                    env=environment, capture_output=True, text=True, timeout=60)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            if 'SKIP_NO_COMPILER' in result.stdout:
-                self.skipTest('MSVC is not installed')
-            compiled = (source / 'probe.obj').read_bytes()
-            self.assertNotIn(str(root).encode(), compiled)
-            self.assertIn(b'.\\pgvector\\src\\header.h', compiled)
+            for short_path in (False, True):
+                with self.subTest(short_path=short_path):
+                    (source / 'probe.obj').unlink(missing_ok=True)
+                    command = [self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                               str(harness), '-Installer', str(self.installer), '-Root', str(root)]
+                    if short_path:
+                        command.append('-ShortPath')
+                    result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    if 'SKIP_NO_COMPILER' in result.stdout:
+                        self.skipTest('MSVC is not installed')
+                    if 'SKIP_NO_SHORT_PATH' in result.stdout:
+                        self.skipTest('The fixture volume does not provide 8.3 path aliases')
+                    compiled = (source / 'probe.obj').read_bytes()
+                    absolute_paths = {str(root), str(root.resolve())}
+                    if short_path:
+                        absolute_paths.add((root / 'short-path.txt').read_text(encoding='utf-8-sig'))
+                    for absolute in absolute_paths:
+                        for spelling in (absolute, absolute.replace('\\', '/')):
+                            self.assertNotIn(spelling.encode().lower(), compiled.lower())
+                    self.assertIn(b'.\\pgvector\\src\\header.h', compiled)
 
     def test_bad_archive_hash_stops_without_compiling(self):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:

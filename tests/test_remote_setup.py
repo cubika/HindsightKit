@@ -238,7 +238,8 @@ class RemoteSetupTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('exit 71', result.stderr)
                 arguments = json.loads(trace.read_text(encoding='utf-8-sig'))
-                self.assertEqual(arguments[:3], ['sync', '--project', str(release)])
+                self.assertEqual(arguments[:2], ['sync', '--project'])
+                self.assertTrue(Path(arguments[2]).samefile(release))
                 self.assertEqual('--extra' in arguments, installed_server is not None)
                 if installed_server:
                     self.assertEqual(arguments[-2:], ['--extra', 'server'])
@@ -304,7 +305,7 @@ class RemoteSetupTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('python.exe', result.stderr)
                     self.assertNotIn('Old checkout Node', result.stderr)
-                    self.assertEqual(saved_node.read_text(encoding='utf-8'), str(selected_node))
+                    self.assertTrue(Path(saved_node.read_text(encoding='utf-8')).samefile(selected_node))
                     self.assertEqual(requests.exists(), bundled != 'matching')
                     if bundled != 'matching':
                         self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)

@@ -214,7 +214,34 @@ function Install-CppRuntime([string]$Installation, [string]$PgRoot) {
     return [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PgRoot 'bin\vcruntime140.dll')).FileVersion
 }
 
+function Get-LongBuildDirectory([string]$Path) {
+    $absolute = Get-AbsoluteDirectory $Path
+    if (-not (Test-Path -LiteralPath $absolute -PathType Container)) { throw "Build directory is missing: $absolute" }
+    if (-not ('HindsightKit.NativeBuildPaths' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+using System.Text;
+namespace HindsightKit {
+    public static class NativeBuildPaths {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        public static extern uint GetLongPathNameW(string path, StringBuilder result, uint capacity);
+    }
+}
+'@
+    }
+    $buffer = New-Object Text.StringBuilder 32768
+    $length = [HindsightKit.NativeBuildPaths]::GetLongPathNameW($absolute, $buffer, $buffer.Capacity)
+    if ($length -eq 0 -or $length -ge $buffer.Capacity) { throw "Cannot resolve the long build directory: $absolute" }
+    return Get-AbsoluteDirectory $buffer.ToString()
+}
+
 function Build-Vector([string]$Installation, [string]$PgRoot, [string]$SourceRoot, [string]$StageRoot) {
+    # MSVC expands 8.3 aliases in header __FILE__ paths. Its working directory,
+    # include root, and /pathmap must use the same long directory spelling.
+    $Installation = Get-LongBuildDirectory $Installation
+    $PgRoot = Get-LongBuildDirectory $PgRoot
+    $SourceRoot = Get-LongBuildDirectory $SourceRoot
+    $StageRoot = Get-LongBuildDirectory $StageRoot
     $batch = Assert-ChildPath $StageRoot (Join-Path $StageRoot 'build-vector.cmd')
     [IO.File]::WriteAllText($batch, "@echo off`r`ncall `"%HINDSIGHTKIT_VCVARS%`" >nul`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win`r`nif errorlevel 1 exit /b %errorlevel%`r`nnmake /NOLOGO /F Makefile.win install`r`nexit /b %errorlevel%`r`n", [Text.Encoding]::ASCII)
     $start = New-Object Diagnostics.ProcessStartInfo

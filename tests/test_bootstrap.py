@@ -118,9 +118,10 @@ try {
         digest = self.package()
         self.run_installer(digest, '-NoOpen')
         receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
-        self.assertEqual(Path(receipt['directory']), self.app)
-        self.assertEqual(Path(receipt['manifest']), self.app / 'release.json')
-        self.assertEqual(Path(receipt['python']), self.destination / 'python')
+        self.assertTrue(Path(receipt['directory']).samefile(self.app))
+        self.assertTrue(Path(receipt['manifest']).samefile(self.app / 'release.json'))
+        # The fixture records this target but does not install Python there.
+        self.assertEqual(Path(receipt['python']).resolve(), (self.destination / 'python').resolve())
         self.assertEqual(receipt['preference'], 'only-managed')
         self.assertEqual(receipt['hkConflict'], 'Function hk')
         self.assertFalse(receipt['serverOnly'])
