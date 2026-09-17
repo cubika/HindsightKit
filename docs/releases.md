@@ -37,3 +37,11 @@ For a local packaging check, use an existing verified PostgreSQL distribution:
 ```
 
 The output directory must be empty. The command packages files only; it does not publish a release or touch a database. The installer template in distribution/install.ps1 is not a standalone source installer. Use setup.ps1 from a checkout or the generated install.ps1 from a release.
+
+## Local verification, September 17, 2026
+
+The integrated suite passed 222 tests, including PowerShell pipe execution, both roles, repeat installation, upgrades into separate version directories, file integrity failures, and repository-specific packaging. The workflow YAML and PowerShell syntax checks passed. Both configured GitHub repositories produced their own fixed-tag installation commands and checksum files from the same source.
+
+PostgreSQL and pgvector were rebuilt from the checked upstream archives. The first attempt to package an older local build found a developer path in vector.dll; compiler path mapping removed it from the rebuilt binary. Both the rebuilt distribution and the packaged ZIP passed disposable database checks for extensions, restricted permissions, restart, and persistence across repeated setup. The packaged installation used a checked local download cache and no compiler. Test databases were removed; no model calls or mailbox reads were made.
+
+GitHub Actions execution, public release downloads, and a complete installation with fresh Python/npm/model downloads and Copilot login on a clean machine remain unverified. The local checks do not establish that those external steps have passed.
