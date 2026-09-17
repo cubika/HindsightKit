@@ -4,15 +4,21 @@ These records separate completed checks from pending acceptance work. They do no
 
 ## v0.1.2 candidate: client preparation and npm progress
 
-Release acceptance and publication are pending. The candidate adds `-ClientOnly` to prepare the command and Copilot components without selecting or contacting a memory server. A later `connect` accepts a connection code or `--server` address. The installer's existing `-Server` option selects client-only installation and connection in one run.
+Client-installation acceptance passed within the scopes below. Publication is pending. The candidate adds `-ClientOnly` to prepare the command and Copilot components without selecting or contacting a memory server. A later `connect` accepts a connection code or `--server` address. The installer's existing `-Server` option selects client-only installation and connection in one run.
 
-The fresh-client archive contains the 87-package client dependency set, separate from the full 194-package server set. This is the locked package selection, not a new installation result. A machine with a local server profile retains the full archive for management dependencies; client setup preserves existing data and configuration without installing, starting, or reconfiguring the dashboard, database, or model. This mode does not uninstall an existing server.
+The hosted candidate build passed 323 tests. Its client archive was 24,706,898 bytes with 87 wheels; the full archive was 286,713,128 bytes with 194 wheels. Downloaded artifacts passed checksum verification. Offline installation and repeat synchronization passed from both final archives. A fresh client environment contained neither `hindsight-api-slim` nor `hindsight-embed`.
 
 Seven targeted progress-helper tests passed using local synthetic processes. They covered silent-process heartbeats, stdout/stderr streaming before process completion, log append, nonzero exits with the first error and recent output, credential redaction, process-start errors, and interrupt ownership. The interrupt test confirmed that stopping the helper's own process left an unrelated process running. These tests made no npm network requests or real package installations.
 
-The candidate connects that helper to npm installation. It prints elapsed-time heartbeats and the working directory, appends redacted output to the installer log, and preserves error details on failure. Reuse is reported when the installed component and lock stamp match. A previous hosted log recorded 325.2 seconds between starting dashboard npm installation and moving to client integration. That measured duration shows that the step can take minutes; it does not diagnose a wait reported on another machine.
+The hosted run exercised real npm installation with ten-second heartbeats and visible output. Dashboard/server integration took 297.5 seconds; client integration took 29.1 seconds. A previous hosted log recorded 325.2 seconds between starting dashboard installation and moving to the client step. These measurements show that npm installation can take minutes; they do not diagnose a wait on another machine.
 
-Still pending: the final repository suite and hosted candidate build, installation from both generated archives, fresh-client preparation without an endpoint, later direct/code connection, repeat installation, and preservation of an existing local server during client-only setup. The v0.1.1 results below validate that earlier version and do not establish these new cases.
+An isolated test used the actual client package and official npm client dependencies. It installed 98 npm packages from cache in 6.0 seconds, prepared the client without an endpoint, and created no dashboard runtime or database directory. Direct-address and connection-code registration passed against a disposable authenticated HTTP fixture. With that fixture stopped, rerunning client-only setup refreshed the official MCP configuration and hooks while preserving the connection file byte for byte.
+
+That test mocked Copilot authentication and command registration to keep the user's global configuration unchanged. Its HTTP fixture simulated server discovery and registration; it did not exercise a remote Hindsight model, real cross-machine networking, or first-time Copilot login.
+
+A separate run executed the actual generated bootstrap with `-ClientOnly` on an existing full installation. The installer selected the full package because the local server profile existed, updated the installed command, and ran no dashboard/server setup stage. Server-profile, client-configuration, and cluster-metadata SHA256 hashes were unchanged, and the run did not change server data. The already running local server components remained healthy afterward. Client setup preserved management dependencies without stopping, uninstalling, or restarting that server.
+
+The candidate is ready for release based on these checks. Publication and download verification at the final release URLs remain separate steps. The v0.1.1 results below describe the earlier server installation and memory-preservation checks.
 
 ## v0.1.1, September 17, 2026
 

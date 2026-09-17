@@ -105,3 +105,5 @@ The v0.1.0 hosted release CI runs also passed all 270 tests without a mailbox ac
 The v0.1.1 candidate CI passed 303 repository tests, including connector fixtures, without live mailbox reads. Its installation acceptance used a disposable synthetic memory to verify upgrade preservation and then removed that bank. Python bundle and affected-network installation evidence is recorded in [release verification](release-validation.md).
 
 The final v0.1.1 release builds also passed 303 tests, including those fixtures. The actual local installation and repeat-install checks preserved the server profile, database metadata, and a pre-install synthetic memory; that temporary bank was deleted afterward. No live mailbox read was part of these acceptance checks.
+
+The v0.1.2 client-installation candidate passed 323 tests, including connector fixtures. No live mailbox acquisition was used. Client-only setup on an existing full installation left its server and database configuration unchanged; packaging and installation evidence is in [release validation](release-validation.md).

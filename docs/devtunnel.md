@@ -1,6 +1,6 @@
 # Connect another computer
 
-Install the memory server normally. Prepare a new coding computer with the v0.1.2 release page's `-ClientOnly` command, then choose its server using the commands below. Client preparation does not install a local dashboard, database, or model, and does not select an endpoint. The v0.1.2 candidate is awaiting validation and publication; its new installer flag is unavailable in older releases.
+Install the memory server normally. Prepare a new coding computer with the release page's `-ClientOnly` command, then choose its server using the commands below. Client preparation does not install a local dashboard, database, or model, and does not select an endpoint. The installer flag requires v0.1.2 or later.
 
 If installation already succeeded, run `connect` directly. An existing local server and dashboard can remain installed; changing the client connection does not require deleting them or their database. See [installation](installation.md#prepare-a-client-for-another-server) for retries and existing-server behavior. Local use needs no sharing step.
 

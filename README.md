@@ -4,7 +4,7 @@ HindsightKit installs a [Hindsight](https://github.com/vectorize-io/hindsight) m
 
 ## Install from a release
 
-The v0.1.2 Windows x64 candidate described here is awaiting validation and publication. Use Windows PowerShell 5.1 or PowerShell 7, install Git, and have a Copilot account available for sign-in. Use the commands from the published version you select; v0.1.2 options are unavailable in older installers.
+The v0.1.2 preview supports Windows x64 with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in. Use the commands from the published version you select; `-ClientOnly` requires v0.1.2 or later.
 
 1. Open **Releases** in this repository and select a published version.
 2. Use its default command to host memory on this computer, or its `-ClientOnly` command to prepare a coding client for an existing server. A restricted repository requires GitHub CLI sign-in as shown on that release page.
@@ -12,7 +12,7 @@ The v0.1.2 Windows x64 candidate described here is awaiting validation and publi
 
 The default command installs the local server and coding integrations together. `-ClientOnly` prepares the client command and Copilot components without creating a server connection, local dashboard, database, or model. A fresh client uses the smaller client archive. An existing local server keeps its management dependencies and data; client setup does not reconfigure or start it.
 
-Python packages are bundled with hashes. Python, Node.js, and npm components still need downloads; a new local server also needs the embedding model and precompiled PostgreSQL/pgvector distribution. No source checkout or C++ compiler is needed. Server setup checks a temporary memory through Copilot and removes it afterward. npm installation prints output and elapsed-time heartbeats; see [troubleshooting](docs/installation.md#npm-installation-takes-time). Tests and pending acceptance checks are recorded in [release validation](docs/release-validation.md).
+Python packages are bundled with hashes. Python, Node.js, and npm components still need downloads; a new local server also needs the embedding model and precompiled PostgreSQL/pgvector distribution. No source checkout or C++ compiler is needed. Server setup checks a temporary memory through Copilot and removes it afterward. npm installation prints output and elapsed-time heartbeats; see [troubleshooting](docs/installation.md#npm-installation-takes-time). Test results and publication status are recorded in [release validation](docs/release-validation.md).
 
 See [installation, upgrades, and file locations](docs/installation.md) for details. Building or installing from a checkout is covered separately in [development](docs/development.md).
 

@@ -1,6 +1,6 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.2 Windows x64 candidate; validation and publication are pending. The new `-ClientOnly` entry requires v0.1.2. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks.
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.2 Windows x64 preview. The `-ClientOnly` entry requires v0.1.2 or later. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks and publication status.
 
 ## Before installing
 
