@@ -88,7 +88,7 @@
       throw new Error("Some selected folders are unavailable. Refresh the folder list and update your selection.");
     }
     const parallel = Number(controls.parallel.value);
-    if (!Number.isSafeInteger(parallel) || parallel < 1 || parallel > 4) throw new Error("Choose 1 to 4 parallel threads.");
+    if (!Number.isSafeInteger(parallel) || parallel < 1 || parallel > 8) throw new Error("Choose 1 to 8 parallel threads.");
     return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes,
       model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel };
   }
@@ -99,7 +99,7 @@
     dirty = !saved || !controls.lookback.value || !controls.interval.value || Number(controls.lookback.value) !== saved.lookback_days ||
       Number(controls.interval.value) !== saved.interval_minutes ||
       controls.model.value.trim() !== (saved.model || "") || controls.reasoning.value !== (saved.reasoning_effort || "") ||
-      Number(controls.parallel.value) !== (saved.parallel_threads ?? 4) ||
+      Number(controls.parallel.value) !== (saved.parallel_threads ?? 8) ||
       selected.size !== savedIds.size || [...selected].some((id) => !savedIds.has(id));
     byId("feedback").textContent = "";
     clearPreview();
@@ -229,6 +229,9 @@
       .map((key) => `${numberFormat.format(run[key])} ${key}`);
     byId("outcome-changes").textContent = changes.length ? `Latest scan: ${changes.join(" · ")}` : "";
     byId("outcome-changes").hidden = !changes.length;
+    const prefiltered = Number.isFinite(run.prefiltered) ? run.prefiltered : 0;
+    byId("prefilter-count").textContent = `${numberFormat.format(prefiltered)} routine threads skipped before model analysis.`;
+    byId("prefilter-count").hidden = prefiltered === 0;
     byId("stat-failed").classList.toggle("has-failures", run.failed > 0);
     renderTime("last-success", run.last_success, "No completed sync yet");
     renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "Manual sync" : "Not scheduled yet") : "Paused");
@@ -276,7 +279,7 @@
       controls.interval.value = data.config.interval_minutes ?? 60;
       controls.model.value = data.config.model || "";
       controls.reasoning.value = data.config.reasoning_effort || "";
-      controls.parallel.value = data.config.parallel_threads ?? 4;
+      controls.parallel.value = data.config.parallel_threads ?? 8;
       dirty = incoming.size !== new Set(folderIds(data.config.folder_ids)).size;
     }
     for (const folder of folders) {

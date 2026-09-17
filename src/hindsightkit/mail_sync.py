@@ -21,7 +21,7 @@ MAX_PREPARED = 16
 MAX_SOURCES = 100000
 MAX_THREADS = 10000
 OVERLAP = timedelta(hours=6)
-IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=4)
+IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=8)
 
 
 def _now():
@@ -109,7 +109,7 @@ class MailSync:
     @staticmethod
     def _new_run():
         return dict(state='idle', scanned=0, imported=0, updated=0, withdrawn=0, outcomes=0,
-                    skipped=0, failed=0, pending=0, last_success=None, next_run=None,
+                    skipped=0, prefiltered=0, failed=0, pending=0, last_success=None, next_run=None,
                     error=None, consolidation='disabled for thread outcomes')
 
     def _get(self, key, default=None):
@@ -231,8 +231,8 @@ class MailSync:
             raise ValueError('Provide a model ID or leave it blank to use the server model.')
         if not isinstance(updated['reasoning_effort'], str) or updated['reasoning_effort'] not in {'', 'none', 'low', 'medium', 'high', 'xhigh', 'max'}:
             raise ValueError('Choose a supported reasoning effort.')
-        if type(updated['parallel_threads']) is not int or not 1 <= updated['parallel_threads'] <= 4:
-            raise ValueError('parallel_threads must be between 1 and 4.')
+        if type(updated['parallel_threads']) is not int or not 1 <= updated['parallel_threads'] <= 8:
+            raise ValueError('parallel_threads must be between 1 and 8.')
         updated["folder_ids"] = list(dict.fromkeys(ids))
         if updated == config:
             return self.status()
@@ -610,6 +610,12 @@ class MailSync:
         actual = {m['source_key'] for m in messages}
         if not expected.issubset(actual):
             raise ValueError('Thread evidence omits a previously discovered source.')
+        if previous is None:
+            from .mail_filter import routine_thread_reason
+            reason = routine_thread_reason(messages)
+            if reason:
+                self._finish(identity, dict(action='unchanged', input_hash=input_hash, prefilter_reason=reason), row['revision'])
+                return
         if self.builder is None:
             from .mail_outcome import OutcomeBuilder
             config = self._get('config')
@@ -739,6 +745,8 @@ class MailSync:
                  has_outcome, 'dirty' if row['revision'] > revision else 'idle', identity))
             run = self._get('run')
             run[count] += 1
+            if target.get('prefilter_reason'):
+                run['prefiltered'] = run.get('prefiltered', 0) + 1
             self._save('run', run)
         self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 

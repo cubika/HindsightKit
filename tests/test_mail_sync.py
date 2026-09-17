@@ -248,6 +248,57 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.client.docs), 3)
         self.assertEqual(self.sync.status()['run']['active_threads'], 0)
 
+    async def test_eight_workers_overlap_without_exceeding_limit(self):
+        for number in range(2, 11):
+            self.append(str(number), 'Finding ' + str(number), thread='thread-' + str(number))
+        await self.sync.configure({'parallel_threads': 8})
+        gate, overlap = asyncio.Event(), asyncio.Event()
+        active = maximum = 0
+        build = self.builder.build
+        async def blocked(messages, previous=None):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            if active == 8:
+                overlap.set()
+            try:
+                await gate.wait()
+                return await build(messages, previous)
+            finally:
+                active -= 1
+        self.builder.build = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(overlap.wait(), 2)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 8)
+        gate.set()
+        await asyncio.wait_for(self.sync._task, 4)
+        self.assertEqual(maximum, 8)
+        self.assertEqual(len(self.client.docs), 10)
+
+    async def test_prefilter_skips_before_model_and_rechecks_after_reply(self):
+        with patch('hindsightkit.mail_filter.routine_thread_reason', return_value='fixture_notification') as screen:
+            result = await self.run_sync()
+            self.assertEqual(result['run']['prefiltered'], 1)
+            self.assertEqual(result['run']['skipped'], 1)
+            self.assertFalse(self.builder.calls)
+            self.assertFalse(self.client.docs)
+            await self.run_sync()
+            self.assertEqual(screen.call_count, 1)
+        self.append('reply', 'New substantive diagnosis')
+        with patch('hindsightkit.mail_filter.routine_thread_reason', return_value=None):
+            result = await self.run_sync()
+        self.assertEqual(result['run']['imported'], 1)
+        self.assertEqual(next(iter(self.client.docs.values()))['original_text'], 'New substantive diagnosis')
+
+    async def test_prefilter_never_overrides_previously_accepted_outcome(self):
+        await self.run_sync()
+        self.append('reply', 'Updated substantive finding')
+        with patch('hindsightkit.mail_filter.routine_thread_reason') as screen:
+            result = await self.run_sync()
+        screen.assert_not_called()
+        self.assertEqual(result['run']['updated'], 1)
+        self.assertEqual(result['run']['prefiltered'], 0)
+
     async def test_pause_cancels_all_parallel_workers_and_resume_retries(self):
         self.append('two', 'Second finding', thread='second')
         await self.sync.configure({'parallel_threads': 2})
@@ -388,7 +439,7 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.client.submissions)
 
     async def test_import_settings_validate_and_persist(self):
-        for settings in ({'parallel_threads':0},{'parallel_threads':5},{'parallel_threads':True},
+        for settings in ({'parallel_threads':0},{'parallel_threads':9},{'parallel_threads':True},
                          {'model':'bad model'},{'reasoning_effort':'invalid'}):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 await self.sync.configure(settings)

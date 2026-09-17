@@ -8,9 +8,9 @@ import sqlite3
 import subprocess
 
 DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False,
-                       'model': '', 'reasoning_effort': '', 'parallel_threads': 4},
+                       'model': '', 'reasoning_effort': '', 'parallel_threads': 8},
            'account': None, 'folders': [], 'warnings': [], 'failures': [],
-           'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'failed': 0,
+           'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'prefiltered': 0, 'failed': 0,
                    'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
 EULA_ERROR = ('workiq_eula_required. WorkIQ requires license acceptance before mail access. '
               'Review the WorkIQ terms before resuming.')

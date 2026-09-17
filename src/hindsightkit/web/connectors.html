@@ -86,7 +86,7 @@
             <div class="schedule-note"><span class="note-line"></span><p>Each scan resumes from the last checkpoint.<br>Scheduled sync continues when this page is closed.</p></div>
             <div class="field-group"><label for="import-model">Import model</label><input id="import-model" type="text" maxlength="128" placeholder="Use server model" disabled><p class="field-help">A Copilot model ID for mail analysis. Leave blank to use the server model.</p></div>
             <div class="field-group"><label for="import-reasoning">Reasoning effort</label><select id="import-reasoning" disabled><option value="">Use server setting</option><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Maximum</option></select><p class="field-help">Lower effort usually finishes faster. The selected model must support it.</p></div>
-            <div class="field-group"><label for="parallel-threads">Parallel threads</label><div class="number-field"><input id="parallel-threads" type="number" min="1" max="4" value="4" disabled></div><p class="field-help">Analyze up to four independent threads at once.</p></div>
+            <div class="field-group"><label for="parallel-threads">Parallel threads</label><div class="number-field"><input id="parallel-threads" type="number" min="1" max="8" value="8" disabled></div><p class="field-help">Analyze up to eight independent threads at once. Standalone routine notifications are screened before analysis; replies and uncertain content are kept.</p></div>
           </section>
         </div>
 
@@ -101,6 +101,7 @@
         <div class="panel-heading"><div><h2 id="activity-heading">Sync activity</h2></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>Sync now</span></button></div>
         <dl class="stats-grid"><div><dt>Messages scanned</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>Thread outcomes</dt><dd id="stat-imported">—</dd></div><div><dt>Skipped threads</dt><dd id="stat-skipped">—</dd></div><div><dt>Failed threads</dt><dd id="stat-failed">—</dd></div><div><dt>Pending threads</dt><dd id="stat-pending">—</dd></div></dl>
         <p id="outcome-changes" class="field-help" hidden></p>
+        <p id="prefilter-count" class="field-help" hidden></p>
         <p class="field-help">One current outcome per retained thread. Other counts reflect the latest scan.</p>
         <div class="run-details"><p><span>Last successful sync</span><time id="last-success">No completed sync yet</time></p><p><span>Next sync</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>View thread outcomes<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">(opens in a new tab)</span></a></div>
         <details id="failures-panel" class="mail-failures" hidden><summary>Messages that could not be read<span id="failures-count" class="count-tag"></span></summary><ul id="failures-list"></ul></details>
