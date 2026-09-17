@@ -355,6 +355,116 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['run']['outcomes'], 1)
         self.assertEqual(self.source.thread_reads[0][0], 'another')
 
+    async def test_bad_identity_isolated_across_pages_and_retried_without_partial_outcome(self):
+        self.source.items[0]['internetMessageId'] = '<truncated@example.invalid'
+        self.append('other', 'Independent result', thread='another')
+        self.append('related', 'Partial related result')
+        self.append('only-bad', 'Unavailable isolated result', thread='isolated')
+        self.source.items[-1]['internetMessageId'] = ''
+        self.append('last', 'Last page result', thread='last')
+        result = await self.run_sync()
+        self.assertEqual(result['run']['scanned'], 5)
+        self.assertEqual(result['run']['imported'], 2)
+        self.assertEqual(result['run']['failed'], 2)
+        self.assertEqual(result['run']['pending'], 2)
+        self.assertEqual({row[0] for row in self.source.thread_reads}, {'another', 'last'})
+        errors = self.sync.db.execute('SELECT * FROM discovery_errors').fetchall()
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all(row['id'].startswith('workiq-discovery-') and row['thread'] for row in errors))
+        self.assertFalse(self.sync.db.execute("SELECT 1 FROM sources WHERE id LIKE 'workiq-discovery-%'").fetchone())
+        self.assertTrue(all('workiq_thread_identity_incomplete' in failure['reason'] or 'workiq_message_identity_missing' in failure['reason'] for failure in result['failures']))
+        self.source.reads.clear()
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 2)
+        self.assertEqual(len(self.builder.calls), 2)
+        self.assertEqual(self.source.reads[0][1], self.sync._get('history_start'))
+        self.source.items[0]['internetMessageId'] = '<one@example.invalid>'
+        self.source.items[3]['internetMessageId'] = '<only-bad@example.invalid>'
+        self.source.reads.clear()
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertEqual(result['run']['pending'], 0)
+        self.assertEqual(result['run']['outcomes'], 4)
+        self.assertFalse(self.sync.db.execute('SELECT 1 FROM discovery_errors').fetchone())
+        self.assertEqual(self.source.reads[0][1], self.sync._get('history_start'))
+        self.assertEqual(len(self.builder.calls), 4)
+
+    async def test_bad_identity_preserves_accepted_result_and_counts_one_thread(self):
+        await self.run_sync()
+        accepted = deepcopy(self.client.docs)
+        for identity in ('bad-one', 'bad-two'):
+            self.append(identity, 'Unverified correction')
+            self.source.items[-1]['internetMessageId'] = ''
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 1)
+        self.assertEqual(result['run']['pending'], 1)
+        self.assertEqual(self.client.docs, accepted)
+        self.assertEqual(len(self.builder.calls), 1)
+        self.assertEqual(self.sync.db.execute('SELECT COUNT(*) FROM discovery_errors').fetchone()[0], 2)
+
+    async def test_discovery_holds_prepared_operation_until_identity_recovers(self):
+        await self.run_sync()
+        self.append('new', 'New accepted finding')
+        self.client.response_loss = True
+        await self.run_sync()
+        held = self.sync.db.execute('SELECT operation_id,payload FROM threads').fetchone()
+        self.assertIsNotNone(held['payload'])
+        self.append('bad', 'Newest verified finding')
+        self.source.items[-1]['internetMessageId'] = ''
+        deliveries = []
+        deliver = self.sync._deliver
+        async def observe(identity):
+            deliveries.append(bool(self.sync.db.execute('SELECT 1 FROM discovery_errors WHERE thread=?', (identity,)).fetchone()))
+            await deliver(identity)
+        self.sync._deliver = observe
+        result = await self.run_sync()
+        current = self.sync.db.execute('SELECT operation_id,payload FROM threads').fetchone()
+        self.assertEqual(current['operation_id'], held['operation_id'])
+        self.assertEqual(current['payload'], held['payload'])
+        self.assertEqual(result['run']['failed'], 1)
+        self.assertEqual(deliveries, [True])
+        self.assertEqual(len(self.client.submissions), 2)
+        self.assertEqual(len(self.builder.calls), 2)
+        self.source.items[-1]['internetMessageId'] = '<bad@example.invalid>'
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertEqual(result['run']['pending'], 0)
+        self.assertFalse(self.sync.db.execute('SELECT 1 FROM discovery_errors').fetchone())
+        self.assertEqual(next(iter(self.client.docs.values()))['original_text'], 'Newest verified finding')
+
+    async def test_unidentified_discovery_error_recovers_without_duplicate_error(self):
+        self.source.items[0].update(internetMessageId='', conversationId='')
+        self.append('other', 'Independent result', thread='another')
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 1)
+        self.assertEqual(result['run']['imported'], 1)
+        self.source.items[0]['internetMessageId'] = '<one@example.invalid>'
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 1)
+        self.assertEqual(self.sync.db.execute('SELECT COUNT(*) FROM discovery_errors').fetchone()[0], 1)
+        self.source.items[0]['conversationId'] = 'recovered'
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertEqual(result['run']['outcomes'], 2)
+        self.assertFalse(self.sync.db.execute('SELECT 1 FROM discovery_errors').fetchone())
+
+    async def test_existing_discovery_error_schema_migrates_and_clears_on_recovery(self):
+        await self.sync.close()
+        db = sqlite3.connect(Path(self.temp.name) / 'sync.sqlite3')
+        try:
+            with db:
+                db.execute('DROP TABLE discovery_errors')
+                db.execute('CREATE TABLE discovery_errors(id TEXT PRIMARY KEY,folder TEXT,error TEXT)')
+                db.execute('INSERT INTO discovery_errors VALUES (?,?,?)',
+                           (source_key(self.source.items[0], 'account-a'), 'inbox', 'Missing conversation ID'))
+        finally:
+            db.close()
+        self.sync = self.runner()
+        self.assertIn('thread', {row['name'] for row in self.sync.db.execute('PRAGMA table_info(discovery_errors)')})
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertFalse(self.sync.db.execute('SELECT 1 FROM discovery_errors').fetchone())
+
     async def test_same_subject_different_conversation_ids_are_separate(self):
         self.append('other', 'Independent result', thread='another')
         result = await self.run_sync()
@@ -455,11 +565,13 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_drafts_never_create_dirty_threads_or_model_calls(self):
         self.source.items[0]['isDraft'] = True
+        self.source.items[0]['internetMessageId'] = None
         result = await self.run_sync()
         self.assertEqual(result['run']['scanned'], 1)
         self.assertEqual(result['run']['outcomes'], 0)
         self.assertFalse(self.builder.calls)
         self.assertFalse(self.source.thread_reads)
+        self.assertFalse(self.sync.db.execute('SELECT 1 FROM discovery_errors').fetchone())
 
     async def test_auth_failure_disables_schedule_and_preserves_existing_outcome(self):
         await self.run_sync()
