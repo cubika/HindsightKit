@@ -77,11 +77,15 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sync.calls, [config])
         response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json={**config, 'account': 'other'})
         self.assertEqual(response.status, 400)
+        fast = {**config, 'model': 'gpt-5.6-luna', 'reasoning_effort': 'low', 'parallel_threads': 4}
+        response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json=fast)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.sync.calls[-1], fast)
         response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, data='[]')
         self.assertEqual(response.status, 400)
         response = await self.client.post('/api/connectors/workiq/preview', headers=self.write_headers, json={})
         self.assertEqual((await response.json())['items'][0]['cleaned'], 'clean')
-        self.assertEqual(self.sync.calls, [config])
+        self.assertEqual(self.sync.calls, [config, fast])
 
     async def test_page_replaces_csrf_marker_and_static_route_is_allowlisted(self):
         with tempfile.TemporaryDirectory() as temp:

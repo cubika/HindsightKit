@@ -304,6 +304,94 @@ class ThreadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filter_text, "receivedDateTime lt 2026-09-16T00:00:00Z and conversationId eq 'thread'")
         self.assertNotIn('subject', filter_text)
 
+    async def test_thread_batches_folders_with_independent_pagination(self):
+        source = self.source(page_size=1)
+        source._folders.update({'archive': {'path': 'Archive'}, 'empty': {}})
+        calls = []
+        def row(identifier, folder, hour):
+            return mail(id=identifier, internetMessageId=f'<{identifier}@example.com>',
+                        parentFolderId=folder, sentDateTime=f'2026-09-15T{hour:02}:00:00Z')
+        async def fetch(urls):
+            calls.append(urls)
+            if len(calls) == 1:
+                return [
+                    {'value': [row('new', 'inbox-id', 4)], '@odata.nextLink': urls[0] + '&%24skip=1'},
+                    {'value': [row('old', 'archive', 2)], '@odata.nextLink': urls[1] + '&%24skiptoken=A%2BB%2F%3D%3D'},
+                    {'value': []},
+                ]
+            if len(calls) == 2:
+                return [
+                    {'value': [row('middle', 'inbox-id', 3)]},
+                    {'value': [], '@odata.nextLink': calls[0][1] + '&%24skip=2'},
+                ]
+            return [{'value': [row('oldest', 'archive', 1)]}]
+        source._fetch = fetch
+        rows = await source.thread('thread', ['inbox-id', 'archive', 'empty', 'inbox-id'], '2026-09-16T00:00:00Z')
+        self.assertEqual([len(batch) for batch in calls], [3, 2, 1])
+        self.assertEqual(calls[1], [calls[0][0] + '&%24skip=1', calls[0][1] + '&%24skiptoken=A%2BB%2F%3D%3D'])
+        self.assertEqual(calls[2], [calls[0][1] + '&%24skip=2'])
+        self.assertEqual([row['raw']['id'] for row in rows], ['oldest', 'old', 'middle', 'new'])
+        self.assertEqual(rows[0]['metadata']['folder_path'], 'Archive')
+
+    async def test_thread_batch_validates_every_folder_before_body_reads(self):
+        valid = mail(id='archive-message', internetMessageId='<archive@example.com>', parentFolderId='archive')
+        invalid_pages = [
+            ({'value': [mail(parentFolderId='archive')]}, 'changed'),
+            ({'value': [mail(id='duplicate-identity', parentFolderId='archive')]}, 'changed'),
+            ({'value': [dict(valid, parentFolderId='inbox-id')]}, 'outside_scope'),
+            ({'value': [dict(valid, conversationId='other')]}, 'outside_scope'),
+            ({'value': [dict(valid, receivedDateTime='2026-09-17T00:00:00Z')]}, 'outside_scope'),
+            ({'value': [dict(valid, internetMessageId='')]}, 'message_identity_missing'),
+            ({'value': [valid], '@odata.deltaLink': 'ignored'}, 'response_invalid'),
+        ]
+        for page, error in invalid_pages:
+            with self.subTest(error=error, page=page):
+                source = self.source()
+                source._folders['archive'] = {}
+                async def fetch(urls):
+                    self.assertEqual(len(urls), 2)
+                    return [{'value': [mail()]}, page]
+                async def messages(rows):
+                    self.fail('Incomplete or invalid thread must not fetch bodies')
+                source._fetch, source.messages = fetch, messages
+                with self.assertRaisesRegex(WorkIQError, error):
+                    await source.thread('thread', ['inbox-id', 'archive'], '2026-09-16T00:00:00Z')
+
+    async def test_thread_batch_rejects_missing_page_and_cross_folder_cursor(self):
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                source = self.source()
+                source._folders['archive'] = {}
+                async def fetch(urls):
+                    pages = [{'value': [mail()]}]
+                    if not missing:
+                        pages.append({'value': [], '@odata.nextLink': urls[0] + '&%24skip=1'})
+                    return pages
+                source._fetch = fetch
+                with self.assertRaisesRegex(WorkIQError, 'response_invalid' if missing else 'next_link_outside_scope'):
+                    await source.thread('thread', ['inbox-id', 'archive'], '2026-09-16T00:00:00Z')
+
+    async def test_thread_batch_enforces_global_message_and_page_limits(self):
+        source = self.source(max_thread_messages=1)
+        source._folders['archive'] = {}
+        async def fetch(urls):
+            return [{'value': [mail()]}, {'value': [mail(id='two', internetMessageId='<two@example.com>', parentFolderId='archive')]}]
+        source._fetch = fetch
+        with self.assertRaisesRegex(WorkIQError, 'too_large'):
+            await source.thread('thread', ['inbox-id', 'archive'], '2026-09-16T00:00:00Z')
+        for repeat in (False, True):
+            with self.subTest(repeat=repeat):
+                source = self.source(max_thread_messages=3)
+                source._folders['archive'] = {}
+                calls = []
+                async def empty_pages(urls):
+                    calls.append(urls)
+                    return [{'value': [], '@odata.nextLink': calls[0][i] + f'&%24skip={1 if repeat else len(calls)}'} for i in range(2)]
+                source._fetch = empty_pages
+                with self.assertRaisesRegex(WorkIQError, 'incomplete'):
+                    await source.thread('thread', ['inbox-id', 'archive'], '2026-09-16T00:00:00Z')
+                self.assertEqual([len(batch) for batch in calls], [2, 2])
+
     async def test_draft_without_internet_identity_does_not_block_thread(self):
         source = self.source()
         draft = mail(id='draft', internetMessageId=None, isDraft=True)

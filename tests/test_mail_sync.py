@@ -220,6 +220,95 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['run']['skipped'], 1)
         self.assertEqual(result['run']['outcomes'], 1)
 
+    async def test_thread_workers_overlap_with_bounded_parallelism(self):
+        self.append('two', 'Second finding', thread='second')
+        self.append('three', 'Third finding', thread='third')
+        await self.sync.configure({'parallel_threads': 2})
+        gate, overlap = asyncio.Event(), asyncio.Event()
+        active = maximum = 0
+        build = self.builder.build
+        async def blocked(messages, previous=None):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            if active == 2:
+                overlap.set()
+            try:
+                await gate.wait()
+                return await build(messages, previous)
+            finally:
+                active -= 1
+        self.builder.build = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(overlap.wait(), 2)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 2)
+        gate.set()
+        await asyncio.wait_for(self.sync._task, 4)
+        self.assertEqual(maximum, 2)
+        self.assertEqual(len(self.client.docs), 3)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 0)
+
+    async def test_pause_cancels_all_parallel_workers_and_resume_retries(self):
+        self.append('two', 'Second finding', thread='second')
+        await self.sync.configure({'parallel_threads': 2})
+        gate, overlap = asyncio.Event(), asyncio.Event()
+        active = 0
+        build = self.builder.build
+        async def blocked(messages, previous=None):
+            nonlocal active
+            active += 1
+            if active == 2:
+                overlap.set()
+            try:
+                await gate.wait()
+                return await build(messages, previous)
+            finally:
+                active -= 1
+        self.builder.build = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(overlap.wait(), 2)
+        await self.sync.pause()
+        self.assertEqual(active, 0)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 0)
+        self.assertFalse(self.client.docs)
+        self.builder.build = build
+        await self.run_sync()
+        self.assertEqual(len(self.client.docs), 2)
+
+    async def test_import_settings_validate_and_persist(self):
+        for settings in ({'parallel_threads':0},{'parallel_threads':5},{'parallel_threads':True},
+                         {'model':'bad model'},{'reasoning_effort':'invalid'}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                await self.sync.configure(settings)
+        await self.sync.configure({'model':'gpt-5.6-luna','reasoning_effort':'low','parallel_threads':3})
+        await self.restart()
+        config=self.sync.status()['config']
+        self.assertEqual((config['model'],config['reasoning_effort'],config['parallel_threads']),
+                         ('gpt-5.6-luna','low',3))
+
+    async def test_parallel_preparation_respects_durable_payload_limit(self):
+        self.append('two', 'Second finding', thread='second')
+        await self.sync.configure({'parallel_threads': 2})
+        self.client.mode = 'failed'
+        gate, overlap = asyncio.Event(), asyncio.Event()
+        count = 0
+        build = self.builder.build
+        async def blocked(messages, previous=None):
+            nonlocal count
+            count += 1
+            if count == 2:
+                overlap.set()
+            await gate.wait()
+            return await build(messages, previous)
+        self.builder.build = blocked
+        with patch('hindsightkit.mail_sync.MAX_PREPARED', 1):
+            await self.sync.sync()
+            await asyncio.wait_for(overlap.wait(), 2)
+            gate.set()
+            await asyncio.wait_for(self.sync._task, 4)
+        self.assertEqual(self.sync.db.execute('SELECT COUNT(*) FROM threads WHERE payload IS NOT NULL').fetchone()[0], 1)
+        self.assertEqual(len(self.client.submissions), 1)
+
     async def test_changed_transport_version_with_identical_content_skips_model(self):
         await self.run_sync()
         self.source.items[0]['lastModifiedDateTime'] = '2026-09-17T03:00:00Z'

@@ -296,8 +296,9 @@ def _validate(result, index, previous):
 
 
 class OutcomeBuilder:
-    def __init__(self, profile=None, *, timeout=240, client_factory=None):
+    def __init__(self, profile=None, *, timeout=240, client_factory=None, model=None, reasoning_effort=None):
         self.profile, self.timeout, self.client_factory = profile, timeout, client_factory
+        self.model, self.reasoning_effort = model, reasoning_effort
         self._clients = set()
 
     async def close(self):
@@ -319,7 +320,7 @@ class OutcomeBuilder:
             profile, _ = profile_config()
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise OutcomeError('outcome_copilot_profile_required')
-        model = profile.get('HINDSIGHT_API_LLM_MODEL')
+        model = self.model or profile.get('HINDSIGHT_API_LLM_MODEL')
         if not model:
             raise OutcomeError('outcome_model_missing')
         from copilot import CopilotClient
@@ -342,7 +343,7 @@ class OutcomeBuilder:
             session = None
             try:
                 await asyncio.wait_for(client.start(), 90)
-                session = await client.create_session(model=model, reasoning_effort=profile.get('HINDSIGHT_API_LLM_REASONING_EFFORT'),
+                session = await client.create_session(model=model, reasoning_effort=self.reasoning_effort or profile.get('HINDSIGHT_API_LLM_REASONING_EFFORT'),
                     available_tools=['record_outcome'], tools=[tool], tool_search={'enabled': False},
                     system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
                     working_directory=directory, config_directory=directory, enable_config_discovery=False,

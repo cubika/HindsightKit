@@ -12,6 +12,7 @@
     recommend: byId("recommend-button"), clear: byId("clear-folders-button"),
     lookback: byId("lookback-days"), interval: byId("interval-minutes"),
     search: byId("folder-search"),
+    model: byId("import-model"), reasoning: byId("import-reasoning"), parallel: byId("parallel-threads"),
   };
   const activeStates = new Set(["queued", "running", "scanning", "syncing", "importing", "processing", "stopping"]);
   const stateLabels = {
@@ -85,7 +86,10 @@
     if ([...selected].some((id) => !available.has(id))) {
       throw new Error("Some selected folders are unavailable. Refresh the folder list and update your selection.");
     }
-    return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes };
+    const parallel = Number(controls.parallel.value);
+    if (!Number.isSafeInteger(parallel) || parallel < 1 || parallel > 4) throw new Error("Choose 1 to 4 parallel threads.");
+    return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes,
+      model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel };
   }
 
   function updateDirty() {
@@ -93,6 +97,8 @@
     const savedIds = new Set(folderIds(saved?.folder_ids));
     dirty = !saved || !controls.lookback.value || !controls.interval.value || Number(controls.lookback.value) !== saved.lookback_days ||
       Number(controls.interval.value) !== saved.interval_minutes ||
+      controls.model.value.trim() !== (saved.model || "") || controls.reasoning.value !== (saved.reasoning_effort || "") ||
+      Number(controls.parallel.value) !== (saved.parallel_threads ?? 4) ||
       selected.size !== savedIds.size || [...selected].some((id) => !savedIds.has(id));
     byId("feedback").textContent = "";
     clearPreview();
@@ -116,6 +122,7 @@
     controls.retry.disabled = busy;
     controls.lookback.disabled = !loaded || busy;
     controls.interval.disabled = !loaded || busy;
+    controls.model.disabled = controls.reasoning.disabled = controls.parallel.disabled = !loaded || busy;
     controls.search.disabled = !folders.length;
     controls.recommend.disabled = busy || !folders.some((folder) => folder.recommended && !folder.excluded);
     controls.clear.disabled = busy || !selected.size;
@@ -260,6 +267,9 @@
       selected = incoming;
       controls.lookback.value = data.config.lookback_days ?? 7;
       controls.interval.value = data.config.interval_minutes ?? 60;
+      controls.model.value = data.config.model || "";
+      controls.reasoning.value = data.config.reasoning_effort || "";
+      controls.parallel.value = data.config.parallel_threads ?? 4;
       dirty = incoming.size !== new Set(folderIds(data.config.folder_ids)).size;
     }
     for (const folder of folders) {
@@ -573,6 +583,9 @@
   controls.search.addEventListener("input", renderFolders);
   controls.lookback.addEventListener("input", updateDirty);
   controls.interval.addEventListener("input", updateDirty);
+  controls.model.addEventListener("input", updateDirty);
+  controls.reasoning.addEventListener("change", updateDirty);
+  controls.parallel.addEventListener("input", updateDirty);
   controls.recommend.addEventListener("click", () => {
     selected = new Set(folders.filter((folder) => folder.recommended && !folder.excluded).map((folder) => folder.id));
     renderFolders();

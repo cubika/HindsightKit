@@ -389,14 +389,21 @@ class WorkIQMailSource:
         conversation = conversation_id.replace("'", "''")
         filter_text = f"receivedDateTime lt {before_iso} and conversationId eq '{conversation}'"
         metadata, seen, graph_ids, links = [], set(), set(), set()
+        pending = []
         for folder_id in selected:
             path = "/me/mailFolders/" + _identifier(folder_id) + "/messages"
             link = path + "?" + urlencode({"$filter": filter_text, "$select": METADATA_FIELDS, "$top": self.page_size})
-            while link:
+            pending.append((folder_id, path, link))
+        while pending:
+            for _, _, link in pending:
                 if link in links or len(links) >= self.max_thread_messages + len(selected):
                     raise WorkIQError("workiq_thread_incomplete")
                 links.add(link)
-                page, = await self._fetch([link])
+            pages = await self._fetch([link for _, _, link in pending])
+            if len(pages) != len(pending):
+                raise WorkIQError("workiq_thread_response_invalid")
+            next_pages = []
+            for (folder_id, path, _), page in zip(pending, pages):
                 if not isinstance(page.get("value"), list) or len(page["value"]) > self.page_size or "@odata.deltaLink" in page:
                     raise WorkIQError("workiq_thread_response_invalid")
                 for item in page["value"]:
@@ -416,7 +423,10 @@ class WorkIQMailSource:
                         raise WorkIQError("workiq_thread_changed")
                     seen.add(identity)
                     metadata.append(item)
-                link = validate_next_link(page["@odata.nextLink"], path, METADATA_FIELDS, filter_text, self.page_size) if "@odata.nextLink" in page else None
+                if "@odata.nextLink" in page:
+                    link = validate_next_link(page["@odata.nextLink"], path, METADATA_FIELDS, filter_text, self.page_size)
+                    next_pages.append((folder_id, path, link))
+            pending = next_pages
         if not metadata:
             raise WorkIQError("workiq_thread_missing")
         messages = await self.messages(metadata)

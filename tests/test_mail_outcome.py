@@ -176,6 +176,18 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(clients),1)
         self.assertEqual(len(clients[0].prompts),2)
 
+    async def test_import_model_override_preserves_server_profile(self):
+        clients=[]
+        profile=dict(self.profile)
+        def factory(**kwargs):
+            client=FakeClient([answer()],**kwargs);clients.append(client);return client
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            result=await OutcomeBuilder(profile,client_factory=factory,model='gpt-5.6-luna',reasoning_effort='none').build([message()])
+        self.assertEqual(result['action'],'publish')
+        self.assertEqual(clients[0].session_config['model'],'gpt-5.6-luna')
+        self.assertEqual(clients[0].session_config['reasoning_effort'],'none')
+        self.assertEqual(profile,self.profile)
+
     async def test_two_invalid_results_raise(self):
         def factory(**kwargs):
             return FakeClient([{},{}],**kwargs)

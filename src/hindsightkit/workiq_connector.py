@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 import sqlite3
 
-DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False},
+DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False,
+                       'model': '', 'reasoning_effort': '', 'parallel_threads': 4},
            'account': None, 'folders': [], 'warnings': [], 'failures': [],
            'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'failed': 0,
                    'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
@@ -20,7 +21,7 @@ def saved_status(directory):
             try:
                 for key, data in db.execute('SELECT key,value FROM settings'):
                     if key in value:
-                        value[key] = json.loads(data)
+                        value[key] = {**value[key], **json.loads(data)} if key == 'config' else json.loads(data)
                 tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if 'threads' in tables:
                     value['run']['pending'] = db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
@@ -82,7 +83,9 @@ class Adapter:
             self.error = None
             return self.status()
         if action == 'config':
-            if not isinstance(data, dict) or set(data) != {'folder_ids', 'lookback_days', 'interval_minutes'}:
+            required = {'folder_ids', 'lookback_days', 'interval_minutes'}
+            optional = {'model', 'reasoning_effort', 'parallel_threads'}
+            if not isinstance(data, dict) or not required <= set(data) or set(data) - required - optional:
                 raise ValueError('Choose folders, a lookback period, and a sync interval.')
         if not self.availability(refresh=True)['ready']:
             raise ValueError(self._check['message'])

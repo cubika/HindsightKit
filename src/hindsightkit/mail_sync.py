@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import sqlite3
 import uuid
@@ -19,6 +20,7 @@ MAX_PREPARED = 16
 MAX_SOURCES = 100000
 MAX_THREADS = 10000
 OVERLAP = timedelta(hours=6)
+IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=4)
 
 
 def _now():
@@ -90,9 +92,11 @@ class MailSync:
         self._source_lock = asyncio.Lock()
         self._task = self._scheduler = None
         self._wake = asyncio.Event()
+        self._active_threads = 0
         self.poll_seconds, self.operation_timeout = 2, 1800
         if self._get('config') is None:
             self._put('config', dict(folder_ids=[], lookback_days=30, interval_minutes=30, enabled=False))
+        self._put('config', {**IMPORT_DEFAULTS, **self._get('config')})
         run = {**self._new_run(), **self._get('run', {})}
         if run['state'] in {'running', 'queued'}:
             run['state'] = 'paused'
@@ -128,6 +132,19 @@ class MailSync:
         run = self._get('run')
         run['outcomes'] = self.db.execute('SELECT COUNT(*) FROM threads WHERE has_outcome=1').fetchone()[0]
         run['pending'] = self.db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
+        run['active_threads'] = self._active_threads
+        selected = set(self._get('config')['folder_ids'])
+        selected_threads = self._selected_threads()
+        failures_by_thread = {row['id'] for row in self.db.execute("SELECT id FROM threads WHERE error IS NOT NULL")
+                              if row['id'] in selected_threads}
+        unidentified = 0
+        for row in self.db.execute('SELECT folder,thread FROM discovery_errors'):
+            if row['folder'] in selected:
+                if row['thread']:
+                    failures_by_thread.add(row['thread'])
+                else:
+                    unidentified += 1
+        run['failed'] = len(failures_by_thread) + unidentified
         failures = [dict(subject=row['subject'], reason=row['error']) for row in self.db.execute(
             'SELECT subject,error FROM threads WHERE error IS NOT NULL LIMIT 10')]
         failures.extend(dict(subject='Unidentified thread', reason=row['error']) for row in self.db.execute('SELECT error FROM discovery_errors LIMIT 10'))
@@ -200,11 +217,20 @@ class MailSync:
                 raise ValueError(f"{key} must be between {minimum} and {maximum}.")
         if type(updated["enabled"]) is not bool:
             raise ValueError("enabled must be a boolean.")
+        if not isinstance(updated['model'], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}|', updated['model']):
+            raise ValueError('Provide a model ID or leave it blank to use the server model.')
+        if not isinstance(updated['reasoning_effort'], str) or updated['reasoning_effort'] not in {'', 'none', 'low', 'medium', 'high', 'xhigh', 'max'}:
+            raise ValueError('Choose a supported reasoning effort.')
+        if type(updated['parallel_threads']) is not int or not 1 <= updated['parallel_threads'] <= 4:
+            raise ValueError('parallel_threads must be between 1 and 4.')
         updated["folder_ids"] = list(dict.fromkeys(ids))
         if updated == config:
             return self.status()
         if self._task and not self._task.done():
             await self.pause()
+        if any(updated[key] != config[key] for key in ('model', 'reasoning_effort')) and self.builder is not None:
+            await self.builder.close()
+            self.builder = None
         if updated["folder_ids"] != config["folder_ids"]:
             self._put("window", None)
         if updated["lookback_days"] > config["lookback_days"] and self._get("history_start"):
@@ -445,16 +471,10 @@ class MailSync:
                     failed.add(row['id'])
                     self._thread_error(row['id'], exc)
             selected = self._selected_threads()
-            for row in self.db.execute("SELECT id FROM threads WHERE state!='idle'").fetchall():
-                if row['id'] not in selected or row['id'] in failed:
-                    continue
-                try:
-                    await self._prepare(row['id'], before)
-                except Exception as exc:
-                    if getattr(exc, 'status', None) in {401, 403}:
-                        raise
-                    failed.add(row['id'])
-                    self._thread_error(row['id'], exc)
+            identities = [row['id'] for row in self.db.execute("SELECT id FROM threads WHERE state!='idle'").fetchall()
+                          if row['id'] in selected and row['id'] not in failed]
+            phase = 'thread processing'
+            await self._process_threads(identities, before, failed)
             discovery_failures = 0
             for row in self.db.execute('SELECT folder,thread FROM discovery_errors'):
                 if row['folder'] in self._get('config')['folder_ids']:
@@ -479,6 +499,31 @@ class MailSync:
             config = self._get('config')
             self._run_update(next_run=_iso(_now() + timedelta(minutes=config['interval_minutes'])) if config['enabled'] and config['interval_minutes'] else None)
             self._wake.set()
+
+    async def _process_threads(self, identities, before, failed):
+        remaining = iter(identities)
+
+        async def worker():
+            for identity in remaining:
+                self._active_threads += 1
+                try:
+                    await self._prepare(identity, before)
+                except Exception as exc:
+                    if getattr(exc, 'status', None) in {401, 403}:
+                        raise
+                    failed.add(identity)
+                    self._thread_error(identity, exc)
+                finally:
+                    self._active_threads -= 1
+
+        tasks = [asyncio.create_task(worker()) for _ in range(min(len(identities), self._get('config')['parallel_threads']))]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _thread_error(self, identity, exc):
         with self.db:
@@ -522,7 +567,8 @@ class MailSync:
             raise ValueError('Thread evidence omits a previously discovered source.')
         if self.builder is None:
             from .mail_outcome import OutcomeBuilder
-            self.builder = OutcomeBuilder()
+            config = self._get('config')
+            self.builder = OutcomeBuilder(model=config['model'] or None, reasoning_effort=config['reasoning_effort'] or None)
         decision = await self.builder.build(messages, previous=previous)
         self._validate_decision(decision)
         outcome_hash = _hash([decision['content'], decision['metadata']])
@@ -537,6 +583,8 @@ class MailSync:
             return
         # Only the prepared outcome is durable, never the source correspondence.
         with self.db:
+            if self.db.execute('SELECT COUNT(*) FROM threads WHERE payload IS NOT NULL').fetchone()[0] >= MAX_PREPARED:
+                raise ValueError('Pending outcome queue is full; finish existing deliveries before preparing more.')
             self.db.execute("UPDATE threads SET target_revision=?,operation_id=?,payload=?,state='prepared',error=NULL WHERE id=? AND revision=?",
                 (row['revision'], str(uuid.uuid4()), _json(target), identity, row['revision']))
         await self._deliver(identity)
