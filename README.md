@@ -21,7 +21,9 @@ Install a client on a coding machine:
 For entirely local use, run both commands on the same machine, using http://127.0.0.1:9077 for the client. Server setup starts the API listening automatically. Client setup asks for the server connection key once; the hostname and memory routing are automatic. See [server and client setup](docs/shared-memory.md) for keys, tunnels, upgrades, and client activity.
 
 Server setup installs Hindsight, standalone PostgreSQL, embeddings, and the dashboard. It does not register coding integrations. Client setup installs the coding integrations without a database, models, or dashboard. Each role keeps its own settings, including when both run on one machine. The server uses its Copilot account for model calls; coding clients use their own Copilot login.
-Setup adds the native hindsightkit command to your user PATH. It works immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
+Setup adds the native hindsightkit command to your user PATH. It also installs hk when that name is available; both commands accept the same arguments in PowerShell and CMD. An existing HindsightKit hk command is updated. If another command uses hk, setup leaves it alone and prints a notice; hindsightkit remains available. Setup does not edit shell profiles.
+
+The commands work immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
 
 Server setup starts the services and checks a temporary memory by storing and recalling it through the real model provider. The test bank is removed afterward. This uses a small amount of Copilot allowance. Memory stays in the local Hindsight database; extraction and reflection use Copilot's hosted models.
 
@@ -53,6 +55,8 @@ hindsightkit check
 hindsightkit stop
 hindsightkit copilot
 ```
+
+The short form works the same way: `hk status`, `hk ui`, or `hk stop`.
 
 Default API: http://127.0.0.1:9077. Default UI: http://localhost:19077. PostgreSQL prefers port 15432 and chooses an available port during first setup if needed. Run `hindsightkit ui` to start stopped services and open the dashboard. The API, UI and standalone PostgreSQL run in the background and keep running after the terminal closes. Use `hindsightkit stop` to stop them. No login task or Windows service is installed; run `hindsightkit start` after reboot.
 
@@ -93,7 +97,7 @@ The settings host stores its process record in `~/.hindsightkit/connectors`. Mai
 | Location | Contents |
 | --- | --- |
 | This checkout's .venv | Pinned Python runtime packages |
-| ~/.hindsightkit/bin | Native hindsightkit command registered on the user PATH |
+| ~/.hindsightkit/bin | Native hindsightkit command and optional hk short command |
 | ~/.hindsightkit/runtime | Official npm components |
 | ~/.hindsightkit/client-runtime | Official npm integration for client installations |
 | ~/.hindsightkit/server/connection-key.txt | Private server connection key |

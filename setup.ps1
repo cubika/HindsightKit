@@ -84,7 +84,15 @@ try {
     if ($Server) { $setupArgs += @('--server', $Server) }
     if ($ApiKeyEnv) { $setupArgs += @('--api-key-env', $ApiKeyEnv) }
     if ($NoOpen) { $setupArgs += '--no-open' }
-    Invoke-Checked $python $setupArgs
+    # Shell-local aliases and functions are invisible to the Python child's PATH scan.
+    $savedHkConflict = $env:HINDSIGHTKIT_HK_CONFLICT
+    try {
+        $occupied = Get-Command hk -All -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandType -notin @('Application', 'ExternalScript')
+        } | Select-Object -First 1
+        if ($occupied) { $env:HINDSIGHTKIT_HK_CONFLICT = [string]$occupied.CommandType + ' hk' }
+        Invoke-Checked $python $setupArgs
+    } finally { $env:HINDSIGHTKIT_HK_CONFLICT = $savedHkConflict }
     $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
     $commandDirectory = Join-Path $commandRoot 'bin'
     $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
