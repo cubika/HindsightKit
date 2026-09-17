@@ -31,6 +31,7 @@ class BootstrapTests(unittest.TestCase):
                         LOCALAPPDATA=str(self.root / 'local app data'),
                         HINDSIGHTKIT_HOME=str(self.root / 'settings'),
                         HINDSIGHTKIT_RELEASE_MANIFEST='original-manifest',
+                        HINDSIGHTKIT_INSTALL_LOG='original-log',
                         UV_PYTHON_INSTALL_DIR='original-python', UV_PYTHON_PREFERENCE='original-preference',
                         HINDSIGHTKIT_HK_CONFLICT='original-conflict')
 
@@ -42,7 +43,8 @@ class BootstrapTests(unittest.TestCase):
             'app/setup.ps1': '''param([switch]$ServerOnly, [string]$Server, [switch]$NoOpen)
 @{ directory=$PSScriptRoot; serverOnly=[bool]$ServerOnly; server=$Server;
    manifest=$env:HINDSIGHTKIT_RELEASE_MANIFEST; python=$env:UV_PYTHON_INSTALL_DIR;
-   preference=$env:UV_PYTHON_PREFERENCE; hkConflict=$env:HINDSIGHTKIT_HK_CONFLICT } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
+   preference=$env:UV_PYTHON_PREFERENCE; hkConflict=$env:HINDSIGHTKIT_HK_CONFLICT;
+   installLog=$env:HINDSIGHTKIT_INSTALL_LOG } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
 exit 0
 ''',
             'app/pyproject.toml': '[project]\nname="fixture"\n',
@@ -95,6 +97,7 @@ try {
     if ($env:HINDSIGHTKIT_RELEASE_MANIFEST -ne 'original-manifest' -or
         $env:UV_PYTHON_INSTALL_DIR -ne 'original-python' -or
         $env:UV_PYTHON_PREFERENCE -ne 'original-preference' -or
+        $env:HINDSIGHTKIT_INSTALL_LOG -ne 'original-log' -or
         $env:HINDSIGHTKIT_HK_CONFLICT -ne 'original-conflict') { throw 'Installer did not restore its environment.' }
 } catch { Write-Output $_; exit 1 }
 ''', encoding='utf-8')
@@ -124,6 +127,10 @@ try {
         self.assertEqual(Path(receipt['python']).resolve(), (self.destination / 'python').resolve())
         self.assertEqual(receipt['preference'], 'only-managed')
         self.assertEqual(receipt['hkConflict'], 'Function hk')
+        log = Path(receipt['installLog'])
+        self.assertTrue(log.is_file())
+        self.assertTrue(log.resolve().is_relative_to((self.destination / 'logs').resolve()))
+        self.assertIn('installed successfully', log.read_text(encoding='utf-8'))
         self.assertFalse(receipt['serverOnly'])
         (self.app / 'keep.txt').write_text('existing runtime')
         self.run_installer(digest)
@@ -184,6 +191,15 @@ try {
         result = self.run_installer(digest, expected=1)
         self.assertIn('application files changed', result.stdout)
         self.assertFalse(self.log.exists())
+
+    def test_setup_failure_retains_diagnostic_log_and_reports_location(self):
+        digest = self.package({'app/setup.ps1': "Write-Output 'Synthetic dependency failure'; exit 1\n"})
+        result = self.run_installer(digest, expected=1)
+        self.assertIn('Setup stopped', result.stdout)
+        self.assertIn('Log:', result.stdout)
+        logs = list((self.destination / 'logs').glob('install-*.log'))
+        self.assertEqual(len(logs), 1)
+        self.assertIn('HindsightKit installation failed', logs[0].read_text(encoding='utf-8'))
 
     def test_conflicting_roles_fail_before_writing_installation(self):
         digest = self.package()

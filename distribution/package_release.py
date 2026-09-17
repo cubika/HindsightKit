@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -196,6 +197,36 @@ def postgres_files(root: Path, needles: tuple[bytes, ...]):
     return result
 
 
+def validate_python_bundle(bundle_directory: Path, source_root: Path) -> dict:
+    spec = importlib.util.spec_from_file_location(
+        "hindsightkit_python_bundle", Path(__file__).with_name("build_python_bundle.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_bundle(bundle_directory, source_root)
+
+
+def python_files(root: Path, source_root: Path, needles: tuple[bytes, ...]):
+    manifest_hash = inspect_file(root / "python-bundle.json", needles)
+    manifest = validate_python_bundle(root, source_root)
+    files = {}
+    for path in tree_files(root):
+        relative = path.relative_to(root).as_posix()
+        if private_name(relative, application=True):
+            raise ValueError(f"Private file in Python bundle: {relative}")
+        # Wheels retain upstream bytes, including licenses and binary payloads.
+        # The bundle validator checks their metadata, paths, and locked hashes.
+        actual = inspect_file(path, () if path.suffix == ".whl" else needles)
+        if relative == "python-bundle.json" and actual != manifest_hash:
+            raise ValueError("Python bundle manifest changed during validation")
+        if relative != "python-bundle.json" and actual != manifest["files"].get(relative):
+            raise ValueError(f"Python bundle changed after validation: {relative}")
+        files["app/python/" + relative] = (path, actual)
+    if {name.removeprefix("app/python/") for name in files} != set(manifest["files"]) | {"python-bundle.json"}:
+        raise ValueError("Python bundle files changed after validation")
+    return files, {"version": manifest["python"], "platform": manifest["platform"],
+                   "packages": sum(name.endswith(".whl") for name in manifest["files"])}
+
+
 def release_identity(version: str, repository: str, server_url: str) -> str:
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?", version):
         raise ValueError("Version must be a safe v-prefixed release tag")
@@ -279,6 +310,11 @@ A retry using the system certificate store also failed in the reported case.
 If this occurs, check access to {tick}files.pythonhosted.org{tick} and your proxy or certificate
 configuration before rerunning setup. Keep TLS certificate verification enabled.
 """
+    python_downloads = ("Python, Node.js dependencies, and the embedding model download during setup."
+                        if version == "v0.1.0" else
+                        "Pinned Python packages are bundled in the application archive from this release; "
+                        "setup installs them without contacting PyPI.\n"
+                        "The Python interpreter, Node.js, npm dependencies, and the embedding model still download during setup.")
     return f"""# HindsightKit {version}
 
 Requires Windows x64, Git, and a GitHub account with Copilot access.
@@ -324,7 +360,7 @@ For a client without a local database or model, replace the example address with
 
 The installer verifies the application and PostgreSQL archives with SHA256.
 PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
-Python, Node.js dependencies, and the embedding model download during setup.
+{python_downloads}
 
 Assets come from [this release]({release_url.replace('/download/', '/tag/')}) and use the fixed {tick}{version}{tick} tag.
 {tick}SHA256SUMS{tick} covers the two ZIP packages, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
@@ -333,7 +369,7 @@ and {tick}release-notes.md{tick}. It does not include itself or GitHub's source 
 
 
 def package_release(*, version: str, repository: str, server_url: str,
-                    postgres_directory: Path, output: Path, source_root: Path,
+                    postgres_directory: Path, python_directory: Path, output: Path, source_root: Path,
                     visibility: str = "public"):
     release_url = release_identity(version, repository, server_url)
     if visibility not in {"public", "private", "internal"}:
@@ -341,19 +377,21 @@ def package_release(*, version: str, repository: str, server_url: str,
     requires_auth = visibility != "public"
     source_root = ordinary_path(source_root)
     postgres_directory = ordinary_path(postgres_directory)
+    python_directory = ordinary_path(python_directory)
     output = ordinary_path(output)
     if not source_root.is_dir():
         raise ValueError("Source root is missing")
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValueError("Output must be a new or empty directory")
-    for input_root in (postgres_directory, source_root / "src", source_root / "docs", source_root / "distribution"):
+    for input_root in (postgres_directory, python_directory, source_root / "src",
+                       source_root / "docs", source_root / "distribution"):
         if output == input_root or output.is_relative_to(input_root) or input_root.is_relative_to(output):
             raise ValueError("Output overlaps release inputs")
     config_path = ordinary_path(source_root / "pyproject.toml")
     config = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
     if version != "v" + config.get("project", {}).get("version", ""):
         raise ValueError("Release tag does not match pyproject.toml version")
-    needles = machine_paths(source_root, postgres_directory)
+    needles = machine_paths(source_root, postgres_directory, python_directory)
     application = {}
     for name in APP_FILES:
         path = ordinary_path(source_root / name)
@@ -364,6 +402,8 @@ def package_release(*, version: str, repository: str, server_url: str,
         for path in tree_files(source_root / name, application=True):
             relative = path.relative_to(source_root).as_posix()
             application["app/" + relative] = (path, inspect_file(path, needles))
+    bundled_python, python_summary = python_files(python_directory, source_root, needles)
+    application.update(bundled_python)
     if len({name.lower() for name in application}) != len(application):
         raise ValueError("Duplicate Windows path in application package")
     postgres = postgres_files(postgres_directory, needles)
@@ -381,6 +421,7 @@ def package_release(*, version: str, repository: str, server_url: str,
     pg_hash = write_archive(output / POSTGRES_NAME, postgres)
     release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
                "requires_auth": requires_auth,
+               "python": python_summary,
                "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
                             "postgres_version": POSTGRES_VERSION, "vector_version": VECTOR_VERSION}}
     app_hash = write_archive(output / APP_NAME, application,
@@ -405,6 +446,7 @@ def main(argv=None):
     parser.add_argument("--server-url", default="https://github.com")
     parser.add_argument("--visibility", choices=("public", "private", "internal"), default="public")
     parser.add_argument("--postgres-directory", type=Path, required=True)
+    parser.add_argument("--python-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)

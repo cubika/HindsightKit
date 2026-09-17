@@ -1,19 +1,21 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the current Windows x64 preview; Linux, macOS, and Windows ARM are not supported.
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.1 Windows x64 candidate, whose release acceptance is still pending. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks.
 
 ## Before installing
 
 - Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
 - Install Git for coding integrations, and have a Copilot account available for sign-in. A dedicated server installed with ServerOnly does not need Git for client routing.
-- Allow downloads from GitHub, Python package hosts, npm, Node.js, and the embedding model host. Release archives do not contain all Python/npm dependencies or the embedding model.
+- Allow downloads from GitHub, npm, Node.js, and the embedding model host. The v0.1.1 application archive contains the pinned Python packages, but the Python interpreter, Node.js, npm components, and embedding model still download during setup.
 - For a private or internal release, install GitHub CLI and sign in with an account that can read the repository. The release page provides its authenticated command. A browser login does not authenticate PowerShell downloads.
 
 The installer uses the default Copilot profile. A custom `COPILOT_HOME` must be unset before setup. WorkIQ is optional and is not installed by HindsightKit.
 
 ## What setup does
 
-Default setup installs the local server and coding integrations. It prepares a managed Python environment and Node.js, downloads dependencies and the precompiled database distribution, and checks Copilot authentication. It then starts Hindsight and its dashboard, verifies a temporary memory through retain/recall, and registers the client. The test bank is removed afterward. The check uses the server's Copilot allowance.
+Default setup installs the local server and coding integrations. It prepares a managed Python 3.12 environment and Node.js, installs the bundled Python packages with hash checks and package-index access disabled, then downloads the remaining components and precompiled database distribution. It checks Copilot authentication, starts Hindsight and its dashboard, verifies a temporary memory through retain/recall, and registers the client. The test bank is removed afterward. The check uses the server's Copilot allowance.
+
+The release installer prints the current stage and log location. Runtime messages distinguish `Downloading`, `Installed`, and `Reusing`, with the version and path. A completed Node.js stage does not mean that the later Python or server setup stages have succeeded.
 
 After a successful run, reload VS Code, use Copilot Chat in agent mode, and allow its Hindsight MCP server. Start a new Copilot CLI session. VS Code retains control of workspace trust and MCP consent.
 
@@ -30,7 +32,7 @@ The downloaded `install.ps1` accepts these arguments. When using a release page'
 | `-ServerOnly` | Install only the server. Default: false. |
 | `-Server http://memory-host:9077` | Advanced client-only installation against a known server. It requests the connection key separately and omits a new database, dashboard, and model. |
 | `-NoOpen` | Do not open the dashboard after setup. |
-| `-InstallDir C:\Apps\HindsightKit` | Change the release application and managed Python location. It does not relocate memory or user configuration. |
+| `-InstallDir C:\Apps\HindsightKit` | Change the release application, managed Python, and installation-log location. It does not relocate memory or user configuration. |
 | `-Model` / `-ReasoningEffort` | Select model settings for a new server profile. |
 | `-Port` | Set the API port for a new server profile. Default: 9077. |
 | `-ModelDir C:\models\e5` | Reuse the official multilingual E5 model. The directory must contain `onnx\model.onnx` and tokenizer files, including `tokenizer.json`. |
@@ -70,8 +72,9 @@ Application versions are separated from persistent settings and memory so upgrad
 
 | Location | Contents |
 | --- | --- |
-| `%LOCALAPPDATA%\HindsightKit\versions\<version>-<hash>` | Release source, its `.venv`, bundled Node.js, download cache, and release metadata |
+| `%LOCALAPPDATA%\HindsightKit\versions\<version>-<hash>` | Application, bundled Python wheels and requirements in `python`, its `.venv`, managed Node.js, download cache, and release metadata |
 | `%LOCALAPPDATA%\HindsightKit\python` | Managed Python runtime |
+| `%LOCALAPPDATA%\HindsightKit\logs\install-<timestamp>-<id>.log` | Installation stages and dependency-command output; interactive setup output is excluded |
 | `%USERPROFILE%\.hindsightkit\bin` | Installed `hindsightkit` and optional `hk` commands |
 | `%USERPROFILE%\.hindsightkit\runtime` and `%USERPROFILE%\.hindsightkit\client-runtime` | Official npm components |
 | `%USERPROFILE%\.hindsightkit\postgresql` | PostgreSQL program files, persistent `data` directory, `cluster.json` credentials, and database log |
@@ -83,7 +86,7 @@ Application versions are separated from persistent settings and memory so upgrad
 | `%USERPROFILE%\.copilot` | Copilot instructions, MCP configuration, and hooks |
 | `%APPDATA%\Code\User\mcp.json` | VS Code MCP registration; installed named profiles and Insiders have their own entries |
 
-`-InstallDir` changes the release application and managed Python root, not persistent settings or memory. The advanced `HINDSIGHTKIT_HOME` environment variable overrides the default `.hindsightkit` directory, but does not move the official `.hindsight` profile or editor configuration. Changing paths does not migrate existing data.
+`-InstallDir` changes the release application and managed Python root, with installation logs under its `logs` directory. It does not move persistent settings or memory. The advanced `HINDSIGHTKIT_HOME` environment variable overrides the default `.hindsightkit` directory, but does not move the official `.hindsight` profile or editor configuration. Changing paths does not migrate existing data.
 
 ## Upgrades and existing configuration
 
@@ -97,17 +100,25 @@ An existing external PostgreSQL URL is retained and checked. Its administrator m
 
 ## Troubleshooting
 
-### Python dependency download fails
+### Find the failed stage
 
-Read the first uv `error:` and its `Caused by:` lines above `uv.exe failed (exit 1)`. The final PowerShell error reports the failed command, not the underlying reason. v0.1.0 does not save a complete installer transcript automatically; retain that terminal output when reporting an error.
+The v0.1.1 release installer prints the failed stage, the first matching dependency error, and a log path under `<InstallDir>\logs`. With the default directory, logs are in `%LOCALAPPDATA%\HindsightKit\logs`. The installer restricts this directory to the current user and SYSTEM.
 
-A reported v0.1.0 failure was reproduced when fetching the locked `hindsight-api-slim 0.10.0` wheel from `files.pythonhosted.org`: TLS `HandshakeFailure` occurred before download. The package index was reachable and dependency planning succeeded. Both uv's default TLS and a system-certificate comparison failed on the affected connection. This does not establish whether a proxy, network policy, or the remote route caused the alert.
+The log contains stage messages and dependency-command output, not a complete terminal transcript. Interactive configuration output, including Copilot login and connection-key prompts, is excluded. Keep the relevant console error if the failure occurs during that stage.
 
-Check the reported download host and your network or proxy configuration before retrying. Keep TLS verification enabled. Repeating the same installer without resolving that connection can fail again; reinstalling Node.js does not address this download error.
+### Python packages fail to install
+
+The v0.1.1 release installs its wheels using `--offline`, `--no-index`, and `--require-hashes`. It stops on a missing bundle or checksum failure instead of falling back to PyPI. Use the complete application archive from that release. The Python interpreter is a separate download; check the stage name to distinguish it from package installation.
+
+In v0.1.0, the locked `hindsight-api-slim 0.10.0` wheel failed with TLS `HandshakeFailure` on `files.pythonhosted.org` while the index remained reachable. The error was reproduced locally and also appeared in the second machine's supplied log. Switching to the system certificate store did not resolve the locally reproduced failure. The network component responsible was not identified.
+
+An older source installation may keep working because its packages and cache already exist. Each release has a separate environment and cache, so an existing working checkout does not validate a new download. Source setup still uses the lockfile and package hosts; the bundled-package change applies to release installation. Keep TLS verification enabled.
 
 ### Node.js output is unclear
 
-In v0.1.0, `Installing Node.js...` means setup entered the download/install path. A matching bundled version is reused silently, and there is no separate completion message. This wording alone does not prove the whole installation succeeded. A later uv error means setup stopped at the Python dependency stage.
+The v0.1.1 output distinguishes three states: `Downloading Node.js` starts the transfer, `Installed Node.js` follows extraction and version verification, and `Reusing Node.js` confirms an existing suitable runtime. Release installs use the pinned managed copy so they do not depend on a source checkout. Source setup can reuse a suitable Node.js from PATH.
+
+The v0.1.0 message `Installing Node.js...` only marked entry into the download/install path; reuse was silent. A later uv error means the installation stopped after that stage.
 
 ### Retry reports changed application files
 

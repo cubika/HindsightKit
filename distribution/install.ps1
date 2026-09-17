@@ -21,6 +21,20 @@ $packageName = '@@PACKAGE_NAME@@'
 $packageSha256 = '@@PACKAGE_SHA256@@'
 $releaseRepository = '@@REPOSITORY@@'
 $requiresAuth = @@REQUIRES_AUTH@@
+$installLog = $null
+
+function Write-InstallMessage([string]$Message) {
+    Write-Host $Message
+    if ($script:installLog) {
+        [IO.File]::AppendAllText($script:installLog, $Message + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
+    }
+}
+
+function Protect-InstallLogs([string]$Directory) {
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls.exe $Directory /inheritance:r /grant:r ("*" + $sid + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE) { throw 'Cannot restrict installation log access.' }
+}
 
 function Assert-InstallDirectory([string]$Path) {
     if (-not [IO.Path]::IsPathRooted($Path)) { throw 'InstallDir must be an absolute path.' }
@@ -124,6 +138,11 @@ function Install-HindsightKit {
     if ($requiresAuth -and -not (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Install GitHub CLI and run gh auth login with an account that can read this repository.' }
     $root = Assert-InstallDirectory $InstallDir
     New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $logDirectory = Assert-InstallDirectory (Join-Path $root 'logs')
+    New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+    Protect-InstallLogs $logDirectory
+    $script:installLog = Join-Path $logDirectory ('install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.log')
+    Write-InstallMessage ("HindsightKit " + $releaseVersion + " installation. Log: " + $script:installLog)
     $lockPath = Join-Path $root 'install.lock'
     if ((Test-Path -LiteralPath $lockPath) -and ((Get-Item -LiteralPath $lockPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation lock must not be a link.' }
     try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
@@ -138,7 +157,7 @@ function Install-HindsightKit {
             New-Item -ItemType Directory -Path $stage | Out-Null
             $archive = Join-Path $stage 'package.zip'
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            Write-Host "Downloading HindsightKit $releaseVersion..."
+            Write-InstallMessage "Downloading HindsightKit $releaseVersion and its pinned Python packages..."
             for ($attempt = 1; $attempt -le 3; $attempt++) {
                 try {
                     if ($requiresAuth) {
@@ -149,19 +168,22 @@ function Install-HindsightKit {
                         Invoke-WebRequest -Uri ($releaseUrl + '/' + $packageName) -OutFile $archive -UseBasicParsing -TimeoutSec 900
                     }
                     break
-                } catch { if ($attempt -eq 3) { throw }; Write-Warning 'Download failed; retrying.' }
+                } catch { if ($attempt -eq 3) { throw }; Write-InstallMessage 'Download failed; retrying.' }
             }
             if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $packageSha256) { throw 'HindsightKit package SHA256 mismatch. Installation stopped.' }
+            Write-InstallMessage 'Download verified. Extracting application and Python packages...'
             $unpacked = Join-Path $stage 'app'
             New-Item -ItemType Directory -Path $unpacked | Out-Null
             Expand-InstallPackage $archive $unpacked
             [IO.File]::WriteAllText((Join-Path $unpacked '.package-sha256'), $packageSha256)
             [IO.Directory]::Move($unpacked, $app)
+            Write-InstallMessage 'Application package extracted.'
         } elseif (-not (Test-Path -LiteralPath (Join-Path $app '.package-sha256')) -or
             (Get-Content -LiteralPath (Join-Path $app '.package-sha256') -Raw) -ne $packageSha256) {
             throw 'Existing release directory is not owned by this installer. Its files were preserved.'
         }
         Assert-InstalledPackage $app
+        Write-InstallMessage ("Using verified application: " + $app)
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $app 'setup.ps1'))
         if ($ServerOnly) { $arguments += '-ServerOnly' }
         if ($Server) { $arguments += @('-Server', $Server) }
@@ -176,8 +198,10 @@ function Install-HindsightKit {
         $previousPreference = $env:UV_PYTHON_PREFERENCE
         $previousModulePath = $env:PSModulePath
         $previousHkConflict = $env:HINDSIGHTKIT_HK_CONFLICT
+        $previousInstallLog = $env:HINDSIGHTKIT_INSTALL_LOG
         try {
             $env:HINDSIGHTKIT_RELEASE_MANIFEST = Join-Path $app 'release.json'
+            $env:HINDSIGHTKIT_INSTALL_LOG = $script:installLog
             $env:UV_PYTHON_INSTALL_DIR = Join-Path $root 'python'
             $env:UV_PYTHON_PREFERENCE = 'only-managed'
             $env:PSModulePath = $null
@@ -185,20 +209,21 @@ function Install-HindsightKit {
                 $_.CommandType -notin @('Application', 'ExternalScript')
             } | Select-Object -First 1
             if ($occupied) { $env:HINDSIGHTKIT_HK_CONFLICT = [string]$occupied.CommandType + ' hk' }
-            Write-Host "Installing into $app"
+            Write-InstallMessage 'Preparing runtimes and configuring HindsightKit...'
             & powershell.exe @arguments
-            if ($LASTEXITCODE -ne 0) { throw "Setup failed (exit $LASTEXITCODE). Rerun this installer to retry; existing data was preserved." }
+            if ($LASTEXITCODE -ne 0) { throw "Setup stopped (exit $LASTEXITCODE). See the first error above and log: $script:installLog" }
         } finally {
             $env:HINDSIGHTKIT_RELEASE_MANIFEST = $previousManifest
             $env:UV_PYTHON_INSTALL_DIR = $previousPython
             $env:UV_PYTHON_PREFERENCE = $previousPreference
             $env:PSModulePath = $previousModulePath
             $env:HINDSIGHTKIT_HK_CONFLICT = $previousHkConflict
+            $env:HINDSIGHTKIT_INSTALL_LOG = $previousInstallLog
         }
         $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
         $commandDirectory = Join-Path $commandRoot 'bin'
         $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
-        Write-Host "HindsightKit $releaseVersion installed."
+        Write-InstallMessage "HindsightKit $releaseVersion installed successfully."
         if (-not $ServerOnly) { Write-Host 'Reload VS Code and open a new Copilot CLI session.' }
     } finally {
         try { if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-InstallStage $root $stage } }
@@ -206,4 +231,13 @@ function Install-HindsightKit {
     }
 }
 
-Install-HindsightKit
+try {
+    Install-HindsightKit
+} catch {
+    $message = 'HindsightKit installation failed: ' + $_.Exception.Message
+    if ($script:installLog) {
+        [IO.File]::AppendAllText($script:installLog, $message + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
+    }
+    Write-Host $message -ForegroundColor Red
+    throw $message
+}

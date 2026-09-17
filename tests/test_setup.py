@@ -14,6 +14,48 @@ from hindsightkit.memory import scope_for, SHARED_BANK
 
 
 class SetupTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows setup output handling')
+    def test_setup_private_native_output_is_displayed_but_not_logged(self):
+        compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'output.cs'
+            source.write_text('''class Output { static void Main() {
+System.Console.WriteLine("DEVICE-CODE-FIXTURE");
+System.Console.Error.WriteLine("error: private login detail");
+System.Environment.Exit(19);
+} }
+''', encoding='utf-8')
+            executable = root / 'output.exe'
+            subprocess.run([str(compiler), '/nologo', '/out:' + str(executable), str(source)],
+                           check=True, capture_output=True, timeout=30)
+            harness = root / 'invoke.ps1'
+            harness.write_text('''param([string]$Setup, [string]$Native)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Setup, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Setup syntax error' }
+$functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)
+foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
+Write-InstallStatus 'Starting: private setup'
+try { Invoke-Checked $Native @() -PrivateOutput }
+catch { Write-InstallStatus $_.Exception.Message; exit 19 }
+''', encoding='utf-8')
+            for shell in filter(None, [shutil.which('powershell.exe'), shutil.which('pwsh')]):
+                with self.subTest(shell=Path(shell).name):
+                    log = root / (Path(shell).stem + '.log')
+                    result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(harness),
+                        '-Setup', str(Path(__file__).resolve().parents[1] / 'setup.ps1'), '-Native', str(executable)],
+                        env={**os.environ, 'HINDSIGHTKIT_INSTALL_LOG': str(log)}, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 19, result.stdout + result.stderr)
+                    self.assertIn('DEVICE-CODE-FIXTURE', result.stdout)
+                    self.assertIn('private login detail', result.stdout + result.stderr)
+                    recorded = log.read_text(encoding='utf-8')
+                    self.assertIn('Starting: private setup', recorded)
+                    self.assertIn('exit 19', recorded)
+                    self.assertNotIn('DEVICE-CODE-FIXTURE', recorded)
+                    self.assertNotIn('private login detail', recorded)
+
     def test_release_upgrade_stops_only_running_hindsightkit_profile_services(self):
         with patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as manager, \
              patch('hindsightkit.connectors.stop') as stop_connectors, \

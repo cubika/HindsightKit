@@ -102,6 +102,17 @@ class ReleaseManifestTests(unittest.TestCase):
                 with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': str(explicit)}):
                     self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32, None, None))
 
+    def test_wheel_installation_finds_its_own_release_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'app'
+            package = app / '.venv/Lib/site-packages/hindsightkit/postgres.py'
+            package.parent.mkdir(parents=True)
+            manifest = self.manifest()
+            (app / 'release.json').write_text(json.dumps(manifest), encoding='utf-8')
+            with patch.dict(os.environ, {}, clear=True), patch.object(postgres, '__file__', str(package)), \
+                 patch.object(postgres.sys, 'prefix', str(app / '.venv')):
+                self.assertEqual(postgres.release_distribution(), (manifest['postgres']['url'], 'AB' * 32, None, None))
+
     def test_authenticated_manifest_passes_repository_and_tag_to_installer(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = self.manifest()

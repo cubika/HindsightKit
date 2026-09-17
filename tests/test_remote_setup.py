@@ -228,6 +228,7 @@ class RemoteSetupTests(unittest.TestCase):
                 binary.mkdir()
                 (binary / 'node.ps1').write_text("Write-Output 'v22.23.2'\n", encoding='utf-8')
                 (binary / 'uv.ps1').write_text(
+                    'if ($args[0] -eq "--version") { Write-Output "uv 0.12.15"; $global:LASTEXITCODE = 0; return }\n'
                     'ConvertTo-Json -InputObject @($args) | Set-Content -LiteralPath $env:TEST_SYNC_ARGS\n'
                     '$global:LASTEXITCODE = 71\n', encoding='utf-8')
                 trace = root / 'sync-args.json'
@@ -273,6 +274,10 @@ class RemoteSetupTests(unittest.TestCase):
                     release.mkdir(parents=True)
                     script = release / 'setup.ps1'
                     shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+                    (release / 'python/wheels').mkdir(parents=True)
+                    (release / 'python/wheels/fixture.whl').write_bytes(b'fixture')
+                    for name in ('requirements-client.txt', 'requirements-server.txt'):
+                        (release / 'python' / name).write_text('fixture==1 --hash=sha256:' + '0' * 64)
                     selected_node = release / '.runtime/tools/node-v22.23.2-win-x64/node.exe'
                     if bundled:
                         selected_node.parent.mkdir(parents=True)
@@ -280,7 +285,9 @@ class RemoteSetupTests(unittest.TestCase):
                     binary = case / 'old-checkout-bin'
                     binary.mkdir()
                     (binary / 'node.ps1').write_text('throw "Old checkout Node must not be selected."\n', encoding='utf-8')
-                    (binary / 'uv.ps1').write_text('$global:LASTEXITCODE = 0\n', encoding='utf-8')
+                    (binary / 'uv.ps1').write_text(
+                        'if ($args[0] -eq "--version") { Write-Output "uv 0.12.15"; $global:LASTEXITCODE = 0; return }\n'
+                        '$global:LASTEXITCODE = 71\n', encoding='utf-8')
                     state = case / 'state'
                     state.mkdir()
                     saved_node = state / 'node-path.txt'
@@ -294,21 +301,135 @@ class RemoteSetupTests(unittest.TestCase):
                         '  Add-Content -LiteralPath $env:TEST_DOWNLOADS -Value $Uri\n'
                         '  if ($Uri.EndsWith("SHASUMS256.txt")) { return @{ Content = $env:TEST_CHECKSUM + "  node-v22.23.2-win-x64.zip" } }\n'
                         '  Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $OutFile\n'
-                        '}\n& $env:TEST_SETUP -Server http://remote.invalid\n', encoding='utf-8')
+                        '}\n& $env:TEST_SETUP -Server http://remote.invalid\nexit $LASTEXITCODE\n', encoding='utf-8')
                     environment = {**os.environ, 'USERPROFILE': str(case), 'COPILOT_HOME': '',
                         'HINDSIGHTKIT_HOME': str(state), 'HINDSIGHTKIT_RELEASE_MANIFEST': str(release / 'release.json'),
                         'PATH': str(binary) + os.pathsep + os.environ['PATH'], 'TEST_ARCHIVE': str(archive),
                         'TEST_CHECKSUM': checksum, 'TEST_SETUP': str(script), 'TEST_DOWNLOADS': str(requests)}
                     result = subprocess.run([shell, '-NoProfile', '-File', str(wrapper)], env=environment,
                         capture_output=True, text=True, encoding='utf-8', timeout=30)
-                    # Stop at the absent fake venv; dependency selection and saved runtime path have completed.
+                    # Stop at fixture venv creation after Node selection, without installing dependencies.
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('python.exe', result.stderr)
+                    self.assertIn('exit 71', result.stderr)
                     self.assertNotIn('Old checkout Node', result.stderr)
-                    self.assertTrue(Path(saved_node.read_text(encoding='utf-8')).samefile(selected_node))
+                    self.assertTrue(selected_node.is_file())
+                    self.assertEqual(saved_node.read_text(encoding='utf-8'), str(binary / 'node.ps1'))
+                    self.assertIn('Reusing uv 0.12.15', result.stdout)
+                    self.assertIn('Reusing Node.js v22.23.2' if bundled == 'matching' else 'Installed Node.js v22.23.2', result.stdout)
+                    self.assertIn('Downloading Node.js 22.23.2', result.stdout) if bundled != 'matching' else self.assertNotIn('Downloading Node.js', result.stdout)
                     self.assertEqual(requests.exists(), bundled != 'matching')
                     if bundled != 'matching':
                         self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows release dependency installation')
+    def test_release_bundle_is_required_before_any_download(self):
+        shell = shutil.which('powershell.exe')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / 'setup.ps1'
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+            result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script), '-ServerOnly'],
+                env={**os.environ, 'COPILOT_HOME': '', 'HINDSIGHTKIT_RELEASE_MANIFEST': str(root / 'release.json')},
+                capture_output=True, text=True, encoding='utf-8', timeout=15)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Python bundle is missing requirements-client.txt', result.stderr)
+            self.assertIn('will not use PyPI', result.stderr)
+            self.assertFalse((root / '.runtime').exists())
+            self.assertNotIn('At line:', result.stderr)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows release dependency installation')
+    def test_release_offline_sync_roles_python_reuse_and_original_error_log(self):
+        compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        shells = list(dict.fromkeys(filter(None, [shutil.which('powershell.exe'), shutil.which('pwsh')])))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native_source = root / 'fixture.cs'
+            native_source.write_text('''using System;
+class Runtime { static void Main() {
+  string name = System.IO.Path.GetFileName(Environment.GetCommandLineArgs()[0]);
+  if (name == "uv-error.exe") {
+    Console.Error.WriteLine("error: synthetic dependency failed");
+    Console.Error.WriteLine("Caused by: original TLS HandshakeFailure fixture");
+    Environment.Exit(73);
+  }
+  Console.WriteLine(name == "node.exe" ? "v22.23.2" : (Environment.GetEnvironmentVariable("TEST_PYTHON_VERSION") ?? "Python 3.12.11"));
+} }
+''', encoding='utf-8')
+            native = root / 'runtime.exe'
+            subprocess.run([str(compiler), '/nologo', '/out:' + str(native), str(native_source)],
+                           check=True, capture_output=True, timeout=30)
+            native_error = root / 'uv-error.exe'
+            shutil.copyfile(native, native_error)
+            cases = [('client', False), ('profile', False), ('runtime', True), ('server', False), ('wrong-python', True)]
+            for shell in shells:
+                for role, existing in cases:
+                    with self.subTest(shell=Path(shell).name, role=role):
+                        case = root / (Path(shell).stem + '-' + role)
+                        app = case / 'app'
+                        app.mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', app / 'setup.ps1')
+                        (app / 'python/wheels').mkdir(parents=True)
+                        (app / 'python/wheels/fixture.whl').write_bytes(b'fixture')
+                        for name in ('requirements-client.txt', 'requirements-server.txt'):
+                            (app / 'python' / name).write_text('fixture==1 --hash=sha256:' + '0' * 64)
+                        node = app / '.runtime/tools/node-v22.23.2-win-x64/node.exe'
+                        node.parent.mkdir(parents=True)
+                        shutil.copyfile(native, node)
+                        python = app / '.venv/Scripts/python.exe'
+                        if existing:
+                            python.parent.mkdir(parents=True)
+                            shutil.copyfile(native, python)
+                        if role == 'runtime':
+                            (app / '.venv/Lib/site-packages/hindsight_api').mkdir(parents=True)
+                        if role == 'profile':
+                            profile = case / '.hindsight/profiles/hindsightkit.env'
+                            profile.parent.mkdir(parents=True)
+                            profile.write_text('HINDSIGHT_API_PORT=19001')
+                        binary = case / 'bin'
+                        binary.mkdir()
+                        trace, log = case / 'uv-calls.jsonl', case / 'install.log'
+                        (binary / 'uv.ps1').write_text('''if ($args[0] -eq '--version') { Write-Output 'uv 0.12.15'; $global:LASTEXITCODE = 0; return }
+ConvertTo-Json -InputObject @($args) -Compress | Add-Content -LiteralPath $env:TEST_UV_CALLS
+if ($args[0] -eq 'venv') {
+    $target = Join-Path $args[1] 'Scripts/python.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+    Copy-Item -LiteralPath $env:TEST_NATIVE -Destination $target
+    $global:LASTEXITCODE = 0; return
+}
+& $env:TEST_UV_ERROR
+$global:LASTEXITCODE = $LASTEXITCODE
+''', encoding='utf-8')
+                        environment = {**os.environ, 'USERPROFILE': str(case), 'COPILOT_HOME': '',
+                            'HINDSIGHTKIT_HOME': str(case / 'state'), 'HINDSIGHTKIT_RELEASE_MANIFEST': str(app / 'release.json'),
+                            'HINDSIGHTKIT_INSTALL_LOG': str(log), 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
+                            'TEST_UV_CALLS': str(trace), 'TEST_NATIVE': str(native), 'TEST_UV_ERROR': str(native_error),
+                            'TEST_PYTHON_VERSION': 'Python 3.11.8' if role == 'wrong-python' else 'Python 3.12.11'}
+                        arguments = [] if role == 'server' else ['-Server', 'http://remote.invalid']
+                        result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(app / 'setup.ps1'), *arguments],
+                            env=environment, capture_output=True, text=True, encoding='utf-8', timeout=30)
+                        self.assertNotEqual(result.returncode, 0)
+                        calls = [json.loads(line) for line in trace.read_text(encoding='utf-8-sig').splitlines()] if trace.exists() else []
+                        if role == 'wrong-python':
+                            self.assertIn('requires Python 3.12', result.stderr)
+                            self.assertEqual(calls, [])
+                            continue
+                        self.assertEqual(any(call[0] == 'venv' for call in calls), not existing)
+                        sync = calls[-1]
+                        self.assertEqual(sync[:2], ['pip', 'sync'])
+                        self.assertEqual(sync[2], '--python')
+                        self.assertTrue(Path(sync[3]).samefile(python))
+                        self.assertEqual(sync[4:7], ['--offline', '--no-index', '--find-links'])
+                        self.assertTrue(Path(sync[7]).samefile(app / 'python/wheels'))
+                        self.assertEqual(sync[8:11], ['--require-hashes', '--only-binary', ':all:'])
+                        expected = 'requirements-client.txt' if role == 'client' else 'requirements-server.txt'
+                        self.assertEqual(Path(sync[11]).name, expected)
+                        self.assertIn('Install bundled Python packages', result.stderr)
+                        self.assertIn('exit 73', result.stderr)
+                        recorded = log.read_text(encoding='utf-8')
+                        self.assertIn('error: synthetic dependency failed', recorded)
+                        self.assertIn('Caused by: original TLS HandshakeFailure fixture', recorded)
+                        self.assertIn('Reusing Node.js v22.23.2', recorded)
+                        self.assertNotIn('At line:', result.stderr)
 
     def test_server_setup_leaves_hosts_and_same_machine_client_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:

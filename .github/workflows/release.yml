@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to package
+        description: 'Version to validate (must match pyproject.toml); manual runs upload artifacts only'
         required: true
         type: string
 
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          ref: ${{ github.ref }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
@@ -57,12 +57,25 @@ jobs:
           if ($LASTEXITCODE) { throw 'PostgreSQL packaging failed.' }
           .venv/Scripts/python.exe tests/live_postgres.py --distribution $distribution
           if ($LASTEXITCODE) { throw 'PostgreSQL runtime validation failed.' }
-      - name: Package this repository's release
+      - name: Build and verify offline Python packages
+        shell: pwsh
+        run: |
+          .venv/Scripts/python.exe distribution/build_python_bundle.py --source-root . --output dist/python
+          if ($LASTEXITCODE) { throw 'Python package bundle failed.' }
+          .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/python --uv uv
+          if ($LASTEXITCODE) { throw 'Offline Python installation validation failed.' }
+      - name: Package validated release assets
         shell: pwsh
         run: |
           $distribution = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres/pgsql'
-          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --output dist/release
+          .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --python-directory dist/python --output dist/release
           if ($LASTEXITCODE) { throw 'Release packaging failed.' }
+      - name: Verify Python installation from the final application archive
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath dist/release/hindsightkit-windows-x64.zip -DestinationPath dist/verified-application
+          .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/verified-application/app/python --uv uv
+          if ($LASTEXITCODE) { throw 'Packaged offline installation failed.' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -70,6 +83,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: github.event_name == 'push'
     needs: package
     runs-on: ubuntu-latest
     permissions:

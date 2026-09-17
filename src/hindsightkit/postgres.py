@@ -12,6 +12,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import uuid
 from urllib.parse import quote, urlsplit
@@ -92,9 +93,11 @@ def ident(value):
 def release_distribution():
     manifest_path = os.environ.get('HINDSIGHTKIT_RELEASE_MANIFEST')
     if manifest_path is None:
-        # Release setup uses uv's editable app/src/hindsightkit package. Keep
-        # later CLI setup calls on that app's release without searching ancestors.
-        adjacent = Path(__file__).resolve().parents[2] / 'release.json'
+        # Installed wheels live in app/.venv; source development uses app/src.
+        # Only check these two exact layouts, never search arbitrary ancestors.
+        adjacent = Path(sys.prefix).parent / 'release.json'
+        if not adjacent.exists():
+            adjacent = Path(__file__).resolve().parents[2] / 'release.json'
         if not adjacent.exists():
             return None
         manifest_path = str(adjacent)
