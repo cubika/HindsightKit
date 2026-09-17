@@ -85,3 +85,5 @@ After confirming no prepared publication was pending, the existing documents wer
 After integrating the metadata changes with the release installer, all 222 repository tests passed, including the connector fixtures. These checks did not read a mailbox, call a model, or change imported memory. Release setup now stops the managed connector host before replacing server runtime components; saved connector settings remain in place. Installation and packaging checks are recorded in [release verification](releases.md#local-verification-september-17-2026).
 
 The later connection-command and authenticated-release regression passed all 270 tests, including the connector fixtures. No mailbox reads, model calls, or imported-memory changes were made. A real private relay test used only synthetic HTTP responses; its workers and tunnels were removed.
+
+The final v0.1.0 CI runs in both repositories also passed all 270 tests, including connector fixtures. These hosted runs used no mailbox account or Copilot model calls. Release artifacts and installation validation are recorded in the [published release verification](releases.md#published-v010).

@@ -51,3 +51,11 @@ GitHub Actions execution, public release downloads, and a complete installation 
 The final local suite passed 270 tests. Separate share/connect commands leave the installer unchanged. Tests cover direct discovery, invalid keys and certificates, failed-connection rollback, background process ownership, stable relay ports, and restoration of local memory. Private/internal release instructions and both authenticated asset download paths passed fixture checks.
 
 A disposable private Microsoft tunnel forwarded a synthetic HTTP response through the real relay service on this machine. The managed host/client processes started without visible terminals, reused their saved instance, stopped cleanly, and restarted on the same local port. The CLI selected another forwarding port when the server port was occupied; the stable proxy continued to work. All test tunnels and workers were removed. This did not read or forward existing memory. It validates the real relay service and local wrapper, not a second machine's account or network policy.
+
+## Published v0.1.0
+
+Both repositories published the Windows x64 prerelease from product commit 7a5bf66. The public [origin build](https://github.com/cubika/HindsightKit/actions/runs/35179116205) and authenticated [enterprise build](https://github.com/gim-home/HindsightKit/actions/runs/35179136182) each passed 270 tests, rebuilt the pinned PostgreSQL/pgvector distribution, and passed its disposable database checks. Downloaded release assets matched SHA256SUMS; all 4,474 database file hashes were checked. Public anonymous installer downloads and enterprise authenticated downloads were verified after publication.
+
+The first CI attempts exposed Windows 8.3 path comparisons and an absent _CL_ variable under PowerShell 7 StrictMode. The checks now compare file identity, and the compiler resolves long paths and handles an empty compiler environment. The regression compiles with both PowerShell versions, long/short paths, and absent/present compiler options. Unpublished draft assets and superseded tags were removed before rebuilding v0.1.0.
+
+Complete interactive setup with Copilot login and model downloads on another user's machine remains an acceptance step for this preview. The release does not claim Linux, macOS, or Windows ARM support.
