@@ -12,4 +12,4 @@ Opening a settings page can inspect saved configuration and dependency status, b
 
 Tests cover unused connectors, missing dependencies, independent adapters, disabled and enabled restart behavior, unknown IDs, and cleanup after one adapter fails. Source extraction and model behavior are unchanged by this separation.
 
-The local HTTP check loaded the catalog and WorkIQ settings, verified the installed prerequisite, and shut down successfully without creating a mail directory or fetching account data. Synthetic UI checks covered missing dependencies, disabled actions, navigation, and plain-text rendering. No browser was available for new screenshot checks of the catalog.
+Recorded test runs and limitations belong in [connector validation](connector-validation.md).

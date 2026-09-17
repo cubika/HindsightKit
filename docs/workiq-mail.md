@@ -1,59 +1,67 @@
 # WorkIQ mail
 
-HindsightKit's optional WorkIQ adapter implements the [connector contract](connectors.md). Hindsight continues to own memory extraction, consolidation, storage, and recall. The adapter owns mailbox scope, text cleanup, reliable delivery, and its local settings page. WorkIQ must already be installed before the adapter can run. It does not modify the official Hindsight UI.
+Status: the thread outcome contract below is the agreed design. The current importer still stores individual message documents; the replacement behavior has not been implemented. Test procedures and results belong in [connector validation](connector-validation.md).
 
-## Configuration and lifecycle
+HindsightKit's optional WorkIQ adapter follows the [connector contract](connectors.md). WorkIQ must already be installed. Hindsight owns extraction, storage, consolidation, and recall. The adapter owns source scope, preparation of the current thread outcome, and reliable delivery through official APIs.
 
-`hindsightkit connectors` opens a local settings page on the server installation and starts its background process. Closing the browser leaves synchronization running. The page shows the current WorkIQ account without an account selector. Each run checks the current account, then binds all reads to that account. A changed default account pauses the next run. Credentials remain with WorkIQ.
+## Configuration and acquisition
 
-The user selects folders, a historical lookback in days, and a future synchronization interval in minutes. Zero minutes means manual synchronization. The initial preferences select Inbox and the DSAPISOT subtree, excluding the Sev3 and PullRequests subtrees beneath DSAPISOT. Names are matched against the actual mailbox; unresolved names are shown rather than silently replaced.
+The settings page uses the current WorkIQ account without an account selector. Users select folders, a historical lookback, and a future synchronization interval. Zero minutes means manual runs. Default folder preferences include Inbox and the DSAPISOT subtree, excluding the Sev3 and PullRequests subtrees. Match actual folders and report unresolved selections. Interface text is English; source content keeps its original language.
 
-Starting a connection fixes its historical start date. Each scan has a fixed upper bound and resumes incomplete pages before beginning another window. Folder changes apply to future reads; they do not erase prior memory. Extending the lookback backfills the expanded range. A six-hour overlap catches delayed mail. This implementation uses window polling, not delta or deletion tracking. A missing message or a folder removal is not proof of permanent mailbox deletion.
+An unused connector does not launch WorkIQ, read mail, or create a delivery ledger. Each run verifies the current account and binds reads to it. Pausing releases source resources and preserves accepted memory. Credentials stay with WorkIQ. The local settings service does not execute mail instructions, send mail, download attachments, or follow links in message bodies.
 
-The process exposes only loopback HTTP, checks local requests, and never lets a model choose mailbox paths or tools. It uses the current account to discover identity, then binds reads to that verified account. It does not execute mail instructions, send mail, download attachments, or follow body links.
+Current acquisition uses fixed time windows with a six-hour overlap, not delta or authoritative deletion tracking. This can miss older modifications and replies outside the selected range. Outcome updates need enough relevant thread context within the authorized scope; missing context must be reported, not treated as a complete investigation. Folder changes affect future reads and do not imply that existing conclusions are false.
 
-## Content and memory
+## One current outcome per thread
 
-Fetch structured metadata before bodies. Skip unchanged content, drafts, excluded folders, and previously rejected source versions. Reuse the WorkIQ MCP session and bound body concurrency. Clean HTML deterministically, removing remote and executable markup, recipient headers, signatures, boilerplate, and repeated quoted material. Preserve actual findings, conditions, ownership, and dates. Attribution and source URLs are metadata, not a pasted From/To envelope. Never pass bodyPreview off as complete text.
+The durable unit is one current outcome document per thread. Replies update that document instead of creating additional permanent message copies or user-facing experiences. A thread can contain several related findings, but they belong in the same concise record.
 
-Courtesy messages, event promotion, surveys, and routine notifications should yield no memory unless they contain an actual work finding. Treat plans, reported results, uncertainty, and later corrections distinctly. Hindsight receives bounded JSONL records that keep the current author/date separate from unknown historical quotation. A short current reply can qualify quoted evidence. Exact quotation hashes already imported in the same thread mark that text as context only. Only one message per thread is submitted in a batch. The ledger stores hashes, not a second copy of accepted text.
+Keep the information useful after reading the investigation:
 
-The mail bank uses custom extraction instructions, 4,000-character chunks, and explicit consolidation after the scan, so extraction does not compete with consolidation throughout a backfill. Raw facts become searchable before consolidation completes. Recall uses native keyword and semantic retrieval, disables graph and temporal expansion for this bank, prefers observations over their supporting facts, and includes source facts for attribution. Precise log timestamps should be checked in the source text; Hindsight's structured event timestamps are not a lossless log index.
+- The problem and the affected system or operation.
+- The supported conclusion, including any unresolved uncertainty.
+- Who owns or applied the fix, which solution was used, and whether it was verified.
+- Conditions and limitations needed to apply the conclusion correctly.
 
-Import into a dedicated mail bank with stable source document IDs and source metadata. Revisions replace the same document; duplicate retries reuse an operation UUID. The local operational ledger stores settings, versions, cursors, and bounded pending payloads, not a second searchable memory store. Commit a page checkpoint only after its work is durable. Mark a document imported only after the official operation completes without extraction errors. Track consolidation separately. Remove empty, noise-only test documents and retain no rejected mail body indefinitely.
+Omit fields the evidence does not establish. A suggested fix is not an implemented fix, and a plausible cause is not a confirmed cause. An unresolved thread can still contain a useful diagnostic finding. A thread containing only requests, guesses, courtesy, or routine status produces no durable record.
 
-Imported mail is accessible through a read-only `recall_mail` tool in the local MCP server. Fixed-bank remote clients do not gain access to this separate mail bank. Repository retain and shared memory routing stay intact. The settings page links to the official Hindsight bank view.
+Do not store the sequence of discussion steps. Omit intermediate dialogue or incorporate the evidence needed to understand the outcome. Original messages remain in the mailbox; retain a small set of supporting message IDs and links instead of copying the complete correspondence into Hindsight.
 
-## Interface
+Exclude temporary PR comments and findings useful only within one PR, project, or repository from shared mail memory. Technical detail alone does not establish lasting usefulness. Do not manufacture a general lesson by rewriting a local review suggestion. Keep the applicable service and operation explicit when a conclusion does qualify.
 
-All interface labels, status messages, accessibility text, and date/number formatting use English. Mail subjects and body text keep their original language.
+## Revision behavior
 
-Use a small, responsive page with account status, a folder tree, lookback and interval controls, preview, start/pause, and synchronize now. Show simple counts for scanned, imported, skipped, failed, and pending items, plus the last successful run and next scheduled run. A preview compares source text, cleaned text, and exclusion reasons. Errors remain visible and can be retried. No dashboard framework or copied memory browser is needed.
+Address a thread by verified mailbox identity and a stable conversation ID, using one deterministic Hindsight document ID. Do not group unrelated messages by subject. Coalesce new replies into one pending thread update, compare them with the existing outcome and necessary source context, and prepare a complete replacement.
 
-## Validation
+| New evidence | Update to the current record |
+| --- | --- |
+| Adds a useful finding | Incorporate it into the same document. |
+| Confirms or corrects a finding | Revise the finding and its supporting sources. |
+| Establishes a fix | Add the actual owner, solution, verification, and conditions. |
+| Refutes an earlier claim | Remove or correct that claim. |
+| Leaves no lasting value | Withdraw the thread record and its searchable derivatives. |
+| Adds only courtesy or repetition | Do not write a new version. |
 
-The user authorized access to all email and real tests through the configured model provider. Test the preferred folders first, honoring the two excluded subtrees. Keep private samples and reports outside Git, and use disposable mail banks. Review actual cleaned bodies, extracted facts, consolidation, and recall against source evidence. Compare the same examples when changing cleanup or extraction settings, then check fresh examples. Inspect usefulness, omissions, duplicates, attribution, obsolete claims, and elapsed time. A completed API job alone is not a quality result.
+Preserve a rejected explanation only if it is necessary to understand the final conclusion. These updates do not create separate experience objects for each action. There is no permanent history of drafts or per-reply source copies in the connector.
 
-Delete each test bank and its pending work before retesting a changed approach. Preserve unrelated memory and services. Test pagination, restart, idempotency, account changes, cancellation, folder exclusions, malformed bodies, model failures, and UI error states. Run the repository suite and real browser checks before merging. Record the final sample size, actual outcomes, limitations, and cleanup results here without private mail content.
+Use official replacement and document APIs. Serialize updates for a thread, persist the target revision and operation ID, and prevent stale retries from replacing newer outcomes. Validate the replacement before submitting it; do not delete the last accepted result before processing a new one. A failed update must leave that result available.
 
-### Observed results, September 16, 2026
+Hindsight can create several internal facts or observations from a document. One logical record does not mean one physical engine row. Replacement and withdrawal must also remove obsolete claims from active recall; merely hiding duplicate cards is insufficient. This behavior requires validation against the pinned engine and is not yet guaranteed by the importer.
 
-The current mailbox returned 43 folders. The suggested scope resolved to Inbox, Inbox / DsApiSOT, and Inbox / DsApiSOT / Directory API team ICM. Pull requests and the nested Sev3 subtree were excluded. A bounded read of 36 messages took 24.8 seconds before explicit-account startup hardening; bound startup and an account recheck added roughly 13.5 and 8.1 seconds in separate probes. This is sample acquisition timing, not a daily mailbox throughput claim.
+## Evidence and time
 
-Real samples exposed meeting transport text, automated monitor tables, subscription footers, a protected body, and excessive HTML. Cleanup now removes those exact forms while retaining substantive automated review comments. Protected or oversized messages produce individual error receipts without blocking the remaining page. A bare review request is rejected before the model.
+Keep message sent time, synchronization time, and actual event or fix time distinct. A later message may add evidence, change the conclusion, or confirm resolution. It does not automatically override better evidence: a courtesy reply cannot undo a verified fix, and a proposal cannot replace an observed result. Account for late-arriving messages before publishing the current outcome.
 
-The first model run extracted 34 facts from ten submitted emails in 84.7 seconds and finished consolidation plus recall in 427 seconds. Review found duplicate quoted facts, wrong author attribution after chunk boundaries, a substituted exception name, and an unresolved investigation presented without its latest status. JSONL attribution, exact quotation context, explicit uncertainty rules, and small batches corrected these cases. Trials with larger chunks and overlapping model operations encountered repeated upstream Copilot timeouts; they were stopped and cleaned, not counted as passes.
+Record the last supporting or confirming time and source references for the current conclusion. Unknown quoted authors and dates remain unknown; they do not inherit the outer email's attribution. Track which evidence changed or superseded a conclusion, rather than treating a shared thread ID as proof of that relationship.
 
-The final acceptance set contained 13 real emails, including technical discussion, later corrections, an invitation, an automated alert, and a bare review request. After rejection and cleanup, nine source documents produced 21 source facts and 15 observations. Extraction took 345.2 seconds; consolidation and the query checks brought the run to 592.1 seconds on the configured gpt-6-astra/xhigh provider. The durable queue had no pending payloads afterward. All test banks were removed and checked through the official API.
+Clean mail envelopes, recipient lists, signatures, boilerplate, repeated quotations, and executable or remote markup. Preserve substantive conditions and negation. Temporary processing payloads are bounded and removed after delivery. The operational ledger keeps IDs, revisions, hashes, and checkpoints, not a second searchable memory store.
 
-Independent source review confirmed the API-specific percentile and consistency conditions, compatibility exceptions, distinct error names, unknown quoted authors/timezones, and the latest unresolved investigation status. Later replies added their new explanation or responsibility without re-extracting the prior quoted diagnosis. Four work questions returned a relevant principal finding first; supporting facts, document IDs, and Outlook URLs were available for the first five results. The remaining result tail can still include unrelated facts, so recall output is evidence for the answering agent to select, not a ready-made answer.
+## Presentation and acceptance
 
-The page passed real discovery, save/reload, two five-message previews, and desktop/mobile checks at 1280, 800, 390, and 320 pixels. Source HTML remained inert, selections survived polling, and no horizontal overflow or console errors remained. The final small failure-list addition passed synthetic DOM checks; a browser was unavailable for a new screenshot of that addition.
+Present one current thread outcome with source links, last update, and resolved or unresolved status. Count source messages separately from retained outcomes. More replies must not cause unbounded growth in durable documents or obsolete recall results.
 
-Model latency remains the main constraint. This test establishes useful extraction on the inspected examples, not a guarantee that a large historical mailbox finishes quickly or that every future fact is correct. Queue state and failures remain visible, and the existing model configuration is preserved.
+Validation must replay an initial report, diagnosis, correction, fix, and verification. Check one current document, useful final content, obsolete-claim removal, unchanged-reply idempotency, failed-update recovery, out-of-order updates, source traceability, PR/repository exclusions, and long-thread limits. Maintain the procedures and results in [connector validation](connector-validation.md), updating that file after every new run.
 
-A separate one-day scan through the real source and a recording test receiver processed 49 emails: 39 candidates, two deterministic skips, and eight protected bodies. After fixing a metadata/body revision race, repeating the scan submitted no unchanged content and kept the eight protected items visible for retry. This check did not call a model.
+## Implementation boundary
 
-### Demonstration, September 17, 2026
-
-A bounded selection of nine real messages was processed through the production WorkIQ reader and durable mail queue. Five source documents contained 11 source facts and nine observations; four messages were skipped and no pending or failed deliveries remained. Extraction took 161.7 seconds. Official API reads confirmed completed consolidation, preserved Outlook source links, and useful recall for API propagation, payload compatibility, and queue diagnostics. The scan covered a selected sample, not the full configured seven-day range. This was test data; the project rename resets the local installation instead of carrying it forward. Automatic synchronization remains off.
+The current implementation stores one document per message, uses thread IDs and exact quotation hashes for partial deduplication, and delegates consolidation to Hindsight. It does not yet enforce one replaceable outcome per thread, explicit supersession, or the PR/repository exclusions above. Earlier message-level tests do not validate this revised design. This documentation change does not modify runtime code or stored memory.

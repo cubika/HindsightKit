@@ -10,3 +10,4 @@
 - Before merging, integrate any newer master changes into the task branch, resolve conflicts there, and rerun affected checks. Commit and merge with `git merge --ff-only codex/<task>` from the primary checkout. Push only when requested.
 - After confirming the branch is merged and the worktree is clean, remove it with `git worktree remove <path>` and delete the branch with `git branch -d codex/<task>`. Verify the absolute path is this task's worktree inside the workspace; remove dependency junctions without traversing their targets. Never force cleanup of unmerged work.
 - Report the commit, validation results, and change totals. If validation is blocked, retain the worktree and report the unresolved issue.
+- Record connector test runs and conclusions in docs/connector-validation.md; keep design documents focused on stable requirements.

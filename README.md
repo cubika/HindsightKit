@@ -86,7 +86,7 @@ The importer reads structured mail, removes mail envelopes and repeated boilerpl
 
 This release uses bounded time-window polling with overlap. It does not mirror mailbox deletions or guarantee changes outside the scanned window. WorkIQ must already be installed at the supported version and signed in; authentication renewal may require its login UI. `hindsightkit stop` stops the importer before Hindsight, and `hindsightkit start` resumes its saved settings. No Windows login task is installed.
 
-The settings host stores its process record in `~/.hindsightkit/connectors`. Mail configuration and the delivery ledger remain in `~/.hindsightkit/mail`; opening the catalog does not create a mail ledger or model client. Credentials remain with WorkIQ. See [mail design and validation](docs/workiq-mail.md) for source handling and test results.
+The settings host stores its process record in `~/.hindsightkit/connectors`. Mail configuration and the delivery ledger remain in `~/.hindsightkit/mail`; opening the catalog does not create a mail ledger or model client. Credentials remain with WorkIQ. See the [WorkIQ design](docs/workiq-mail.md) for the agreed thread outcome contract and implementation boundary, and [connector validation](docs/connector-validation.md) for recorded test results.
 
 ## Files and compatibility
 
