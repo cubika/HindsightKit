@@ -9,6 +9,7 @@
     discover: byId("discover-button"), save: byId("save-button"),
     preview: byId("preview-button"), toggle: byId("toggle-button"),
     sync: byId("sync-button"), retry: byId("retry-button"),
+    acceptEula: byId("accept-eula-button"), consent: byId("consent-accepted"),
     recommend: byId("recommend-button"), clear: byId("clear-folders-button"),
     lookback: byId("lookback-days"), interval: byId("interval-minutes"),
     search: byId("folder-search"),
@@ -116,8 +117,11 @@
     const connected = Boolean(snapshot?.account);
     const enabled = Boolean(snapshot?.config?.enabled);
     const available = snapshot?.availability?.ready !== false;
+    const needsConsent = snapshot?.consent?.required === true;
     const canPause = enabled || isActive();
-    const ready = loaded && connected && selected.size > 0 && available;
+    const ready = loaded && connected && selected.size > 0 && available && !needsConsent;
+    controls.consent.disabled = busy || !needsConsent || !available;
+    controls.acceptEula.disabled = busy || !needsConsent || !available || !controls.consent.checked;
     controls.discover.disabled = busy;
     controls.retry.disabled = busy;
     controls.lookback.disabled = !loaded || busy;
@@ -196,6 +200,9 @@
   }
 
   function renderStatus() {
+    const needsConsent = snapshot.consent?.required === true;
+    byId("consent-banner").hidden = !needsConsent;
+    if (!needsConsent) controls.consent.checked = false;
     const prerequisite = snapshot.availability;
     byId('prerequisite-banner').hidden = prerequisite?.ready !== false;
     byId('prerequisite-text').textContent = prerequisite?.message || '';
@@ -487,6 +494,7 @@
     } catch (error) {
       requestError = error.message || "The action failed. Try again.";
       renderErrors();
+      try { applyStatus(await request("/api/status", { timeout: 15000 })); } catch { /* Keep the action error visible. */ }
       byId("error-banner").focus({ preventScroll: true });
       byId("error-banner").scrollIntoView({ block: "center" });
     } finally {
@@ -560,6 +568,15 @@
     applyStatus(data);
     byId("feedback").textContent = "Mail folders refreshed.";
   }));
+  controls.consent.addEventListener("change", updateControls);
+  controls.acceptEula.addEventListener("click", () => {
+    if (controls.acceptEula.disabled || !controls.consent.checked || snapshot?.consent?.required !== true) return;
+    perform(controls.acceptEula, async () => {
+      const data = await request("/api/accept-eula", { method: "POST", body: { accepted: true }, timeout: 240000 });
+      applyStatus(data);
+      byId("feedback").textContent = "WorkIQ license accepted. Mail folders refreshed. Select Start sync when ready.";
+    });
+  });
   controls.preview.addEventListener("click", () => perform(controls.preview, async () => {
     await saveIfNeeded();
     const data = await request("/api/preview", { method: "POST", timeout: 180000 });

@@ -51,6 +51,13 @@
       <div id="error-banner" class="message error-message" role="alert" tabindex="-1" hidden><div><strong>Action needed</strong><p id="error-text"></p></div><button id="retry-button" class="button button-small button-quiet" type="button">Refresh status</button></div>
       <div id="warning-banner" class="message warning-message" role="status" hidden><p id="warning-text"></p></div>
       <div id="prerequisite-banner" class="message warning-message" role="status" hidden><div><strong>WorkIQ is required</strong><p id="prerequisite-text"></p></div></div>
+      <section id="consent-banner" class="message warning-message consent-message" aria-labelledby="consent-heading" hidden>
+        <div><strong id="consent-heading">Review the WorkIQ license</strong><p>WorkIQ requires license acceptance before connecting to your mailbox. <a href="https://github.com/microsoft/work-iq" target="_blank" rel="noopener noreferrer">Review the WorkIQ terms<span class="sr-only"> (opens in a new tab)</span></a>.</p>
+          <label class="consent-choice"><input id="consent-accepted" type="checkbox" disabled><span>I have read and accept the WorkIQ license terms.</span></label>
+          <p>Accepting refreshes the mailbox connection. Sync stays paused until you start it. Already accepted in the terminal? Select Load folders.</p>
+        </div>
+        <button id="accept-eula-button" class="button button-secondary" type="button" disabled>Accept and connect</button>
+      </section>
       <noscript><div class="message error-message">Enable JavaScript to connect your mailbox and configure sync.</div></noscript>
 
       <section class="account-card" aria-labelledby="account-heading">

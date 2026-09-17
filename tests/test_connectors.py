@@ -10,7 +10,7 @@ from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
 from hindsightkit import connection, connectors
 from hindsightkit.connector_registry import ConnectorHost
-from hindsightkit.workiq_connector import Adapter
+from hindsightkit.workiq_connector import Adapter, EULA_ERROR
 
 
 class FakeSync:
@@ -123,6 +123,54 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post('/api/connectors/workiq/unknown', headers=self.write_headers)
         self.assertEqual(response.status, 400)
         self.assertFalse(self.sync.calls)
+
+    async def test_license_acceptance_requires_local_explicit_confirmation(self):
+        adapter = self.host.adapters['workiq']
+        adapter.error = EULA_ERROR
+        with patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock) as accept:
+            for headers in [self.headers, {**self.write_headers, 'Origin': 'https://attacker.example'},
+                            {**self.write_headers, 'Sec-Fetch-Site': 'cross-site'}]:
+                response = await self.client.post('/api/connectors/workiq/accept-eula', headers=headers, json={'accepted': True})
+                self.assertEqual(response.status, 403)
+            for data in [None, [], {}, {'accepted': False}, {'accepted': 1}, {'accepted': 'true'},
+                         {'accepted': True, 'account': 'other@example.invalid'},
+                         {'accepted': True, 'binary': 'other.exe'}]:
+                response = await self.client.post('/api/connectors/workiq/accept-eula',
+                    headers=self.write_headers, data=json.dumps(data), skip_auto_headers=['Content-Type'])
+                self.assertEqual(response.status, 400)
+            response = await self.client.post('/api/connectors/workiq/accept-eula', headers=self.write_headers, data='{')
+            self.assertEqual(response.status, 400)
+            accept.assert_not_awaited()
+        self.assertFalse(self.sync.calls)
+
+    async def test_license_confirmation_json_reaches_only_the_explicit_action(self):
+        adapter = self.host.adapters['workiq']
+        adapter.error = EULA_ERROR
+        with patch.object(adapter, '_action', new_callable=AsyncMock) as action:
+            response = await self.client.post('/api/connectors/workiq/accept-eula',
+                headers=self.write_headers, json={'accepted': True})
+        self.assertEqual(response.status, 200)
+        action.assert_awaited_once_with('accept-eula', {'accepted': True})
+        self.assertTrue((await response.json())['consent']['required'])
+
+    async def test_first_discovery_license_error_is_visible_in_following_status(self):
+        from hindsightkit.mail_source import WorkIQError
+        self.sync.discover = AsyncMock(side_effect=WorkIQError('workiq_eula_required'))
+        self.sync.pause = AsyncMock()
+        self.sync._run_update = Mock()
+        response = await self.client.post('/api/connectors/workiq/discover', headers=self.write_headers, json={})
+        self.assertEqual(response.status, 400)
+        self.assertIn('workiq_eula_required', (await response.json())['error'])
+        response = await self.client.get('/api/connectors/workiq', headers=self.headers)
+        self.assertTrue((await response.json())['consent']['required'])
+        self.sync.pause.assert_awaited_once()
+
+    async def test_license_panel_has_fixed_terms_link_and_unchecked_disabled_consent(self):
+        response = await self.client.get('/connectors/workiq', headers=self.headers)
+        page = await response.text()
+        self.assertIn('href="https://github.com/microsoft/work-iq"', page)
+        self.assertIn('id="consent-accepted" type="checkbox" disabled', page)
+        self.assertIn('id="accept-eula-button" class="button button-secondary" type="button" disabled', page)
 
 
 class ConnectorLifecycleTests(unittest.TestCase):

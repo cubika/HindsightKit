@@ -169,11 +169,11 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
         name = request.match_info['action']
         identity = request.match_info['connector']
         data = None
-        if name == 'config':
+        if name in {'config', 'accept-eula'}:
             try:
                 data = await request.json()
             except (ValueError, UnicodeError):
-                raise ValueError('Settings must be valid JSON.')
+                raise ValueError('The request must be valid JSON.')
         result = await host.action(identity, name, data)
         return web.json_response(result if name == 'preview' else snapshot(identity))
 

@@ -2,14 +2,51 @@
 from copy import deepcopy
 import asyncio
 import json
+import os
 from pathlib import Path
 import sqlite3
+import subprocess
 
 DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False,
                        'model': '', 'reasoning_effort': '', 'parallel_threads': 4},
            'account': None, 'folders': [], 'warnings': [], 'failures': [],
            'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'failed': 0,
                    'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
+EULA_ERROR = ('workiq_eula_required. WorkIQ requires license acceptance before mail access. '
+              'Review the WorkIQ terms before resuming.')
+
+
+def _eula_required(error):
+    return isinstance(error, str) and ('workiq_eula_required' in error or
+        'WorkIQ requires license acceptance before mail access.' in error)
+
+
+async def _accept_workiq_eula():
+    from .mail_source import find_workiq
+    binary = find_workiq()
+    flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+    try:
+        process = await asyncio.create_subprocess_exec(binary, 'accept-eula', '--log-level', 'None',
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+        try:
+            code = await asyncio.wait_for(process.wait(), timeout=60)
+        except BaseException:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except TimeoutError:
+                raise ValueError('WorkIQ did not stop after license acceptance was interrupted. Check WorkIQ before trying again.') from None
+            raise
+    except TimeoutError:
+        raise ValueError('WorkIQ license acceptance timed out. Refresh folders before trying again.') from None
+    except OSError:
+        raise ValueError('WorkIQ could not accept the license. Check the WorkIQ installation and try again.') from None
+    if code != 0:
+        raise ValueError('WorkIQ could not accept the license. Try again or accept it in the terminal.')
 
 
 def saved_status(directory):
@@ -59,7 +96,8 @@ class Adapter:
         value = self.sync.status() if self.sync else saved_status(self.directory)
         if self.error:
             value['run']['error'] = self.error
-        return {**value, 'availability': self.availability(), 'bank': 'hindsightkit-mail'}
+        return {**value, 'availability': self.availability(), 'bank': 'hindsightkit-mail',
+                'consent': {'required': _eula_required(value['run'].get('error'))}}
 
     async def _load(self):
         if self.sync is None:
@@ -70,12 +108,27 @@ class Adapter:
         return self.sync
 
     async def action(self, action, data=None):
+        from .mail_source import WorkIQError
         async with self._lock:
-            return await self._action(action, data)
+            try:
+                return await self._action(action, data)
+            except WorkIQError as exc:
+                if exc.code != 'workiq_eula_required':
+                    raise
+                self.error = EULA_ERROR
+                if self.sync:
+                    await self.sync.pause()
+                    self.sync._run_update(error=EULA_ERROR)
+                raise ValueError(EULA_ERROR) from None
 
     async def _action(self, action, data=None):
-        if action not in {'discover', 'config', 'preview', 'start', 'pause', 'sync'}:
+        if action not in {'discover', 'config', 'preview', 'start', 'pause', 'sync', 'accept-eula'}:
             raise ValueError('Unknown connector action.')
+        if action == 'accept-eula':
+            if not isinstance(data, dict) or set(data) != {'accepted'} or data['accepted'] is not True:
+                raise ValueError('Confirm that you have read and accept the WorkIQ license terms.')
+            if not self.status()['consent']['required']:
+                raise ValueError('WorkIQ has not requested license acceptance. Refresh folders to check.')
         if action == 'pause':
             if self.sync or (self.directory / 'sync.sqlite3').exists():
                 await (await self._load()).pause()
@@ -89,14 +142,25 @@ class Adapter:
                 raise ValueError('Choose folders, a lookback period, and a sync interval.')
         if not self.availability(refresh=True)['ready']:
             raise ValueError(self._check['message'])
-        self.error = None
+        needs_consent = self.status()['consent']['required']
+        if needs_consent and action in {'preview', 'start', 'sync'}:
+            raise ValueError('Accept the WorkIQ license terms, or refresh folders if you accepted them in the terminal.')
+        if action == 'accept-eula' or (action == 'discover' and needs_consent):
+            await (await self._load()).pause()
+            if action == 'accept-eula':
+                await _accept_workiq_eula()
+            await self.close()
         sync = await self._load()
+        if action == 'accept-eula' or (action == 'discover' and needs_consent):
+            self.error = None
+            sync._run_update(state='paused', error=None, next_run=None)
         if action == 'config':
             await sync.configure(data)
         else:
-            result = await getattr(sync, action)()
+            result = await getattr(sync, 'discover' if action == 'accept-eula' else action)()
             if action == 'preview':
                 return result
+        self.error = None
         return self.status()
 
     async def boot(self):

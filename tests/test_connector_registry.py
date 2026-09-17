@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from hindsightkit.connector_registry import Connector, ConnectorHost, enabled_connectors, register_tools
-from hindsightkit.workiq_connector import Adapter, DEFAULT, saved_status
+from hindsightkit.workiq_connector import Adapter, DEFAULT, EULA_ERROR, _accept_workiq_eula, saved_status
 from hindsightkit.mail_source import WorkIQError
 
 
@@ -141,6 +141,153 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(runner._task)
             finally:
                 await runner.close()
+
+
+class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saved_license_errors_require_consent_without_loading_runtime(self):
+        for error in [EULA_ERROR, 'workiq_eula_required',
+                      'WorkIQ requires license acceptance before mail access.']:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temp:
+                directory = settings(Path(temp))
+                db = sqlite3.connect(directory / 'sync.sqlite3')
+                try:
+                    with db:
+                        db.execute('INSERT INTO settings VALUES (?,?)', ('run', json.dumps({**DEFAULT['run'], 'error': error})))
+                finally:
+                    db.close()
+                adapter = Adapter(directory, {'apiUrl': 'unused'})
+                with patch.object(adapter, 'availability', return_value={'ready': True}), \
+                     patch.object(adapter, '_load') as load, \
+                     patch('hindsightkit.workiq_connector._accept_workiq_eula') as accept:
+                    self.assertTrue(adapter.status()['consent']['required'])
+                    load.assert_not_called()
+                    accept.assert_not_called()
+
+    async def test_accept_requires_exact_confirmation_and_detected_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            adapter = Adapter(Path(temp), {'apiUrl': 'unused'})
+            with patch.object(adapter, 'availability', return_value={'ready': True}), \
+                 patch.object(adapter, '_load') as load, \
+                 patch('hindsightkit.workiq_connector._accept_workiq_eula') as accept:
+                for data in [None, [], {}, {'accepted': False}, {'accepted': 1}, {'accepted': 'true'},
+                             {'accepted': True, 'path': 'arbitrary'}, {'accepted': True}]:
+                    with self.subTest(data=data), self.assertRaises(ValueError):
+                        await adapter.action('accept-eula', data)
+                self.assertFalse(adapter.status()['consent']['required'])
+                load.assert_not_called()
+                accept.assert_not_called()
+
+    async def test_discovery_failure_persists_and_blocks_sync_until_connection_refresh(self):
+        from hindsightkit.mail_sync import MailSync
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / 'mail'
+            runner = MailSync(directory, 'unused')
+            runner.discover = AsyncMock(side_effect=WorkIQError('workiq_eula_required'))
+            adapter = Adapter(directory, {'apiUrl': 'unused'})
+            adapter.sync = runner
+            with patch.object(adapter, 'availability', return_value={'ready': True}):
+                try:
+                    with self.assertRaisesRegex(ValueError, 'workiq_eula_required'):
+                        await adapter.action('discover')
+                    self.assertTrue(adapter.status()['consent']['required'])
+                    self.assertFalse(adapter.status()['config']['enabled'])
+                    for action in ['start', 'sync', 'preview']:
+                        with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'Accept the WorkIQ'):
+                            await adapter.action(action)
+                    self.assertIsNone(runner._task)
+                finally:
+                    await adapter.close()
+                self.assertTrue(adapter.status()['consent']['required'])
+
+    async def test_accept_and_manual_recovery_reopen_source_and_keep_schedule_paused(self):
+        from hindsightkit.mail_sync import MailSync
+        for action in ['accept-eula', 'discover']:
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp) / 'mail'
+                old = MailSync(directory, 'unused')
+                old._run_update(error=EULA_ERROR)
+                old._put('config', {**old._get('config'), 'enabled': True})
+                old.source = Mock(__aexit__=AsyncMock())
+                old._source_open = True
+                adapter = Adapter(directory, {'apiUrl': 'unused'})
+                adapter.sync = old
+                instances = []
+                def reopen(*args, **kwargs):
+                    runner = MailSync(*args, **kwargs)
+                    runner.discover = AsyncMock()
+                    instances.append(runner)
+                    return runner
+                with patch.object(adapter, 'availability', return_value={'ready': True}), \
+                     patch('hindsightkit.connection.sdk', return_value=None), \
+                     patch('hindsightkit.mail_sync.MailSync', side_effect=reopen), \
+                     patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock) as accept:
+                    try:
+                        result = await adapter.action(action, {'accepted': True} if action == 'accept-eula' else None)
+                        self.assertFalse(result['consent']['required'])
+                        self.assertFalse(result['config']['enabled'])
+                        self.assertEqual(result['run']['state'], 'paused')
+                        self.assertIsNone(result['run']['next_run'])
+                        old.source.__aexit__.assert_awaited_once()
+                        self.assertEqual(len(instances), 1)
+                        instances[0].discover.assert_awaited_once()
+                        self.assertIsNone(instances[0]._task)
+                        self.assertIsNone(instances[0]._scheduler)
+                        self.assertEqual(accept.await_count, int(action == 'accept-eula'))
+                    finally:
+                        await adapter.close()
+
+    async def test_official_accept_command_has_no_shell_or_private_output(self):
+        import os
+        import subprocess
+        process = Mock(returncode=0, wait=AsyncMock(return_value=0))
+        with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
+             patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process) as spawn:
+            await _accept_workiq_eula()
+        self.assertEqual(spawn.call_args.args, ('verified-workiq.exe', 'accept-eula', '--log-level', 'None'))
+        self.assertNotIn('shell', spawn.call_args.kwargs)
+        for stream in ['stdin', 'stdout', 'stderr']:
+            self.assertEqual(spawn.call_args.kwargs[stream], subprocess.DEVNULL)
+        if os.name == 'nt':
+            self.assertEqual(spawn.call_args.kwargs['creationflags'], subprocess.CREATE_NO_WINDOW)
+        process.kill.assert_not_called()
+
+    async def test_failed_accept_keeps_consent_required_and_does_not_discover(self):
+        from hindsightkit.mail_sync import MailSync
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / 'mail'
+            runner = MailSync(directory, 'unused')
+            runner._run_update(error=EULA_ERROR)
+            runner.discover = AsyncMock()
+            adapter = Adapter(directory, {'apiUrl': 'unused'})
+            adapter.sync = runner
+            with patch.object(adapter, 'availability', return_value={'ready': True}), \
+                 patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock, side_effect=ValueError('Acceptance failed')):
+                try:
+                    with self.assertRaisesRegex(ValueError, 'Acceptance failed'):
+                        await adapter.action('accept-eula', {'accepted': True})
+                    self.assertTrue(adapter.status()['consent']['required'])
+                    self.assertFalse(adapter.status()['config']['enabled'])
+                    runner.discover.assert_not_awaited()
+                finally:
+                    await adapter.close()
+
+    async def test_accept_process_failure_is_safe_and_timeout_reaps_child(self):
+        for failure in [TimeoutError(), asyncio.CancelledError(), OSError('private upstream detail')]:
+            with self.subTest(failure=type(failure).__name__):
+                process = Mock(returncode=None, wait=AsyncMock(side_effect=[failure, 0]))
+                with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
+                     patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
+                    expected = asyncio.CancelledError if isinstance(failure, asyncio.CancelledError) else ValueError
+                    with self.assertRaises(expected) as caught:
+                        await _accept_workiq_eula()
+                    self.assertNotIn('private upstream detail', str(caught.exception))
+                process.kill.assert_called_once()
+                self.assertEqual(process.wait.await_count, 2)
+        process = Mock(returncode=1, wait=AsyncMock(return_value=1))
+        with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
+             patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
+            with self.assertRaisesRegex(ValueError, 'could not accept'):
+                await _accept_workiq_eula()
 
 
 class IndependentAdapterTests(unittest.IsolatedAsyncioTestCase):
