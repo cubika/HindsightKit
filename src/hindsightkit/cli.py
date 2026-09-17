@@ -102,14 +102,13 @@ def install_node_role(role):
     from filelock import FileLock
     from .install_progress import run_install
     from .node_bundle import install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
-    directory = home() / {'client': 'client-runtime', 'server': 'runtime', 'copilot': 'copilot'}[role]
+    directory = home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
     directory.mkdir(parents=True, exist_ok=True)
     source_root = package_directory(PACKAGE, role)
     lock = source_root / 'package-lock.json'
     stamp = directory / '.installed-lock'
     digest = hashlib.sha256(lock.read_bytes()).hexdigest()
-    label = {'client': 'Copilot client integration', 'server': 'Hindsight dashboard and server integration',
-             'copilot': 'official Copilot CLI'}[role]
+    label = {'client': 'Copilot client integration', 'server': 'Hindsight dashboard and server integration'}[role]
     bundle = release_bundle()
     with FileLock(str(directory / '.install.lock'), timeout=60):
         if stamp.is_file() and stamp.read_bytes() == digest.encode('ascii'):
@@ -157,10 +156,27 @@ async def copilot_authenticated():
 
 def ensure_copilot():
     command = copilot_command()
-    managed_loader = home() / 'copilot/node_modules/@github/copilot/npm-loader.js'
-    if command is None or any(str(part) == str(managed_loader) for part in command):
-        install_node_role('copilot')
+    installed = command is None
+    if command is None:
+        from .install_progress import run_install
+        # Copilot is an independent global tool, not a HindsightKit release component.
+        with tempfile.TemporaryDirectory(prefix='hindsightkit-copilot-install-') as directory:
+            run_install(npm() + ['install', '--global', '@github/copilot@1.0.85', '--no-audit',
+                                '--no-fund', '--loglevel=info', '--foreground-scripts'],
+                        cwd=directory, label='official Copilot CLI (separate installation)')
         command = copilot_command()
+    if command is None:
+        raise RuntimeError('Copilot CLI was not found after installation. Open a new terminal or install it with npm install -g @github/copilot, then rerun setup.')
+    try:
+        result = subprocess.run([str(value) for value in command] + ['--version'], check=True,
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        version = result.stdout.strip()
+        if not re.search(r'(?m)^(?:GitHub Copilot CLI )?[0-9]+[.][0-9]+[.][0-9]+', version):
+            raise ValueError('Unrecognized Copilot version output')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise RuntimeError('The existing Copilot CLI failed its version check. Repair that installation and rerun setup; it was not overwritten.') from exc
+    print(f'{"Installed" if installed else "Reusing"} {version.splitlines()[0]} at {command[-1]}.', flush=True)
     print('Checking Copilot authentication...', flush=True)
     if asyncio.run(copilot_authenticated()):
         return
@@ -178,9 +194,15 @@ def copilot_command():
             loader = Path(binary).parent / 'node_modules/@github/copilot/npm-loader.js'
             if loader.is_file():
                 return [node(), loader]
+            raise RuntimeError(f'An existing Copilot launcher at {binary} has no npm entry point. Repair that installation; setup will not overwrite it.')
         else:
             return [binary]
     loader = home() / 'copilot/node_modules/@github/copilot/npm-loader.js'
+    if loader.is_file():
+        return [node(), loader]
+    # An npm global installation can exist without its prefix being on PATH yet.
+    prefix = run(npm() + ['prefix', '--global'], capture=True)
+    loader = Path(prefix) / 'node_modules/@github/copilot/npm-loader.js'
     return [node(), loader] if loader.is_file() else None
 
 
@@ -569,7 +591,7 @@ def setup(args):
     from .node_bundle import release_bundle, validate_bundle
     bundled = release_bundle()
     if bundled is not None:
-        roles = ('client', 'copilot') if args.server or getattr(args, 'client_only', False) else ('client', 'server', 'copilot')
+        roles = ('client',) if args.server or getattr(args, 'client_only', False) else ('client', 'server')
         validate_bundle(bundled, PACKAGE, roles=roles)
     if not getattr(args, 'server_only', False):
         require_client_prerequisites()

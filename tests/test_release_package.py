@@ -63,16 +63,13 @@ class ReleasePackageTests(unittest.TestCase):
     def node_bundle(self, directory, source):
         directory.mkdir(parents=True)
         manifest = {"schema": 1, "platform": "windows-x64", "bundles": {}}
-        for role in ("client", "server", "copilot"):
+        for role in ("client", "server"):
             root = source / "src/hindsightkit"
             if role != "server":
                 root /= role
-            dependencies = ({"@github/copilot": "1.0.85"} if role == "copilot" else
-                            {"@vectorize-io/hindsight-coding-agents": "0.6.1", "jsonc-parser": "3.3.1"})
+            dependencies = {"@vectorize-io/hindsight-coding-agents": "0.6.1", "jsonc-parser": "3.3.1"}
             if role == "server":
                 dependencies["@vectorize-io/hindsight-control-plane"] = "0.10.0"
-            if role == "copilot":
-                dependencies["@github/copilot-win32-x64"] = "1.0.85"
             project = {"name": "fixture-" + role, "version": "1.0.0", "private": True, "dependencies": dependencies}
             lock = {**project, "lockfileVersion": 3, "requires": True, "packages": {"": project}}
             files = {}
@@ -82,12 +79,9 @@ class ReleasePackageTests(unittest.TestCase):
                                             "integrity": "sha512-" + base64.b64encode(bytes(64)).decode()}
                 files[path + "/package.json"] = json.dumps({"name": name, "version": version})
                 files[path + "/LICENSE"] = "Original fixture license.\n"
-                if role == "copilot":
-                    files[path + "/LICENSE.md"] = "Original Copilot fixture license.\n"
-            entries = (["@github/copilot/npm-loader.js"] if role == "copilot" else
-                       ["@vectorize-io/hindsight-coding-agents/dist/installer.js",
-                        "@vectorize-io/hindsight-coding-agents/dist/copilot-stop-hook.js",
-                        "jsonc-parser/lib/umd/main.js"])
+            entries = ["@vectorize-io/hindsight-coding-agents/dist/installer.js",
+                       "@vectorize-io/hindsight-coding-agents/dist/copilot-stop-hook.js",
+                       "jsonc-parser/lib/umd/main.js"]
             if role == "server":
                 entries.append("@vectorize-io/hindsight-control-plane/standalone/server.js")
             files.update({"node_modules/" + entry: "// upstream fixture\n" for entry in entries})
@@ -164,12 +158,12 @@ class ReleasePackageTests(unittest.TestCase):
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
                     "app/src/hindsightkit/__init__.py",
-                    *("app/src/hindsightkit/" + prefix + name for prefix in ("", "client/", "copilot/")
+                    *("app/src/hindsightkit/" + prefix + name for prefix in ("", "client/")
                       for name in ("package.json", "package-lock.json")),
                     "app/docs/install.md", "app/release.json", "app/python/python-bundle.json",
                     "app/python/requirements-client.txt", "app/python/requirements-server.txt",
                     "app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl",
-                    "app/node/node-bundle.json", "app/node/client.zip", "app/node/server.zip", "app/node/copilot.zip"})
+                    "app/node/node-bundle.json", "app/node/client.zip", "app/node/server.zip"})
                 self.assertEqual(json.loads(archive.read("app/release.json")), release)
                 self.assertEqual(release["package_role"], "full")
                 self.assertTrue(all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist()))
@@ -184,11 +178,12 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(client_release["package_role"], "client")
                 self.assertNotIn("app/node/server.zip", archive.namelist())
                 client_node = json.loads(archive.read("app/node/node-bundle.json"))
-                self.assertEqual(set(client_node["bundles"]), {"client", "copilot"})
-                self.assertEqual(client_release["node"]["components"], ["client", "copilot"])
-                for role in ("client", "copilot"):
-                    self.assertEqual(archive.read("app/node/" + role + ".zip"),
-                                     (args["node_directory"] / (role + ".zip")).read_bytes())
+                self.assertEqual(set(client_node["bundles"]), {"client"})
+                self.assertEqual(client_release["node"]["components"], ["client"])
+                self.assertEqual(archive.read("app/node/client.zip"),
+                                 (args["node_directory"] / "client.zip").read_bytes())
+                self.assertNotIn("app/node/copilot.zip", archive.namelist())
+                self.assertFalse(any(name.startswith("app/src/hindsightkit/copilot/") for name in archive.namelist()))
                 self.assertNotIn("app/python/requirements-server.txt", archive.namelist())
                 self.assertEqual(json.loads(archive.read("app/python/python-bundle.json"))["profile"], "client")
                 self.assertEqual(archive.read("app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"),
@@ -199,7 +194,7 @@ class ReleasePackageTests(unittest.TestCase):
             base = "https://github.com/release-owner/HindsightKit/releases/download/v0.1.1"
             self.assertEqual(release["release_url"], base)
             self.assertEqual(release["python"], {"version": "3.12", "platform": "windows-x64", "packages": 1})
-            self.assertEqual(release["node"], {"platform": "windows-x64", "components": ["client", "copilot", "server"]})
+            self.assertEqual(release["node"], {"platform": "windows-x64", "components": ["client", "server"]})
             self.assertIs(release["requires_auth"], False)
             self.assertEqual(release["postgres"]["url"], base + "/" + package.POSTGRES_NAME)
             self.assertEqual(release["postgres"]["sha256"], package.inspect_file(output / package.POSTGRES_NAME))
@@ -219,6 +214,11 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertIn("hindsightkit connect", notes)
             self.assertIn("Pinned Python packages are bundled", notes)
             self.assertIn("without contacting PyPI", notes)
+            self.assertIn("locked Hindsight npm components", notes)
+            self.assertIn("Setup reuses an existing Copilot CLI", notes)
+            self.assertIn("registry and proxy settings", notes)
+            self.assertIn("Copilot CLI is not included in the archive", notes)
+            self.assertNotIn("client dependencies and Copilot CLI", notes)
             self.assertIn("local server also downloads the embedding model", notes)
             self.assertNotIn("Known v0.1.0 download issue", notes)
             self.assertIn("It does not include itself or GitHub's source archives", notes)
@@ -357,7 +357,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     def test_missing_tampered_or_private_node_bundle_is_rejected_before_output(self):
         changes = (lambda root: (root / "node-bundle.json").unlink(),
-                   lambda root: (root / "copilot.zip").unlink(),
+                   lambda root: (root / "server.zip").unlink(),
                    lambda root: write(root, "client.zip", "tampered"),
                    lambda root: write(root, ".npmrc", "//registry.example.test/:_authToken=secret"))
         for index, change in enumerate(changes):
@@ -452,12 +452,12 @@ class ReleasePackageTests(unittest.TestCase):
                   patch.object(builder, "run", side_effect=run), patch.object(sys, "path", list(sys.path)),
                   contextlib.redirect_stdout(output_text)):
                 manifest = builder.build_bundle(source_root=args["source_root"], output=output)
-            self.assertEqual(installs, ["client", "server", "copilot"])
+            self.assertEqual(installs, ["client", "server"])
             self.assertEqual(len(checked), 1)
             self.assertEqual(set(manifest["bundles"]), set(installs))
             self.assertIn("npm completed for server; inspecting files", output_text.getvalue())
             self.assertIn("Packing server.zip:", output_text.getvalue())
-            self.assertIn("Packed copilot.zip", output_text.getvalue())
+            self.assertIn("Packed client.zip", output_text.getvalue())
             for role in installs:
                 with (zipfile.ZipFile(args["node_directory"] / (role + ".zip")) as original,
                       zipfile.ZipFile(output / (role + ".zip")) as built):
@@ -510,42 +510,26 @@ class ReleasePackageTests(unittest.TestCase):
                     builder.build_bundle(source_root=args["source_root"], output=output)
                 self.assertIn("verify_node_install.py --bundle", str(failure.exception))
                 manifest = node_bundle.validate_bundle(output, args["source_root"] / "src/hindsightkit")
-                self.assertEqual(set(manifest["bundles"]), {"client", "server", "copilot"})
+                self.assertEqual(set(manifest["bundles"]), {"client", "server"})
                 original = {path.name: path.read_bytes() for path in output.iterdir()}
                 with self.assertRaisesRegex(ValueError, "must be new or empty"):
                     builder.build_bundle(source_root=args["source_root"], output=output)
                 self.assertEqual(original, {path.name: path.read_bytes() for path in output.iterdir()})
 
-    def test_node_builder_rejects_missing_copilot_redistribution_licenses(self):
-        spec = importlib.util.spec_from_file_location("build_node_bundle", ROOT / "distribution/build_node_bundle.py")
-        builder = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"package_release": package}):
-            spec.loader.exec_module(builder)
-        for missing in ("@github/copilot", "@github/copilot-win32-x64"):
-            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                for name in ("@github/copilot", "@github/copilot-win32-x64"):
-                    write(root, f"node_modules/{name}/LICENSE.md", "Upstream license\n")
-                (root / "node_modules" / missing / "LICENSE.md").unlink()
-                with self.assertRaisesRegex(ValueError, "redistribution license is missing"):
-                    builder.check_copilot_licenses(root)
-
-    def test_packaging_rejects_rehashed_bundle_missing_copilot_license(self):
-        for missing in ("@github/copilot", "@github/copilot-win32-x64"):
-            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+    def test_packaging_rejects_legacy_copilot_archive_before_output(self):
+        for declared in (False, True):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as directory:
                 args = self.fixture(Path(directory))
-                path = args["node_directory"] / "copilot.zip"
-                with zipfile.ZipFile(path) as original:
-                    retained = {name: original.read(name) for name in original.namelist()
-                                if name != "node_modules/" + missing + "/LICENSE.md"}
-                with zipfile.ZipFile(path, "w") as archive:
-                    for name, content in retained.items():
-                        archive.writestr(name, content)
+                archive_path = args["node_directory"] / "copilot.zip"
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("node_modules/@github/copilot/npm-loader.js", "// legacy fixture\n")
                 manifest_path = args["node_directory"] / "node-bundle.json"
                 manifest = json.loads(manifest_path.read_text())
-                manifest["bundles"]["copilot"]["sha256"] = package.inspect_file(path)
-                manifest_path.write_text(json.dumps(manifest))
-                with self.assertRaisesRegex(ValueError, "redistribution license is missing"):
+                if declared:
+                    manifest["bundles"]["copilot"] = {"archive": "copilot.zip",
+                        "sha256": package.inspect_file(archive_path), "lock_sha256": "0" * 64}
+                    manifest_path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
                     package.package_release(**args)
                 self.assertFalse(args["output"].exists())
 

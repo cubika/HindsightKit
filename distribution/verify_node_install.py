@@ -116,15 +116,14 @@ net.Socket.prototype.connect = function(...args) {
             for role in roles:
                 cli.install_node_role(role)
                 cli.install_node_role(role)
-                directory = cli.home() / {'client': 'client-runtime', 'server': 'runtime', 'copilot': 'copilot'}[role]
-                if role != 'copilot':
-                    target = profile / role
-                    target.mkdir()
-                    cli.integrate('install-cli', target, target / '.hindsight/coding-agent.json',
-                                  'http://127.0.0.1:9', node, sys.executable, runtime_path=directory)
-                    hook = target / '.copilot/hooks/hindsight-coding-agents.json'
-                    if not hook.is_file():
-                        raise RuntimeError('Bundled installer did not generate Copilot hooks')
+                directory = cli.home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
+                target = profile / role
+                target.mkdir()
+                cli.integrate('install-cli', target, target / '.hindsight/coding-agent.json',
+                              'http://127.0.0.1:9', node, sys.executable, runtime_path=directory)
+                hook = target / '.copilot/hooks/hindsight-coding-agents.json'
+                if not hook.is_file():
+                    raise RuntimeError('Bundled installer did not generate Copilot hooks')
                 if role == 'server':
                     dashboard(directory, node, env)
             # Damage a real transitive dependency and prove retry repairs it from the archive.

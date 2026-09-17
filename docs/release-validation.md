@@ -2,6 +2,8 @@
 
 ## v0.1.3 local candidate
 
+Copilot CLI is now installed separately. The revised package excludes its archive and lockfiles. All 369 tests passed, followed by 80 affected tests after integrating newer master changes. The existing Windows Copilot executable was reused; a separate installation into a disposable npm prefix and repeat reuse also passed. Authentication was excluded from those checks.
+
 All 358 repository tests passed after integrating current master. A generated client installer completed twice with network access blocked, reused system Node.js, preserved the fixture connection, and verified its actual launcher; its temporary user PATH entry was removed. Separate offline checks passed for 194 Python wheels, client dependency repair, the Copilot executable and reuse, and the dashboard with 17 static assets. Full/client release archives were built locally and checked against their manifests. Publication, a fresh Copilot sign-in, and installation on the reporting machine remain unverified.
 
 These records separate completed checks from pending acceptance work. They do not guarantee that every machine or network can finish installation. Connector-specific measurements are in [connector validation](connector-validation.md).

@@ -188,18 +188,3 @@ class NodeBundleTests(unittest.TestCase):
             with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': ''}), \
                  patch.object(node_bundle.sys, 'executable', str(app / '.venv/Scripts/python.exe')):
                 self.assertEqual(node_bundle.release_bundle(), app / 'node')
-
-    def test_managed_copilot_with_leftover_loader_is_repaired_before_authentication(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            loader = root / 'copilot/node_modules/@github/copilot/npm-loader.js'
-            loader.parent.mkdir(parents=True)
-            loader.write_text('// unpacked before failure')
-            with patch.object(cli, 'home', return_value=root), \
-                 patch.object(cli, 'copilot_command', return_value=['node', loader]), \
-                 patch.object(cli, 'install_node_role', side_effect=RuntimeError('repair incomplete')) as install, \
-                 patch.object(cli, 'copilot_authenticated') as authenticate:
-                with self.assertRaisesRegex(RuntimeError, 'repair incomplete'):
-                    cli.ensure_copilot()
-                install.assert_called_once_with('copilot')
-                authenticate.assert_not_called()

@@ -17,15 +17,8 @@ import zipfile
 from package_release import ordinary_path, relative_name, write_archive
 
 
-ROLES = ("client", "server", "copilot")
+ROLES = ("client", "server")
 MANIFEST_NAME = "node-bundle.json"
-
-
-def check_copilot_licenses(root: Path):
-    for package_name in ("@github/copilot", "@github/copilot-win32-x64"):
-        license_path = ordinary_path(root / "node_modules" / package_name / "LICENSE.md")
-        if not license_path.is_file() or not license_path.stat().st_size:
-            raise ValueError(f"Copilot redistribution license is missing: {package_name}/LICENSE.md")
 
 
 def run(command, *, cwd, env=None, capture=False):
@@ -116,8 +109,6 @@ def build_bundle(*, source_root: Path, output: Path, node: str = "node") -> dict
                  "--globalconfig", global_config, "--cache", work / "cache"], cwd=target, env=env)
             if (target / "package-lock.json").read_bytes() != lock_bytes:
                 raise ValueError(f"npm changed the locked {role} dependency graph")
-            if role == "copilot":
-                check_copilot_licenses(target)
             archive_name = role + ".zip"
             print(f"npm completed for {role}; inspecting files for {archive_name}...", flush=True)
             files = node_files(target)

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -61,17 +62,68 @@ class NodeInstallTests(unittest.TestCase):
              patch.object(cli, 'copilot_authenticated', new_callable=AsyncMock, return_value=True), \
              patch.object(cli, 'npm', return_value=['node', 'npm-cli.js']), \
              patch.object(cli, 'node', return_value='node'), \
-             patch.object(node_bundle, 'release_bundle', return_value=None), \
-             patch.object(node_bundle, 'verify_installed'), \
+             patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'GitHub Copilot CLI 1.0.86-2.\n', '')), \
              patch.object(install_progress, 'run_install') as install, \
              contextlib.redirect_stdout(io.StringIO()):
             cli.ensure_copilot()
             command = install.call_args.args[0]
             self.assertNotIn('--registry', command)
-            self.assertIn('ci', command)
-            lock = json.loads((Path(temp) / 'copilot/package-lock.json').read_text())
-            self.assertEqual(lock['packages']['']['dependencies']['@github/copilot'], '1.0.85')
-            self.assertEqual(install.call_args.kwargs['cwd'], Path(temp) / 'copilot')
+            self.assertEqual(command[2:5], ['install', '--global', '@github/copilot@1.0.85'])
+            self.assertNotIn('--prefix', command)
+            self.assertFalse((Path(temp) / 'copilot').exists())
+
+    def test_existing_copilot_is_checked_and_reused_without_install_or_update(self):
+        with patch.object(cli, 'copilot_command', return_value=['installed/copilot.exe']), \
+             patch.object(cli, 'copilot_authenticated', new_callable=AsyncMock, return_value=True), \
+             patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'GitHub Copilot CLI 1.2.0\n', '')) as check, \
+             patch('hindsightkit.install_progress.run_install') as install, \
+             contextlib.redirect_stdout(io.StringIO()):
+            cli.ensure_copilot()
+            self.assertEqual(check.call_args.args[0], ['installed/copilot.exe', '--version'])
+            install.assert_not_called()
+
+    def test_broken_existing_copilot_is_not_overwritten(self):
+        with patch.object(cli, 'copilot_command', return_value=['existing/copilot.exe']), \
+             patch.object(subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['copilot'])), \
+             patch('hindsightkit.install_progress.run_install') as install, \
+             patch.object(cli, 'copilot_authenticated', new_callable=AsyncMock) as authenticate:
+            with self.assertRaisesRegex(RuntimeError, 'not overwritten'):
+                cli.ensure_copilot()
+            install.assert_not_called()
+            authenticate.assert_not_awaited()
+
+    def test_npm_global_copilot_is_found_when_its_prefix_is_not_on_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            loader = root / 'npm prefix/node_modules/@github/copilot/npm-loader.js'
+            loader.parent.mkdir(parents=True)
+            loader.write_text('// installed by npm')
+            with patch.object(cli, 'home', return_value=root / 'kit'), \
+                 patch.object(cli.shutil, 'which', return_value=None), \
+                 patch.object(cli, 'npm', return_value=['node', 'npm-cli.js']), \
+                 patch.object(cli, 'node', return_value='node'), \
+                 patch.object(cli, 'run', return_value=str(root / 'npm prefix')) as read:
+                self.assertEqual(cli.copilot_command(), ['node', loader])
+                read.assert_called_once_with(['node', 'npm-cli.js', 'prefix', '--global'], capture=True)
+
+    def test_separate_install_failure_never_starts_authentication(self):
+        with patch.object(cli, 'copilot_command', return_value=None), \
+             patch.object(cli, 'npm', return_value=['node', 'npm-cli.js']), \
+             patch('hindsightkit.install_progress.run_install', side_effect=install_progress.InstallError('TLS failure')), \
+             patch.object(cli, 'copilot_authenticated', new_callable=AsyncMock) as authenticate:
+            with self.assertRaisesRegex(install_progress.InstallError, 'TLS failure'):
+                cli.ensure_copilot()
+            authenticate.assert_not_awaited()
+
+    def test_broken_npm_launcher_does_not_trigger_a_second_installation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            launcher = Path(temp) / 'copilot.cmd'
+            launcher.write_text('@echo off')
+            with patch.object(cli.shutil, 'which', return_value=str(launcher)), \
+                 patch('hindsightkit.install_progress.run_install') as install:
+                with self.assertRaisesRegex(RuntimeError, 'will not overwrite'):
+                    cli.ensure_copilot()
+                install.assert_not_called()
 
     def test_real_npm_uses_user_registry_for_locked_tarball_and_checks_integrity(self):
         binary = shutil.which('node')

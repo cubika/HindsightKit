@@ -25,4 +25,4 @@ server = [
 hindsightkit = "hindsightkit.cli:main"
 
 [tool.setuptools.package-data]
-hindsightkit = ["*.mjs", "*.json", "*.ps1", "client/*.json", "copilot/*.json", "web/*.html", "web/*.css", "web/*.js"]
+hindsightkit = ["*.mjs", "*.json", "*.ps1", "client/*.json", "web/*.html", "web/*.css", "web/*.js"]

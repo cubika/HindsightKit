@@ -220,11 +220,6 @@ def node_files(root: Path, package_directory: Path, needles: tuple[bytes, ...]):
     manifest_path = ordinary_path(root / "node-bundle.json")
     manifest_hash = inspect_file(manifest_path, needles)
     manifest = validate_node_bundle(root, package_directory)
-    with zipfile.ZipFile(root / manifest["bundles"]["copilot"]["archive"]) as archive:
-        for package_name in ("@github/copilot", "@github/copilot-win32-x64"):
-            name = "node_modules/" + package_name + "/LICENSE.md"
-            if name not in archive.namelist() or not archive.read(name):
-                raise ValueError(f"Copilot redistribution license is missing: {name}")
     expected = {"node-bundle.json": manifest_hash,
                 **{item["archive"]: item["sha256"] for item in manifest["bundles"].values()}}
     files = {}
@@ -362,7 +357,7 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
                         if version == "v0.1.0" else
                         "Pinned Python packages are bundled in the application archive; "
                         "setup installs them without contacting PyPI.\n"
-                        "The archive also contains the locked npm components and official Copilot CLI. "
+                        "The archive also contains the locked Hindsight npm components. "
                         "Setup verifies and extracts these files without contacting npm.\n"
                         "The Python interpreter still downloads. Setup reuses suitable Node.js 22+ from PATH "
                         "or downloads the official portable runtime. "
@@ -372,6 +367,8 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
     return f"""# HindsightKit {version}
 
 Requires Windows x64, Git, and a GitHub account with Copilot access.
+Setup reuses an existing Copilot CLI. If it is missing, setup installs the official CLI globally
+with npm using your registry and proxy settings. Copilot CLI is not included in the archive.
 Use Windows PowerShell 5.1 or PowerShell 7. Setup asks you to sign in to Copilot if needed.
 
 The default installation sets up the memory server and coding integrations on this computer in one run.
@@ -420,7 +417,7 @@ For a client without a local database or model, replace the example address with
 ## Downloads
 
 The installer verifies the application and PostgreSQL archives with SHA256.
-New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains client dependencies and Copilot CLI.
+New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains the Hindsight client dependencies.
 The default installation uses {tick}{APP_NAME}{tick}. Computers with an existing local server
 keep the full package so their server can still be managed.
 PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
@@ -489,8 +486,7 @@ def package_release(*, version: str, repository: str, server_url: str,
         client_directory = Path(temporary) / "python"
         python_bundle_module().create_client_bundle(python_directory, client_directory, source_root)
         client_python, client_summary = python_files(client_directory, source_root, needles, profile="client")
-        client_node_manifest = {**node_manifest, "bundles": {role: node_manifest["bundles"][role]
-                                                              for role in ("client", "copilot")}}
+        client_node_manifest = {**node_manifest, "bundles": {"client": node_manifest["bundles"]["client"]}}
         client_node = {"app/node/" + item["archive"]: bundled_node["app/node/" + item["archive"]]
                        for item in client_node_manifest["bundles"].values()}
         output.mkdir(parents=True, exist_ok=True)
@@ -504,7 +500,7 @@ def package_release(*, version: str, repository: str, server_url: str,
         app_hash = write_archive(output / APP_NAME, full_application,
                                  {"app/release.json": json.dumps(release, indent=2) + "\n"})
         client_release = {**release, "package_role": "client", "python": client_summary,
-                          "node": {"platform": node_manifest["platform"], "components": ["client", "copilot"]}}
+                          "node": {"platform": node_manifest["platform"], "components": ["client"]}}
         client_hash = write_archive(output / CLIENT_APP_NAME, {**application, **client_python, **client_node},
                                     {"app/release.json": json.dumps(client_release, indent=2) + "\n",
                                      "app/node/node-bundle.json": json.dumps(client_node_manifest, indent=2) + "\n"})

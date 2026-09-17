@@ -20,7 +20,6 @@ ENTRYPOINTS = {
     'client': ('node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js',
                'node_modules/@vectorize-io/hindsight-coding-agents/dist/copilot-stop-hook.js',
                'node_modules/jsonc-parser/lib/umd/main.js'),
-    'copilot': ('node_modules/@github/copilot/npm-loader.js',),
 }
 ENTRYPOINTS['server'] = ENTRYPOINTS['client'] + (
     'node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js',)
@@ -106,7 +105,7 @@ def _check_packages(lock, read, exists):
             raise ValueError(f'Npm bundle is missing locked package: {name}@{item.get("version")}')
 
 
-def validate_bundle(bundle_directory: Path, package_directory: Path, roles=('client', 'server', 'copilot')) -> dict:
+def validate_bundle(bundle_directory: Path, package_directory: Path, roles=('client', 'server')) -> dict:
     root = ordinary_path(bundle_directory)
     manifest = _read_json(ordinary_path(root / MANIFEST).read_text(encoding='utf-8'))
     if manifest.get('schema') != 1 or manifest.get('platform') != 'windows-x64':
@@ -149,24 +148,16 @@ def verify_installed(directory: Path, package: Path, role: str, node: str):
             raise ValueError(f'Npm {role} entry point is missing: {name}')
     lock = _read_json((package_directory(package, role) / 'package-lock.json').read_bytes())
     _check_packages(lock, lambda name: (directory / name).read_bytes(), lambda name: (directory / name).is_file())
-    if role == 'copilot':
-        command = [node, str(directory / ENTRYPOINTS[role][0]), '--version']
-    else:
-        command = [node, '--input-type=module', '-e',
-                   'const modules=process.argv.slice(1); process.argv[1]="hindsightkit-verify"; for (const module of modules) await import(module);',
-                   (directory / ENTRYPOINTS[role][0]).resolve().as_uri(),
-                   (directory / ENTRYPOINTS[role][2]).resolve().as_uri()]
+    command = [node, '--input-type=module', '-e',
+               'const modules=process.argv.slice(1); process.argv[1]="hindsightkit-verify"; for (const module of modules) await import(module);',
+               (directory / ENTRYPOINTS[role][0]).resolve().as_uri(),
+               (directory / ENTRYPOINTS[role][2]).resolve().as_uri()]
     result = subprocess.run(command, cwd=directory, capture_output=True,
                             text=True, encoding='utf-8', timeout=60,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     if result.returncode:
         from .install_progress import redact
         raise ValueError(f'Npm {role} entry point failed: ' + redact((result.stderr or result.stdout)[-2000:]))
-    if role == 'copilot':
-        # npm wrapper and executable versions can differ in an official release.
-        # Package versions are checked against the lockfile above.
-        if not re.search(r'^GitHub Copilot CLI [0-9]+[.][0-9]+[.][0-9]+', result.stdout):
-            raise ValueError('The bundled Copilot CLI did not report a valid version')
 
 
 def verify_bundle_files(bundle: Path, package: Path, role: str, directory: Path):

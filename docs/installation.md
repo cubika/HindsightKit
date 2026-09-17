@@ -125,7 +125,7 @@ The log contains stage messages and dependency-command output, not a complete te
 
 ### Dependency installation and retries
 
-Release installation uses bundled Python wheels and npm components, including the official Copilot CLI. It verifies the archives and installed entry points. Missing or damaged bundles stop setup; it does not fall back to package downloads. Source setup still uses npm and respects its registry, proxy, and CA configuration.
+Release installation uses bundled Python wheels and Hindsight npm components. Copilot CLI is separate: setup checks and reuses an existing installation; if missing, it installs the official CLI globally through npm. That step requires network access and uses the user's npm registry, proxy, and CA settings. Existing Copilot installations are not upgraded or overwritten.
 
 Setup reuses x64 Node.js 22+ with npm from PATH. Otherwise it reuses the current installation's portable Node.js or downloads the pinned official runtime. It skips runtimes inside another HindsightKit checkout or release directory.
 

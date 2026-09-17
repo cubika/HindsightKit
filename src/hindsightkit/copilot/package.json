@@ -1,8 +1,0 @@
-{
-  "name": "hindsightkit-copilot-runtime",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "@github/copilot": "1.0.85"
-  }
-}
