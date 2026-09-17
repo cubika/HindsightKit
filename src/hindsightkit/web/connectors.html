@@ -86,7 +86,8 @@
             <div class="schedule-note"><span class="note-line"></span><p>Each scan resumes from the last checkpoint.<br>Scheduled sync continues when this page is closed.</p></div>
             <div class="field-group"><label for="import-model">Import model</label><input id="import-model" type="text" maxlength="128" placeholder="Use server model" disabled><p class="field-help">A Copilot model ID for mail analysis. Leave blank to use the server model.</p></div>
             <div class="field-group"><label for="import-reasoning">Reasoning effort</label><select id="import-reasoning" disabled><option value="">Use server setting</option><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Maximum</option></select><p class="field-help">Lower effort usually finishes faster. The selected model must support it.</p></div>
-            <div class="field-group"><label for="parallel-threads">Parallel threads</label><div class="number-field"><input id="parallel-threads" type="number" min="1" max="4" value="4" disabled></div><p class="field-help">Analyze up to four independent threads at once.</p></div>
+            <div class="field-group"><label for="batch-size">Threads per model request</label><div class="number-field"><input id="batch-size" type="number" min="1" max="8" value="4" disabled></div><p class="field-help">Combine complete threads in one prompt. Each keeps its own outcome and sources. Large inputs are split into smaller batches.</p></div>
+            <div class="field-group"><label for="parallel-threads">Parallel model requests</label><div class="number-field"><input id="parallel-threads" type="number" min="1" max="4" value="4" disabled></div><p class="field-help">Run up to four batches at once.</p></div>
           </section>
         </div>
 

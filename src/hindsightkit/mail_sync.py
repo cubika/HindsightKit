@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
+from itertools import islice
 import json
 import re
 from pathlib import Path
@@ -21,7 +22,7 @@ MAX_PREPARED = 16
 MAX_SOURCES = 100000
 MAX_THREADS = 10000
 OVERLAP = timedelta(hours=6)
-IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=4)
+IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=4, batch_size=4)
 
 
 def _now():
@@ -233,6 +234,8 @@ class MailSync:
             raise ValueError('Choose a supported reasoning effort.')
         if type(updated['parallel_threads']) is not int or not 1 <= updated['parallel_threads'] <= 4:
             raise ValueError('parallel_threads must be between 1 and 4.')
+        if type(updated['batch_size']) is not int or not 1 <= updated['batch_size'] <= 8:
+            raise ValueError('batch_size must be between 1 and 8.')
         updated["folder_ids"] = list(dict.fromkeys(ids))
         if updated == config:
             return self.status()
@@ -530,11 +533,20 @@ class MailSync:
 
     async def _process_threads(self, identities, before, failed):
         remaining = iter(identities)
+        batch_size = self._get('config')['batch_size']
 
         async def worker():
-            for identity in remaining:
+            while batch := list(islice(remaining, batch_size)):
                 if asyncio.current_task().cancelling():
                     raise asyncio.CancelledError
+                if len(batch) > 1:
+                    self._active_threads += len(batch)
+                    try:
+                        await self._prepare_batch(batch, before, failed)
+                    finally:
+                        self._active_threads -= len(batch)
+                    continue
+                identity = batch[0]
                 self._active_threads += 1
                 attempted = False
                 try:
@@ -583,6 +595,74 @@ class MailSync:
             raise
 
     async def _prepare(self, identity, before):
+        context = await self._load_context(identity, before)
+        if context is None:
+            return
+        self._ensure_builder()
+        decision = await self._measure('composition', self.builder.build(context['messages'], previous=context['previous']))
+        await self._store_decision(context, decision)
+
+    def _ensure_builder(self):
+        if self.builder is None:
+            from .mail_outcome import OutcomeBuilder
+            config = self._get('config')
+            self.builder = OutcomeBuilder(model=config['model'] or None, reasoning_effort=config['reasoning_effort'] or None)
+
+    async def _prepare_batch(self, identities, before, failed):
+        contexts = []
+        completed = set()
+
+        def record_failure(identity, exc):
+            if self._systemic_error(exc):
+                raise exc
+            failed.add(identity)
+            self._thread_error(identity, exc)
+            completed.add(identity)
+
+        async def publish_group(group):
+            self._ensure_builder()
+            requests = [{key: context[key] for key in ('id', 'messages', 'previous')} for context in group]
+            try:
+                results = await self._measure('composition', self.builder.build_batch(requests))
+            except Exception as exc:
+                for context in group:
+                    record_failure(context['id'], exc)
+                return
+            for context in group:
+                identity = context['id']
+                try:
+                    decision = results.get(identity) if isinstance(results, dict) else None
+                    if isinstance(decision, Exception):
+                        raise decision
+                    await self._store_decision(context, decision)
+                    completed.add(identity)
+                except Exception as exc:
+                    record_failure(identity, exc)
+
+        try:
+            for identity in identities:
+                try:
+                    context = await self._load_context(identity, before)
+                    if context is None:
+                        completed.add(identity)
+                    else:
+                        contexts.append(context)
+                except Exception as exc:
+                    record_failure(identity, exc)
+            group, characters = [], 0
+            for context in contexts:
+                size = sum(len(message.get('content', '')) for message in context['messages'])
+                if group and characters + size > 100000:
+                    await publish_group(group)
+                    group, characters = [], 0
+                group.append(context)
+                characters += size
+            if group:
+                await publish_group(group)
+        finally:
+            self._metrics['attempted_threads'] = self._metrics.get('attempted_threads', 0) + len(completed)
+
+    async def _load_context(self, identity, before):
         self._require_complete_discovery(identity)
         row = self.db.execute('SELECT * FROM threads WHERE id=?', (identity,)).fetchone()
         if row['payload']:
@@ -610,11 +690,10 @@ class MailSync:
         actual = {m['source_key'] for m in messages}
         if not expected.issubset(actual):
             raise ValueError('Thread evidence omits a previously discovered source.')
-        if self.builder is None:
-            from .mail_outcome import OutcomeBuilder
-            config = self._get('config')
-            self.builder = OutcomeBuilder(model=config['model'] or None, reasoning_effort=config['reasoning_effort'] or None)
-        decision = await self._measure('composition', self.builder.build(messages, previous=previous))
+        return {'id': identity, 'row': dict(row), 'messages': messages, 'previous': previous, 'input_hash': input_hash}
+
+    async def _store_decision(self, context, decision):
+        identity, row, previous, input_hash = (context[key] for key in ('id', 'row', 'previous', 'input_hash'))
         self._validate_decision(decision)
         outcome_hash = _hash([decision['content'], decision['metadata']])
         if decision['action'] == 'publish' and previous and previous.get('original_text') == decision['content'] and row['outcome_hash'] == outcome_hash:

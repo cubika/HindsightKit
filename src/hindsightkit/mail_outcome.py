@@ -1,4 +1,4 @@
-"""Prepare one evidence-backed current outcome using the official Copilot SDK."""
+"""Prepare evidence-backed current outcomes using the official Copilot SDK."""
 import asyncio
 from contextlib import contextmanager
 from datetime import timezone
@@ -18,6 +18,8 @@ from .mail_source import _date
 
 MAX_INPUT = 100_000
 MAX_OUTCOME = 6000
+MAX_BATCH_THREADS = 8
+MAX_BATCH_PROMPT = 160_000
 RUNTIME_STOP_TIMEOUT = 15
 RUNTIME_FORCE_STOP_TIMEOUT = 10
 QUOTE_MARKER = '[Earlier quoted message; author and date not verified]'
@@ -54,6 +56,17 @@ class Outcome(BaseModel):
     verification: list[Evidence] = Field(default_factory=list, max_length=4)
     withdrawal: list[Evidence] = Field(default_factory=list, max_length=4)
     reason: str = Field(min_length=1, max_length=400)
+
+
+class BatchItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: str
+    outcome: Outcome
+
+
+class BatchResult(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    results: list[BatchItem] = Field(min_length=1, max_length=MAX_BATCH_THREADS)
 
 
 INSTRUCTIONS = """Prepare the current useful outcome of one work-email thread. Call record_outcome
@@ -106,6 +119,20 @@ noise or repository-local threads also use unchanged. Withdraw only when explici
 evidence refutes the previous result and leaves no useful current result; cite that evidence
 in withdrawal. Do not withdraw for courtesy, missing messages or uncertainty. When context is
 incomplete or the current result cannot be supported, choose insufficient_context and unchanged.
+"""
+
+BATCH_INSTRUCTIONS = INSTRUCTIONS.replace(
+    'Prepare the current useful outcome of one work-email thread. Call record_outcome\n'
+    'once with the result.',
+    'Prepare the current useful outcome of each supplied work-email thread. Call record_outcomes\n'
+    'once with a results array containing one {id, outcome} entry for every supplied thread.'
+) + """
+Each threads entry is a separate task with its own messages and previous_outcome. Copy its id
+exactly into its result. Apply all outcome rules independently to each entry, including the
+6000-character limit. Use only that entry's messages and previous_outcome. Never transfer a
+fact, conclusion, owner, condition, status, or source_id between entries, even when subjects
+or wording are similar. Do not merge threads or create an overall batch summary. Return the
+complete Outcome structure for each entry. IDs and source IDs are opaque routing labels.
 """
 
 
@@ -306,6 +333,7 @@ class OutcomeBuilder:
         self._directories = {}
         self.metrics = {stage + suffix: 0 for stage in ('runtime_start', 'inference', 'runtime_stop')
                         for suffix in ('_seconds', '_count')}
+        self.metrics.update(batch_calls=0, batch_threads=0)
 
     @contextmanager
     def _measure(self, stage):
@@ -368,13 +396,139 @@ class OutcomeBuilder:
         if any(isinstance(result, BaseException) for result in results):
             raise OutcomeError('outcome_runtime_cleanup_failed')
 
-    async def build(self, messages, previous=None):
+    @staticmethod
+    def _prepare(messages, previous):
         prior, previous_meta = _previous(previous)
         sources, index = prepare_messages(messages)
         if _excluded_repository_thread(messages):
-            return {'action': 'withdraw' if prior else 'unchanged', 'content': '', 'metadata': {}, 'reason': 'Repository-local review thread excluded from mail outcomes.'}
+            decision = {'action': 'withdraw' if prior else 'unchanged', 'content': '', 'metadata': {}, 'reason': 'Repository-local review thread excluded from mail outcomes.'}
+            return sources, index, prior, decision
         if not sources:
-            return {'action': 'unchanged', 'content': prior, 'metadata': previous_meta, 'reason': 'No substantive thread content.'}
+            decision = {'action': 'unchanged', 'content': prior, 'metadata': previous_meta, 'reason': 'No substantive thread content.'}
+            return sources, index, prior, decision
+        return sources, index, prior, None
+
+    @staticmethod
+    def _provenance(result, model, reasoning_effort):
+        if result['action'] == 'publish':
+            result['metadata'].update(analysis_model=model, analysis_reasoning_effort=reasoning_effort or 'default')
+        return result
+
+    async def build(self, messages, previous=None):
+        sources, index, prior, decision = self._prepare(messages, previous)
+        if decision is not None:
+            return decision
+        prompt = json.dumps({'previous_outcome': prior or None, 'messages': sources}, ensure_ascii=False)
+        if len(prompt) > MAX_INPUT + 30_000:
+            raise OutcomeError('outcome_thread_too_large')
+        return await self._run(
+            name='record_outcome', description='Return the current thread outcome with exact supporting evidence.',
+            schema=Outcome.model_json_schema(), instructions=INSTRUCTIONS, prompt=prompt, repair=True,
+            validate=lambda result, model, effort: self._provenance(_validate(result, index, previous), model, effort))
+
+    @staticmethod
+    def _batch_results(result, prepared, model, reasoning_effort):
+        # Validate the envelope separately so a malformed outcome cannot discard its peers.
+        if not isinstance(result, dict) or set(result) != {'results'} or not isinstance(result['results'], list):
+            raise OutcomeError('outcome_format_invalid')
+        rows, duplicates = {}, set()
+        for row in result['results']:
+            if not isinstance(row, dict) or not isinstance(row.get('id'), str) or row['id'] not in prepared:
+                continue
+            identity = row['id']
+            if identity in rows:
+                duplicates.add(identity)
+            rows[identity] = row
+        decisions = {}
+        for identity, entry in prepared.items():
+            row = rows.get(identity)
+            try:
+                if identity in duplicates or row is None or set(row) != {'id', 'outcome'}:
+                    raise OutcomeError('outcome_batch_identity_invalid')
+                try:
+                    outcome = Outcome.model_validate(row['outcome'])
+                except ValidationError:
+                    raise OutcomeError('outcome_format_invalid') from None
+                claims = [claim for claim in (outcome.problem, outcome.conclusion, outcome.solution, outcome.owner, *outcome.conditions) if claim]
+                evidence = [item for claim in claims for item in claim.evidence] + outcome.verification + outcome.withdrawal
+                for item in evidence:
+                    original_id = entry['source_ids'].get(item.source_id)
+                    if original_id is None:
+                        raise OutcomeError('outcome_evidence_invalid')
+                    item.source_id = original_id
+                decision = _validate(outcome.model_dump(), entry['index'], entry['request'].get('previous'))
+                decisions[entry['request']['id']] = OutcomeBuilder._provenance(decision, model, reasoning_effort)
+            except OutcomeError as error:
+                decisions[entry['request']['id']] = error
+        return decisions
+
+    async def build_batch(self, requests):
+        """Analyze complete threads together and retry only rejected entries individually."""
+        if not isinstance(requests, list) or len(requests) > MAX_BATCH_THREADS:
+            raise OutcomeError('outcome_batch_request_invalid')
+        identities = set()
+        for request in requests:
+            if (not isinstance(request, dict) or not isinstance(request.get('id'), str) or not request['id']
+                    or request['id'] in identities or 'messages' not in request):
+                raise OutcomeError('outcome_batch_request_invalid')
+            identities.add(request['id'])
+        decisions, prepared, threads = {}, {}, []
+        text_size = 0
+        for number, request in enumerate(requests):
+            try:
+                sources, index, prior, decision = self._prepare(request['messages'], request.get('previous'))
+            except OutcomeError as error:
+                decisions[request['id']] = error
+                continue
+            if decision is not None:
+                decisions[request['id']] = decision
+                continue
+            identity = f't{number + 1}'
+            source_ids = {f'{identity}:s{position + 1}': source['source_id'] for position, source in enumerate(sources)}
+            packed_sources = [{**source, 'source_id': packed_id} for packed_id, source in zip(source_ids, sources)]
+            prepared[identity] = {'request': request, 'index': index, 'source_ids': source_ids}
+            threads.append({'id': identity, 'previous_outcome': prior or None, 'messages': packed_sources})
+            text_size += sum(len(source['text']) for source in sources)
+        if not prepared:
+            return decisions
+        prompt = json.dumps({'threads': threads}, ensure_ascii=False)
+        if text_size > MAX_INPUT or len(prompt) > MAX_BATCH_PROMPT:
+            pending = [entry['request'] for entry in prepared.values()]
+            if len(pending) > 1:
+                middle = len(pending) // 2
+                decisions.update(await self.build_batch(pending[:middle]))
+                decisions.update(await self.build_batch(pending[middle:]))
+            else:
+                request = pending[0]
+                try:
+                    decisions[request['id']] = await self.build(request['messages'], request.get('previous'))
+                except OutcomeError as error:
+                    decisions[request['id']] = error
+            return decisions
+        schema = BatchResult.model_json_schema()
+        schema['$defs']['BatchItem']['properties']['id']['enum'] = list(prepared)
+        self.metrics['batch_calls'] += 1
+        self.metrics['batch_threads'] += len(prepared)
+        try:
+            decisions.update(await self._run(
+                name='record_outcomes', description='Return one independent outcome for each supplied thread ID.',
+                schema=schema, instructions=BATCH_INSTRUCTIONS, prompt=prompt, repair=False,
+                timeout=min(600, self.timeout * max(1, (len(prepared) + 1) // 2)),
+                validate=lambda result, model, effort: self._batch_results(result, prepared, model, effort)))
+        except OutcomeError as error:
+            decisions.update({entry['request']['id']: OutcomeError(str(error)) for entry in prepared.values()})
+            if str(error) != 'outcome_format_invalid':
+                return decisions
+        for entry in prepared.values():
+            request = entry['request']
+            if isinstance(decisions[request['id']], OutcomeError):
+                try:
+                    decisions[request['id']] = await self.build(request['messages'], request.get('previous'))
+                except OutcomeError as error:
+                    decisions[request['id']] = error
+        return decisions
+
+    async def _run(self, *, name, description, schema, instructions, prompt, validate, repair, timeout=None):
         profile = self.profile
         if profile is None:
             from .cli import profile_config
@@ -392,9 +546,7 @@ class OutcomeBuilder:
         def finish(call):
             captured.append(call.arguments)
             return ToolResult(text_result_for_llm='Outcome received.', result_type='success')
-        tool = Tool(name='record_outcome', description='Return the current thread outcome with exact supporting evidence.',
-                    parameters=Outcome.model_json_schema(), handler=finish, skip_permission=True, is_terminal=True)
-        prompt = json.dumps({'previous_outcome': prior or None, 'messages': sources}, ensure_ascii=False)
+        tool = Tool(name=name, description=description, parameters=schema, handler=finish, skip_permission=True, is_terminal=True)
         with self._runtime_directory() as directory:
             account = Path.home() / '.copilot/config.json'
             if account.is_file():
@@ -407,8 +559,8 @@ class OutcomeBuilder:
                 with self._measure('runtime_start'):
                     await asyncio.wait_for(client.start(), 90)
                     session = await client.create_session(model=model, reasoning_effort=reasoning_effort,
-                        available_tools=['record_outcome'], tools=[tool], tool_search={'enabled': False},
-                        system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
+                        available_tools=[name], tools=[tool], tool_search={'enabled': False},
+                        system_message={'mode': 'replace', 'content': instructions}, on_permission_request=lambda *_: PermissionNoResult(),
                         working_directory=directory, config_directory=directory, enable_config_discovery=False,
                         enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
                         enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
@@ -416,21 +568,16 @@ class OutcomeBuilder:
                         enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
                         infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
                         mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False)
-                if len(prompt) > MAX_INPUT + 30_000:
-                    raise OutcomeError('outcome_thread_too_large')
-                for attempt in range(2):
+                for attempt in range(2 if repair else 1):
                     captured.clear()
                     with self._measure('inference'):
-                        await session.send_and_wait(prompt if not attempt else 'The result failed JSON schema or evidence validation. Return one corrected record_outcome call using the same evidence. Do not change unsupported facts into guesses. Keep exact numeric values and units; diagnostic fields ending in Ms explicitly mean milliseconds. Use the original field notation if the unit cannot be stated with confidence.', timeout=self.timeout)
+                        await session.send_and_wait(prompt if not attempt else 'The result failed JSON schema or evidence validation. Return one corrected record_outcome call using the same evidence. Do not change unsupported facts into guesses. Keep exact numeric values and units; diagnostic fields ending in Ms explicitly mean milliseconds. Use the original field notation if the unit cannot be stated with confidence.', timeout=self.timeout if timeout is None else timeout)
                     try:
                         if len(captured) != 1:
                             raise OutcomeError('outcome_format_invalid')
-                        result = _validate(captured[0], index, previous)
-                        if result['action'] == 'publish':
-                            result['metadata'].update(analysis_model=model, analysis_reasoning_effort=reasoning_effort or 'default')
-                        return result
+                        return validate(captured[0], model, reasoning_effort)
                     except OutcomeError as error:
-                        if attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_content_label_invalid'}:
+                        if not repair or attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_content_label_invalid'}:
                             raise
                 raise OutcomeError('outcome_invalid')
             except OutcomeError:

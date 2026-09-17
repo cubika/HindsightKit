@@ -71,6 +71,7 @@ class Source:
 class Builder:
     def __init__(self):
         self.calls = []
+        self.batches = []
         self.closed = 0
         self.invalid = False
         self.fail = False
@@ -90,6 +91,10 @@ class Builder:
                                   source_ids=json.dumps([latest['source_key']]), last_supported_utc=latest['metadata']['sent_at']))
 
     async def close(self): self.closed += 1
+
+    async def build_batch(self, requests):
+        self.batches.append([item['id'] for item in requests])
+        return {item['id']: await self.build(item['messages'], previous=item['previous']) for item in requests}
 
 
 class Client:
@@ -155,7 +160,7 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.source, self.client, self.builder = Source(), Client(), Builder()
         self.sync = self.runner()
         await self.sync.discover()
-        await self.sync.configure({'interval_minutes': 0})
+        await self.sync.configure({'interval_minutes': 0, 'batch_size': 1})
 
     def runner(self):
         runner = MailSync(Path(self.temp.name), 'http://127.0.0.1:9', source=self.source, client=self.client, builder=self.builder)
@@ -247,6 +252,70 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(maximum, 2)
         self.assertEqual(len(self.client.docs), 3)
         self.assertEqual(self.sync.status()['run']['active_threads'], 0)
+
+    async def test_batches_combine_threads_and_keep_independent_documents(self):
+        for n in range(2, 6):
+            self.append(str(n), 'Finding ' + str(n), thread='thread-' + str(n))
+        await self.sync.configure({'batch_size': 4, 'parallel_threads': 1})
+        result = await self.run_sync()
+        self.assertEqual([len(batch) for batch in self.builder.batches], [4])
+        self.assertEqual(len(self.builder.calls), 5)
+        self.assertEqual(len(self.client.docs), 5)
+        self.assertEqual(result['run']['imported'], 5)
+        self.assertEqual(result['run']['timing']['attempted_threads'], 5)
+        self.assertTrue(all(doc['memory_unit_count'] == 1 for doc in self.client.docs.values()))
+        await self.run_sync()
+        self.assertEqual(len(self.builder.calls), 5)
+
+    async def test_batch_failure_keeps_other_results_and_previous_outcome(self):
+        await self.run_sync()
+        self.append('change', 'New unverified claim')
+        self.append('other', 'Independent result', thread='other')
+        await self.sync.configure({'batch_size': 4})
+        original = self.builder.build_batch
+        async def partial(requests):
+            result = await original(requests)
+            failed_id = next(r['id'] for r in requests if r['previous'])
+            result[failed_id] = ValueError('Invalid batch item')
+            return result
+        self.builder.build_batch = partial
+        result = await self.run_sync()
+        self.assertEqual(result['run']['failed'], 1)
+        self.assertEqual(len(self.client.docs), 2)
+        self.assertEqual({d['original_text'] for d in self.client.docs.values()}, {'Initial finding', 'Independent result'})
+
+    async def test_batch_input_bound_splits_complete_threads_without_truncation(self):
+        self.source.items[0]['text'] = 'a' * 60000
+        self.append('two', 'b' * 60000, thread='second')
+        await self.sync.configure({'batch_size': 4, 'parallel_threads': 1})
+        observed = []
+        async def record(requests):
+            observed.append([len(r['messages'][0]['content']) for r in requests])
+            return {r['id']: {'action':'unchanged','content':'','metadata':{},'reason':'Fixture skip'} for r in requests}
+        self.builder.build_batch = record
+        result = await self.run_sync()
+        self.assertEqual(observed, [[60000], [60000]])
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertEqual(result['run']['skipped'], 2)
+
+    async def test_pause_cancels_whole_batch_without_partial_publication(self):
+        self.append('two', 'Second finding', thread='second')
+        await self.sync.configure({'batch_size': 4, 'parallel_threads': 1})
+        entered = asyncio.Event()
+        original = self.builder.build_batch
+        async def blocked(requests):
+            entered.set()
+            await asyncio.Event().wait()
+        self.builder.build_batch = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(entered.wait(), 2)
+        await self.sync.pause()
+        self.assertFalse(self.client.docs)
+        self.assertEqual(self.sync.status()['run']['active_threads'], 0)
+        self.assertEqual(self.sync.status()['run']['pending'], 2)
+        self.builder.build_batch = original
+        await self.run_sync()
+        self.assertEqual(len(self.client.docs), 2)
 
     async def test_pause_cancels_all_parallel_workers_and_resume_retries(self):
         self.append('two', 'Second finding', thread='second')
@@ -389,6 +458,7 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_import_settings_validate_and_persist(self):
         for settings in ({'parallel_threads':0},{'parallel_threads':5},{'parallel_threads':True},
+                         {'batch_size':0},{'batch_size':9},{'batch_size':True},
                          {'model':'bad model'},{'reasoning_effort':'invalid'}):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 await self.sync.configure(settings)
