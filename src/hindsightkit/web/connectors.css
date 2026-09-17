@@ -157,7 +157,7 @@ h1 { font-size: clamp(28px, 2.5vw, 35px); line-height: 1.3; font-weight: 650; le
 .stats-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 22px 0 21px; }
 .stats-grid > div { padding-left: 24px; border-left: 1px solid #e7eae3; }
 .stats-grid > div:first-child { padding-left: 0; border-left: 0; }
-.stats-grid dt { color: #7a8781; font-size: 11px; }
+.stats-grid dt { min-height: 3.2em; color: #7a8781; font-size: 11px; }
 .stats-grid dd { margin-top: 4px; font-size: clamp(23px, 2.25vw, 31px); line-height: 1.25; font-weight: 500; letter-spacing: -.8px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .stats-grid .stat-imported dd { color: #3e735d; }
 .stats-grid .has-failures { color: var(--error); }

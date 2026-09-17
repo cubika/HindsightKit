@@ -115,16 +115,16 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
             directory = settings(Path(temp))
             db = sqlite3.connect(directory/'sync.sqlite3')
             with db:
-                db.execute('CREATE TABLE messages(payload TEXT)')
-                db.execute('INSERT INTO messages VALUES (?)', ('pending-private-data',))
-                db.execute('CREATE TABLE receipts(metadata TEXT, error TEXT)')
-                db.execute('INSERT INTO receipts VALUES (?,?)', (json.dumps({'subject':'Unavailable mail'}), 'protected'))
+                db.execute('CREATE TABLE threads(payload TEXT, state TEXT, has_outcome INTEGER, subject TEXT, error TEXT)')
+                db.execute('INSERT INTO threads VALUES (?,?,?,?,?)', ('pending-private-data','prepared',1,'Pending thread',None))
+                db.execute('CREATE TABLE discovery_errors(id TEXT, error TEXT)')
+                db.execute('INSERT INTO discovery_errors VALUES (?,?)', (json.dumps({'subject':'Unavailable mail'}), 'protected'))
             db.close()
             with patch('hindsightkit.mail_sync.MailSync') as make:
                 value = saved_status(directory)
             make.assert_not_called()
             self.assertEqual(value['run']['pending'],1)
-            self.assertEqual(value['failures'],[{'subject':'Unavailable mail','reason':'protected'}])
+            self.assertEqual(value['failures'],[{'subject':'Unidentified thread','reason':'protected'}])
             self.assertNotIn('pending-private-data',json.dumps(value))
 
     async def test_public_start_requires_installed_source_before_enabling(self):

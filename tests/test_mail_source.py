@@ -241,3 +241,64 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ThreadTests(unittest.IsolatedAsyncioTestCase):
+    def source(self, **limits):
+        source = WorkIQMailSource(**limits)
+        source._account = {'id': 'mailbox'}
+        source._folders = {'inbox-id': {'excluded': False}, 'excluded': {'excluded': True}}
+        async def messages(rows):
+            return [normalize_message(row, 'mailbox') for row in rows]
+        source.messages = messages
+        return source
+
+    async def test_complete_thread_paginates_and_sorts(self):
+        source = self.source(page_size=1)
+        paths = []
+        first = mail(id='new', internetMessageId='<new@example.com>', sentDateTime='2026-09-15T03:00:00Z')
+        second = mail(id='old', internetMessageId='<old@example.com>', sentDateTime='2026-09-15T01:00:00Z')
+        async def fetch(urls):
+            paths.extend(urls)
+            if len(paths) == 1:
+                return [{'value': [first], '@odata.nextLink': urls[0] + '&%24skip=1'}]
+            return [{'value': [second]}]
+        source._fetch = fetch
+        rows = await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        self.assertEqual([row['raw']['id'] for row in rows], ['old', 'new'])
+        from urllib.parse import parse_qs, urlsplit
+        filter_text = parse_qs(urlsplit(paths[0]).query)['$filter'][0]
+        self.assertEqual(filter_text, "receivedDateTime lt 2026-09-16T00:00:00Z and conversationId eq 'thread'")
+        self.assertNotIn('subject', filter_text)
+
+    async def test_thread_rejects_outside_scope_and_partial_reads(self):
+        for row in (mail(conversationId='other'), mail(parentFolderId='other'), mail(receivedDateTime='2026-09-17T00:00:00Z')):
+            source = self.source()
+            async def fetch(paths):
+                return [{'value': [row]}]
+            source._fetch = fetch
+            with self.assertRaisesRegex(WorkIQError, 'outside_scope'):
+                await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        source = self.source()
+        async def fetch(paths):
+            return [{'value': [mail()]}]
+        async def messages(rows):
+            return [{'error': 'workiq_protected_body_unavailable'}]
+        source._fetch, source.messages = fetch, messages
+        with self.assertRaisesRegex(WorkIQError, 'incomplete'):
+            await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        with self.assertRaisesRegex(WorkIQError, 'excluded'):
+            await source.thread('thread', ['excluded'], '2026-09-16T00:00:00Z')
+
+    async def test_thread_limits_fail_instead_of_truncating(self):
+        source = self.source(max_thread_messages=1)
+        async def fetch(paths):
+            return [{'value': [mail(), mail(id='two', internetMessageId='<two@example.com>')]}]
+        source._fetch = fetch
+        with self.assertRaisesRegex(WorkIQError, 'too_large'):
+            await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')
+        source = self.source(max_thread_chars=1000)
+        async def fetch(paths):
+            return [{'value': [mail(body={'contentType':'text','content':'x' * 1001})]}]
+        source._fetch = fetch
+        with self.assertRaisesRegex(WorkIQError, 'too_large'):
+            await source.thread('thread', ['inbox-id'], '2026-09-16T00:00:00Z')

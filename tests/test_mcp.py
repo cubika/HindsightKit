@@ -126,9 +126,9 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         client.arecall.assert_awaited_once()
         arguments = client.arecall.await_args.kwargs
         self.assertEqual(arguments["bank_id"], "hindsightkit-mail")
-        self.assertTrue(arguments["include_source_facts"])
-        self.assertTrue(arguments["prefer_observations"])
-        self.assertEqual(arguments["max_source_facts_tokens"], 512)
+        self.assertFalse(arguments["include_source_facts"])
+        self.assertEqual(arguments["types"], ["world"])
+        self.assertEqual(arguments["max_tokens"], 1024)
         self.assertNotIn(secret, str(result))
         client.aclose.assert_awaited_once()
 

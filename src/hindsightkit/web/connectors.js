@@ -22,7 +22,7 @@
     failed: "Sync error", account_changed: "Account changed", blocked: "Action needed",
   };
   const reasonLabels = {
-    "Candidate for Hindsight extraction": "Candidate: Hindsight will decide which facts to retain.",
+    "Candidate for Hindsight extraction": "Source candidate: the full thread still needs review.",
     draft: "Skipped: draft.",
     empty_or_courtesy: "Skipped: empty message or courtesy reply.",
     review_request_only: "Skipped: review request without technical findings.",
@@ -32,7 +32,7 @@
   const failureLabels = {
     workiq_protected_body_unavailable: "WorkIQ cannot read this protected or encrypted message.",
     workiq_body_too_large: "The message exceeds the current size limit.",
-    workiq_complete_body_missing: "The full message could not be retrieved. It has not been imported.",
+    workiq_complete_body_missing: "The full message could not be retrieved.",
     workiq_mail_not_found: "Message not found. It may have been moved or deleted.",
   };
   const numberFormat = new Intl.NumberFormat("en-US");
@@ -208,9 +208,13 @@
     byId("status-label").textContent = label;
     byId("status-badge").dataset.tone = tone;
     for (const key of ["scanned", "imported", "skipped", "failed", "pending"]) {
-      const value = run[key];
+      const value = key === "imported" ? run.outcomes : run[key];
       byId(`stat-${key}`).textContent = Number.isFinite(value) && value >= 0 ? numberFormat.format(value) : "0";
     }
+    const changes = ["imported", "updated", "withdrawn"].filter((key) => Number.isFinite(run[key]) && run[key] >= 0)
+      .map((key) => `${numberFormat.format(run[key])} ${key}`);
+    byId("outcome-changes").textContent = changes.length ? `Latest scan: ${changes.join(" · ")}` : "";
+    byId("outcome-changes").hidden = !changes.length;
     byId("stat-failed").classList.toggle("has-failures", run.failed > 0);
     renderTime("last-success", run.last_success, "No completed sync yet");
     renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "Manual sync" : "Not scheduled yet") : "Paused");
@@ -517,7 +521,7 @@
         const text = document.createElement("pre");
         text.tabIndex = 0;
         text.setAttribute("aria-label", label);
-        text.textContent = plainText(item[key]) || (key === "cleaned" ? "No content retained." : "No message content to preview.");
+        text.textContent = plainText(item[key]) || (key === "cleaned" ? "No cleaned source text." : "No message content to preview.");
         column.append(heading, text);
         columns.append(column);
       }
@@ -550,7 +554,7 @@
     await saveIfNeeded();
     const data = await request("/api/preview", { method: "POST", timeout: 180000 });
     renderPreview(data);
-    byId("feedback").textContent = "Preview ready. No memories were created.";
+    byId("feedback").textContent = "Source preview ready. No thread outcomes changed.";
   }));
   controls.toggle.addEventListener("click", () => perform(controls.toggle, async () => {
     const pause = Boolean(snapshot?.config?.enabled) || isActive();

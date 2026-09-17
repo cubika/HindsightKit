@@ -184,11 +184,16 @@ def recommended_folders(folders):
 
 
 class WorkIQMailSource:
-    def __init__(self, binary=None, page_size=50, concurrency=4, timeout=45):
+    def __init__(self, binary=None, page_size=50, concurrency=4, timeout=45,
+                 max_thread_messages=100, max_thread_chars=100_000):
         if not 1 <= page_size <= 100 or not 1 <= concurrency <= 8 or not 1 <= timeout <= 120:
             raise ValueError("Invalid WorkIQ read limits")
         self.binary, self.page_size, self.concurrency, self.timeout = binary, page_size, concurrency, timeout
+        if not 1 <= max_thread_messages <= 500 or not 1000 <= max_thread_chars <= 500_000:
+            raise ValueError("Invalid thread limits")
+        self.max_thread_messages, self.max_thread_chars = max_thread_messages, max_thread_chars
         self._owner = self._queue = self._ready = self._account = None
+        self._folders = None
 
     async def __aenter__(self):
         self._queue = asyncio.Queue()
@@ -319,6 +324,7 @@ class WorkIQMailSource:
                         pending.append(("/me/mailFolders/" + _identifier(raw["id"]) + "/childFolders", folder["path"] + " / ", raw["id"]))
                 link = validate_next_link(page["@odata.nextLink"], path, FOLDER_FIELDS) if "@odata.nextLink" in page else None
         recommended_folders(folders)
+        self._folders = {folder["id"]: folder for folder in folders}
         return folders
 
     async def discover(self):
@@ -365,6 +371,54 @@ class WorkIQMailSource:
                         raise
                     output.append(_failed_message(raw, self._account["id"], error.code))
         return output
+
+
+    async def thread(self, conversation_id, folder_ids, before_iso):
+        """Read the complete selected-folder thread, or fail without a partial result."""
+        _identifier(conversation_id)
+        end = _date(before_iso)
+        if not isinstance(folder_ids, (list, tuple)) or not folder_ids:
+            raise WorkIQError("workiq_thread_scope_missing")
+        if self._folders is None:
+            await self.folders()
+        selected = list(dict.fromkeys(folder_ids))
+        if any(folder not in self._folders or self._folders[folder].get("excluded") for folder in selected):
+            raise WorkIQError("workiq_thread_folder_excluded")
+        conversation = conversation_id.replace("'", "''")
+        filter_text = f"receivedDateTime lt {before_iso} and conversationId eq '{conversation}'"
+        metadata, seen, links = [], set(), set()
+        for folder_id in selected:
+            path = "/me/mailFolders/" + _identifier(folder_id) + "/messages"
+            link = path + "?" + urlencode({"$filter": filter_text, "$select": METADATA_FIELDS, "$top": self.page_size})
+            while link:
+                if link in links or len(links) >= self.max_thread_messages + len(selected):
+                    raise WorkIQError("workiq_thread_incomplete")
+                links.add(link)
+                page, = await self._fetch([link])
+                if not isinstance(page.get("value"), list) or len(page["value"]) > self.page_size or "@odata.deltaLink" in page:
+                    raise WorkIQError("workiq_thread_response_invalid")
+                for item in page["value"]:
+                    _metadata(item)
+                    if item.get("conversationId") != conversation_id or item["parentFolderId"] != folder_id or _date(item["receivedDateTime"]) >= end:
+                        raise WorkIQError("workiq_thread_outside_scope")
+                    identity = item["internetMessageId"]
+                    if identity in seen:
+                        raise WorkIQError("workiq_thread_changed")
+                    seen.add(identity)
+                    if not item["isDraft"]:
+                        metadata.append(item)
+                    if len(seen) > self.max_thread_messages:
+                        raise WorkIQError("workiq_thread_too_large")
+                link = validate_next_link(page["@odata.nextLink"], path, METADATA_FIELDS, filter_text, self.page_size) if "@odata.nextLink" in page else None
+        if not metadata:
+            raise WorkIQError("workiq_thread_missing")
+        messages = await self.messages(metadata)
+        if len(messages) != len(metadata) or any(message.get("error") or not message.get("source_text", "").strip() for message in messages):
+            raise WorkIQError("workiq_thread_incomplete")
+        if sum(len(message["content"]) for message in messages) > self.max_thread_chars:
+            raise WorkIQError("workiq_thread_too_large")
+        messages.sort(key=lambda message: (_date(message["metadata"].get("sent_at") or message["metadata"]["received_at"]), message["source_key"]))
+        return messages
 
 
 class _MailHTML(HTMLParser):

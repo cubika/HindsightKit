@@ -8,7 +8,7 @@ import sqlite3
 DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False},
            'account': None, 'folders': [], 'warnings': [], 'failures': [],
            'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'failed': 0,
-                   'pending': 0, 'last_success': None, 'next_run': None, 'error': None}}
+                   'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
 
 
 def saved_status(directory):
@@ -22,11 +22,13 @@ def saved_status(directory):
                     if key in value:
                         value[key] = json.loads(data)
                 tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                if 'messages' in tables:
-                    value['run']['pending'] = db.execute('SELECT COUNT(*) FROM messages WHERE payload IS NOT NULL').fetchone()[0]
-                if 'receipts' in tables:
-                    value['failures'] = [{'subject': json.loads(row[0]).get('subject', ''), 'reason':row[1]}
-                                         for row in db.execute('SELECT metadata,error FROM receipts LIMIT 10')]
+                if 'threads' in tables:
+                    value['run']['pending'] = db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
+                    value['run']['outcomes'] = db.execute('SELECT COUNT(*) FROM threads WHERE has_outcome=1').fetchone()[0]
+                    value['failures'] = [{'subject':row[0], 'reason':row[1]} for row in db.execute("SELECT subject,error FROM threads WHERE error IS NOT NULL LIMIT 10")]
+                if 'discovery_errors' in tables:
+                    value['failures'] += [{'subject': 'Unidentified thread', 'reason':row[1]}
+                                         for row in db.execute('SELECT id,error FROM discovery_errors LIMIT 10')]
             finally:
                 db.close()
         except (sqlite3.Error, KeyError, TypeError) as exc:
@@ -119,14 +121,14 @@ def register_tools(server, config, directory):
 
     @server.tool
     async def recall_mail(query: str, max_tokens: int = 4096) -> dict:
-        """Search previously imported work email with source links. Read only."""
+        """Search current email thread outcomes with source links. Read only."""
         if not query.strip() or not 256 <= max_tokens <= 16384:
             raise ValueError('Provide a query and max_tokens between 256 and 16384.')
         client = connection.sdk(config, timeout=90)
         try:
             result = await client.arecall(bank_id='hindsightkit-mail', query=query, max_tokens=max_tokens,
-                budget='mid', types=['world', 'experience', 'observation'], prefer_observations=True,
-                include_source_facts=True, max_source_facts_tokens=max_tokens // 2)
+                budget='mid', types=['world'],
+                include_source_facts=False)
             return {'bank': 'hindsightkit-mail', 'result': result.model_dump(mode='json')}
         except Exception as exc:
             if getattr(exc, 'status', None) == 404:

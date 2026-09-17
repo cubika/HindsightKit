@@ -36,7 +36,7 @@
         <a class="nav-item current" href="#main" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#icon-mail"/></svg>Mail connection<span class="nav-dot"></span></a>
       </nav>
       <div class="sidebar-bottom">
-        <p>Set your mail scope here.<br>Browse memories in Hindsight.</p>
+        <p>Set your mail scope here.<br>Browse thread outcomes in Hindsight.</p>
         <a id="sidebar-hindsight" class="sidebar-link" target="_blank" rel="noopener noreferrer" hidden>Open Hindsight<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">(opens in a new tab)</span></a>
         <div class="local-indicator"><span></span>Local workspace</div>
       </div>
@@ -44,7 +44,7 @@
 
     <main id="main" class="main" tabindex="-1">
       <header class="page-header">
-        <div><div class="eyebrow">CONNECTORS / WORKIQ</div><h1>Mail connection<span class="title-period">.</span></h1><p>Choose folders and preview cleaned messages before importing.</p></div>
+        <div><div class="eyebrow">CONNECTORS / WORKIQ</div><h1>Mail connection<span class="title-period">.</span></h1><p>Keep one current outcome for each useful email thread.</p></div>
         <span id="status-badge" class="status-badge" data-tone="neutral"><span class="status-dot"></span><span id="status-label">Loading status</span></span>
       </header>
 
@@ -82,22 +82,23 @@
 
         <div class="action-bar">
           <div class="save-status"><span id="save-dot" class="save-dot"></span><span id="save-status">Loading settings</span></div>
-          <div class="action-buttons"><button id="save-button" class="button button-quiet" type="submit" disabled><span>Save settings</span></button><button id="preview-button" class="button button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-eye"/></svg><span>Preview messages</span></button><button id="toggle-button" class="button button-primary" type="button" disabled><svg class="icon" aria-hidden="true"><use id="toggle-icon" href="#icon-play"/></svg><span id="toggle-label">Start sync</span></button></div>
+          <div class="action-buttons"><button id="save-button" class="button button-quiet" type="submit" disabled><span>Save settings</span></button><button id="preview-button" class="button button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-eye"/></svg><span>Preview source</span></button><button id="toggle-button" class="button button-primary" type="button" disabled><svg class="icon" aria-hidden="true"><use id="toggle-icon" href="#icon-play"/></svg><span id="toggle-label">Start sync</span></button></div>
         </div>
       </form>
       <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
 
       <section class="panel activity-panel" aria-labelledby="activity-heading">
-        <div class="panel-heading"><div><h2 id="activity-heading">Sync activity</h2><span class="heading-caption">Latest scan</span></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>Sync now</span></button></div>
-        <dl class="stats-grid"><div><dt>Scanned</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>Imported</dt><dd id="stat-imported">—</dd></div><div><dt>Skipped</dt><dd id="stat-skipped">—</dd></div><div><dt>Failed</dt><dd id="stat-failed">—</dd></div><div><dt>Pending</dt><dd id="stat-pending">—</dd></div></dl>
-        <p class="field-help">Imported content is searchable. Hindsight continues organizing it in the background.</p>
-        <div class="run-details"><p><span>Last successful sync</span><time id="last-success">No completed sync yet</time></p><p><span>Next sync</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>View mail memories<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">(opens in a new tab)</span></a></div>
+        <div class="panel-heading"><div><h2 id="activity-heading">Sync activity</h2></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>Sync now</span></button></div>
+        <dl class="stats-grid"><div><dt>Messages scanned</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>Thread outcomes</dt><dd id="stat-imported">—</dd></div><div><dt>Skipped threads</dt><dd id="stat-skipped">—</dd></div><div><dt>Failed threads</dt><dd id="stat-failed">—</dd></div><div><dt>Pending threads</dt><dd id="stat-pending">—</dd></div></dl>
+        <p id="outcome-changes" class="field-help" hidden></p>
+        <p class="field-help">One current outcome per retained thread. Other counts reflect the latest scan.</p>
+        <div class="run-details"><p><span>Last successful sync</span><time id="last-success">No completed sync yet</time></p><p><span>Next sync</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>View thread outcomes<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">(opens in a new tab)</span></a></div>
         <details id="failures-panel" class="mail-failures" hidden><summary>Messages that could not be read<span id="failures-count" class="count-tag"></span></summary><ul id="failures-list"></ul></details>
       </section>
 
       <section id="preview-panel" class="panel preview-panel" aria-labelledby="preview-heading" tabindex="-1" hidden>
-        <div class="panel-heading"><div><h2 id="preview-heading">Message preview</h2><span id="preview-count" class="heading-caption"></span></div><button id="close-preview-button" class="icon-button" type="button" aria-label="Close message preview"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
-        <p class="section-description">Review cleaned text and skip reasons. Preview does not create memories.</p>
+        <div class="panel-heading"><div><h2 id="preview-heading">Source preview</h2><span id="preview-count" class="heading-caption"></span></div><button id="close-preview-button" class="icon-button" type="button" aria-label="Close source preview"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
+        <p class="section-description">This shows source text before thread analysis. Sync decides whether a thread has an outcome worth keeping.</p>
         <div id="preview-items"></div>
       </section>
       <footer class="page-footer"><span>HindsightKit <span class="footer-divider">/</span> WorkIQ → Hindsight</span><span id="connection-status">Connecting to local service</span></footer>
