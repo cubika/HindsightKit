@@ -14,7 +14,6 @@
     lookback: byId("lookback-days"), interval: byId("interval-minutes"),
     search: byId("folder-search"),
     model: byId("import-model"), reasoning: byId("import-reasoning"), parallel: byId("parallel-threads"),
-    batch: byId("batch-size"),
   };
   const activeStates = new Set(["queued", "running", "scanning", "syncing", "importing", "processing", "stopping"]);
   const stateLabels = {
@@ -89,11 +88,9 @@
       throw new Error("Some selected folders are unavailable. Refresh the folder list and update your selection.");
     }
     const parallel = Number(controls.parallel.value);
-    const batch = Number(controls.batch.value);
-    if (!Number.isSafeInteger(batch) || batch < 1 || batch > 8) throw new Error("Choose 1 to 8 threads per model request.");
     if (!Number.isSafeInteger(parallel) || parallel < 1 || parallel > 4) throw new Error("Choose 1 to 4 parallel threads.");
     return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes,
-      model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel, batch_size: batch };
+      model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel };
   }
 
   function updateDirty() {
@@ -103,7 +100,6 @@
       Number(controls.interval.value) !== saved.interval_minutes ||
       controls.model.value.trim() !== (saved.model || "") || controls.reasoning.value !== (saved.reasoning_effort || "") ||
       Number(controls.parallel.value) !== (saved.parallel_threads ?? 4) ||
-      Number(controls.batch.value) !== (saved.batch_size ?? 4) ||
       selected.size !== savedIds.size || [...selected].some((id) => !savedIds.has(id));
     byId("feedback").textContent = "";
     clearPreview();
@@ -130,7 +126,7 @@
     controls.retry.disabled = busy;
     controls.lookback.disabled = !loaded || busy;
     controls.interval.disabled = !loaded || busy;
-    controls.model.disabled = controls.reasoning.disabled = controls.parallel.disabled = controls.batch.disabled = !loaded || busy;
+    controls.model.disabled = controls.reasoning.disabled = controls.parallel.disabled = !loaded || busy;
     controls.search.disabled = !folders.length;
     controls.recommend.disabled = busy || !folders.some((folder) => folder.recommended && !folder.excluded);
     controls.clear.disabled = busy || !selected.size;
@@ -281,7 +277,6 @@
       controls.model.value = data.config.model || "";
       controls.reasoning.value = data.config.reasoning_effort || "";
       controls.parallel.value = data.config.parallel_threads ?? 4;
-      controls.batch.value = data.config.batch_size ?? 4;
       dirty = incoming.size !== new Set(folderIds(data.config.folder_ids)).size;
     }
     for (const folder of folders) {
@@ -608,7 +603,6 @@
   controls.model.addEventListener("input", updateDirty);
   controls.reasoning.addEventListener("change", updateDirty);
   controls.parallel.addEventListener("input", updateDirty);
-  controls.batch.addEventListener("input", updateDirty);
   controls.recommend.addEventListener("click", () => {
     selected = new Set(folders.filter((folder) => folder.recommended && !folder.excluded).map((folder) => folder.id));
     renderFolders();
