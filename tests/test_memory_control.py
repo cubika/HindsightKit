@@ -102,7 +102,7 @@ class RepositoryMemoryTests(unittest.TestCase):
             for operation in (prepare, resolve, recall, runtime):
                 operation.assert_not_called()
         record = json.loads(next((self.root / "state/sessions").glob("*.json")).read_text())
-        self.assertEqual(record["_memory_repository"], str(self.repo))
+        self.assertTrue(Path(record["_memory_repository"]).samefile(self.repo))
         self.assertTrue(record["_scope_pending"])
 
     def test_off_on_never_backfills_old_transcript_but_new_session_can_use_official_hook(self):
@@ -149,7 +149,7 @@ class RepositoryMemoryTests(unittest.TestCase):
             self.hook("userPromptTransformed", directory=self.other)
             resolve.assert_awaited_once()
             self.assertEqual(recall.call_args.args[0]["bankId"], "resolved")
-            self.assertEqual(recall.call_args.args[0]["_memory_repository"], str(self.repo))
+            self.assertTrue(Path(recall.call_args.args[0]["_memory_repository"]).samefile(self.repo))
             with contextlib.redirect_stderr(io.StringIO()):
                 self.hook("agentStop")
             runtime.assert_not_called()
