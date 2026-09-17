@@ -14,6 +14,7 @@
     lookback: byId("lookback-days"), interval: byId("interval-minutes"),
     search: byId("folder-search"),
     model: byId("import-model"), reasoning: byId("import-reasoning"), parallel: byId("parallel-threads"),
+    prefilter: byId("prefilter-enabled"), filterModel: byId("prefilter-model"), filterReasoning: byId("prefilter-reasoning"),
   };
   const activeStates = new Set(["queued", "running", "scanning", "syncing", "importing", "processing", "stopping"]);
   const stateLabels = {
@@ -89,8 +90,10 @@
     }
     const parallel = Number(controls.parallel.value);
     if (!Number.isSafeInteger(parallel) || parallel < 1 || parallel > 8) throw new Error("Choose 1 to 8 parallel threads.");
+    if (!controls.filterModel.value.trim()) throw new Error("Provide a screening model ID.");
     return { folder_ids: [...selected], lookback_days: days, interval_minutes: minutes,
-      model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel };
+      model: controls.model.value.trim(), reasoning_effort: controls.reasoning.value, parallel_threads: parallel,
+      prefilter_enabled: controls.prefilter.checked, prefilter_model: controls.filterModel.value.trim(), prefilter_reasoning_effort: controls.filterReasoning.value };
   }
 
   function updateDirty() {
@@ -100,6 +103,9 @@
       Number(controls.interval.value) !== saved.interval_minutes ||
       controls.model.value.trim() !== (saved.model || "") || controls.reasoning.value !== (saved.reasoning_effort || "") ||
       Number(controls.parallel.value) !== (saved.parallel_threads ?? 8) ||
+      controls.prefilter.checked !== (saved.prefilter_enabled ?? true) ||
+      controls.filterModel.value.trim() !== (saved.prefilter_model || "gpt-5.6-terra") ||
+      controls.filterReasoning.value !== (saved.prefilter_reasoning_effort || "low") ||
       selected.size !== savedIds.size || [...selected].some((id) => !savedIds.has(id));
     byId("feedback").textContent = "";
     clearPreview();
@@ -127,6 +133,8 @@
     controls.lookback.disabled = !loaded || busy;
     controls.interval.disabled = !loaded || busy;
     controls.model.disabled = controls.reasoning.disabled = controls.parallel.disabled = !loaded || busy;
+    controls.prefilter.disabled = !loaded || busy;
+    controls.filterModel.disabled = controls.filterReasoning.disabled = !loaded || busy || !controls.prefilter.checked;
     controls.search.disabled = !folders.length;
     controls.recommend.disabled = busy || !folders.some((folder) => folder.recommended && !folder.excluded);
     controls.clear.disabled = busy || !selected.size;
@@ -230,8 +238,10 @@
     byId("outcome-changes").textContent = changes.length ? `Latest scan: ${changes.join(" · ")}` : "";
     byId("outcome-changes").hidden = !changes.length;
     const prefiltered = Number.isFinite(run.prefiltered) ? run.prefiltered : 0;
-    byId("prefilter-count").textContent = `${numberFormat.format(prefiltered)} routine threads skipped before model analysis.`;
-    byId("prefilter-count").hidden = prefiltered === 0;
+    const checked = Number.isFinite(run.prefilter_checked) ? run.prefilter_checked : 0;
+    const uncertain = Number.isFinite(run.prefilter_uncertain) ? run.prefilter_uncertain : 0;
+    byId("prefilter-count").textContent = `${numberFormat.format(checked)} threads screened · ${numberFormat.format(prefiltered)} routine threads skipped · ${numberFormat.format(uncertain)} uncertain or failed screens continued to analysis.`;
+    byId("prefilter-count").hidden = checked === 0 && prefiltered === 0;
     byId("stat-failed").classList.toggle("has-failures", run.failed > 0);
     renderTime("last-success", run.last_success, "No completed sync yet");
     renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "Manual sync" : "Not scheduled yet") : "Paused");
@@ -280,6 +290,9 @@
       controls.model.value = data.config.model || "";
       controls.reasoning.value = data.config.reasoning_effort || "";
       controls.parallel.value = data.config.parallel_threads ?? 8;
+      controls.prefilter.checked = data.config.prefilter_enabled ?? true;
+      controls.filterModel.value = data.config.prefilter_model || "gpt-5.6-terra";
+      controls.filterReasoning.value = data.config.prefilter_reasoning_effort || "low";
       dirty = incoming.size !== new Set(folderIds(data.config.folder_ids)).size;
     }
     for (const folder of folders) {
@@ -606,6 +619,9 @@
   controls.model.addEventListener("input", updateDirty);
   controls.reasoning.addEventListener("change", updateDirty);
   controls.parallel.addEventListener("input", updateDirty);
+  controls.prefilter.addEventListener("change", updateDirty);
+  controls.filterModel.addEventListener("input", updateDirty);
+  controls.filterReasoning.addEventListener("change", updateDirty);
   controls.recommend.addEventListener("click", () => {
     selected = new Set(folders.filter((folder) => folder.recommended && !folder.excluded).map((folder) => folder.id));
     renderFolders();

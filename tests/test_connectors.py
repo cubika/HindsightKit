@@ -77,7 +77,8 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sync.calls, [config])
         response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json={**config, 'account': 'other'})
         self.assertEqual(response.status, 400)
-        fast = {**config, 'model': 'gpt-6-astra', 'reasoning_effort': 'xhigh', 'parallel_threads': 8}
+        fast = {**config, 'model': 'gpt-6-astra', 'reasoning_effort': 'xhigh', 'parallel_threads': 8,
+                'prefilter_enabled': True, 'prefilter_model': 'gpt-5.6-terra', 'prefilter_reasoning_effort': 'low'}
         response = await self.client.post('/api/connectors/workiq/config', headers=self.write_headers, json=fast)
         self.assertEqual(response.status, 200)
         self.assertEqual(self.sync.calls[-1], fast)

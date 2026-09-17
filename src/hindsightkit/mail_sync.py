@@ -21,7 +21,8 @@ MAX_PREPARED = 16
 MAX_SOURCES = 100000
 MAX_THREADS = 10000
 OVERLAP = timedelta(hours=6)
-IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=8)
+IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=8,
+                       prefilter_enabled=True, prefilter_model='gpt-5.6-terra', prefilter_reasoning_effort='low')
 
 
 def _now():
@@ -53,7 +54,7 @@ class IdentityChanged(RuntimeError):
 
 
 class MailSync:
-    def __init__(self, data_dir: Path, api_url: str, bank: str = MAIL_BANK, *, source=None, client=None, builder=None):
+    def __init__(self, data_dir: Path, api_url: str, bank: str = MAIL_BANK, *, source=None, client=None, builder=None, prefilter=None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._writer = FileLock(self.data_dir / 'writer.lock', timeout=0)
@@ -89,6 +90,7 @@ class MailSync:
             self.db.execute('ALTER TABLE discovery_errors ADD COLUMN thread TEXT')
         self.api_url, self.bank = api_url, bank
         self.source, self.client, self.builder = source, client, builder
+        self.prefilter = prefilter
         self._source_open = self._bank_ready = self._closed = False
         self._source_lock = asyncio.Lock()
         self._task = self._scheduler = None
@@ -96,6 +98,7 @@ class MailSync:
         self._active_threads = 0
         self._metrics = {}
         self._model_metrics_baseline = {}
+        self._prefilter_metrics_baseline = {}
         self._run_started = None
         self.poll_seconds, self.operation_timeout = 2, 1800
         if self._get('config') is None:
@@ -109,7 +112,8 @@ class MailSync:
     @staticmethod
     def _new_run():
         return dict(state='idle', scanned=0, imported=0, updated=0, withdrawn=0, outcomes=0,
-                    skipped=0, prefiltered=0, failed=0, pending=0, last_success=None, next_run=None,
+                    skipped=0, prefiltered=0, prefilter_checked=0, prefilter_uncertain=0,
+                    failed=0, pending=0, last_success=None, next_run=None,
                     error=None, consolidation='disabled for thread outcomes')
 
     def _get(self, key, default=None):
@@ -140,6 +144,8 @@ class MailSync:
         timing = dict(self._metrics)
         timing.update({key: round(value - self._model_metrics_baseline.get(key, 0), 3)
                        for key, value in getattr(self.builder, 'metrics', {}).items()})
+        timing.update({'prefilter_' + key: round(value - self._prefilter_metrics_baseline.get(key, 0), 3)
+                       for key, value in getattr(self.prefilter, 'metrics', {}).items()})
         if self._run_started is not None:
             timing['elapsed_seconds'] = round(time.monotonic() - self._run_started, 3)
         run['timing'] = timing
@@ -233,6 +239,12 @@ class MailSync:
             raise ValueError('Choose a supported reasoning effort.')
         if type(updated['parallel_threads']) is not int or not 1 <= updated['parallel_threads'] <= 8:
             raise ValueError('parallel_threads must be between 1 and 8.')
+        if type(updated['prefilter_enabled']) is not bool:
+            raise ValueError('prefilter_enabled must be a boolean.')
+        if not isinstance(updated['prefilter_model'], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', updated['prefilter_model']):
+            raise ValueError('Provide a valid prefilter model ID.')
+        if not isinstance(updated['prefilter_reasoning_effort'], str) or updated['prefilter_reasoning_effort'] not in {'none','low','medium','high','xhigh','max'}:
+            raise ValueError('Choose a supported prefilter reasoning effort.')
         updated["folder_ids"] = list(dict.fromkeys(ids))
         if updated == config:
             return self.status()
@@ -241,6 +253,9 @@ class MailSync:
         if any(updated[key] != config[key] for key in ('model', 'reasoning_effort')) and self.builder is not None:
             await self.builder.close()
             self.builder = None
+        if any(updated[key] != config[key] for key in ('prefilter_enabled', 'prefilter_model', 'prefilter_reasoning_effort')) and self.prefilter is not None:
+            await self.prefilter.close()
+            self.prefilter = None
         if updated["folder_ids"] != config["folder_ids"]:
             self._put("window", None)
         if updated["lookback_days"] > config["lookback_days"] and self._get("history_start"):
@@ -476,6 +491,7 @@ class MailSync:
         failed = set()
         self._metrics = {}
         self._model_metrics_baseline = dict(getattr(self.builder, 'metrics', {}))
+        self._prefilter_metrics_baseline = dict(getattr(self.prefilter, 'metrics', {}))
         self._run_started = time.monotonic()
         try:
             if not self._get('window'):
@@ -610,12 +626,22 @@ class MailSync:
         actual = {m['source_key'] for m in messages}
         if not expected.issubset(actual):
             raise ValueError('Thread evidence omits a previously discovered source.')
-        if previous is None:
-            from .mail_filter import routine_thread_reason
-            reason = routine_thread_reason(messages)
-            if reason:
-                self._finish(identity, dict(action='unchanged', input_hash=input_hash, prefilter_reason=reason), row['revision'])
+        config = self._get('config')
+        if previous is None and config['prefilter_enabled']:
+            if self.prefilter is None:
+                from .mail_filter import MailPrefilter
+                self.prefilter = MailPrefilter(model=config['prefilter_model'], reasoning_effort=config['prefilter_reasoning_effort'])
+            try:
+                screening = await self._measure('prefilter', self.prefilter.classify(messages))
+            except Exception:
+                screening = {'decision': 'uncertain', 'reason': 'prefilter_unavailable'}
+            self._count(prefilter_checked=1)
+            if isinstance(screening, dict) and screening.get('decision') == 'skip':
+                self._finish(identity, dict(action='unchanged', input_hash=input_hash,
+                    prefilter_reason=screening.get('reason') or 'routine_content'), row['revision'])
                 return
+            if not isinstance(screening, dict) or screening.get('decision') != 'keep':
+                self._count(prefilter_uncertain=1)
         if self.builder is None:
             from .mail_outcome import OutcomeBuilder
             config = self._get('config')
@@ -761,6 +787,8 @@ class MailSync:
             cleanup.append(self.source.__aexit__(None, None, None))
         if self.builder is not None:
             cleanup.append(self.builder.close())
+        if self.prefilter is not None:
+            cleanup.append(self.prefilter.close())
         if self.client is not None:
             cleanup.append(self.client.aclose())
         results = await asyncio.gather(*cleanup, return_exceptions=True)

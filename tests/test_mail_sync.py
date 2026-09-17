@@ -92,6 +92,23 @@ class Builder:
     async def close(self): self.closed += 1
 
 
+class Prefilter:
+    def __init__(self):
+        self.calls = []
+        self.decision = 'keep'
+        self.fail = False
+        self.closed = 0
+
+    async def classify(self, messages):
+        self.calls.append(deepcopy(messages))
+        if self.fail:
+            raise RuntimeError('screening unavailable')
+        return {'decision': self.decision, 'reason': 'fixture_screening'}
+
+    async def close(self):
+        self.closed += 1
+
+
 class Client:
     def __init__(self):
         self.documents = self.operations = self
@@ -152,13 +169,13 @@ class Client:
 class MailSyncTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.source, self.client, self.builder = Source(), Client(), Builder()
+        self.source, self.client, self.builder, self.prefilter = Source(), Client(), Builder(), Prefilter()
         self.sync = self.runner()
         await self.sync.discover()
         await self.sync.configure({'interval_minutes': 0})
 
     def runner(self):
-        runner = MailSync(Path(self.temp.name), 'http://127.0.0.1:9', source=self.source, client=self.client, builder=self.builder)
+        runner = MailSync(Path(self.temp.name), 'http://127.0.0.1:9', source=self.source, client=self.client, builder=self.builder, prefilter=self.prefilter)
         runner.poll_seconds = .001
         return runner
 
@@ -276,28 +293,70 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.client.docs), 10)
 
     async def test_prefilter_skips_before_model_and_rechecks_after_reply(self):
-        with patch('hindsightkit.mail_filter.routine_thread_reason', return_value='fixture_notification') as screen:
-            result = await self.run_sync()
-            self.assertEqual(result['run']['prefiltered'], 1)
-            self.assertEqual(result['run']['skipped'], 1)
-            self.assertFalse(self.builder.calls)
-            self.assertFalse(self.client.docs)
-            await self.run_sync()
-            self.assertEqual(screen.call_count, 1)
+        self.prefilter.decision = 'skip'
+        result = await self.run_sync()
+        self.assertEqual(result['run']['prefiltered'], 1)
+        self.assertEqual(result['run']['skipped'], 1)
+        self.assertFalse(self.builder.calls)
+        self.assertFalse(self.client.docs)
+        await self.run_sync()
+        self.assertEqual(len(self.prefilter.calls), 1)
         self.append('reply', 'New substantive diagnosis')
-        with patch('hindsightkit.mail_filter.routine_thread_reason', return_value=None):
-            result = await self.run_sync()
+        self.prefilter.decision = 'keep'
+        result = await self.run_sync()
         self.assertEqual(result['run']['imported'], 1)
         self.assertEqual(next(iter(self.client.docs.values()))['original_text'], 'New substantive diagnosis')
 
     async def test_prefilter_never_overrides_previously_accepted_outcome(self):
         await self.run_sync()
         self.append('reply', 'Updated substantive finding')
-        with patch('hindsightkit.mail_filter.routine_thread_reason') as screen:
-            result = await self.run_sync()
-        screen.assert_not_called()
+        before = len(self.prefilter.calls)
+        result = await self.run_sync()
+        self.assertEqual(len(self.prefilter.calls), before)
         self.assertEqual(result['run']['updated'], 1)
         self.assertEqual(result['run']['prefiltered'], 0)
+
+    async def test_uncertain_or_failed_prefilter_continues_original_analysis(self):
+        self.prefilter.decision = 'uncertain'
+        result = await self.run_sync()
+        self.assertEqual(result['run']['prefilter_uncertain'], 1)
+        self.assertEqual(result['run']['imported'], 1)
+        self.append('other', 'Other supported result', thread='other')
+        self.prefilter.fail = True
+        result = await self.run_sync()
+        self.assertEqual(result['run']['prefilter_uncertain'], 1)
+        self.assertEqual(result['run']['imported'], 1)
+        self.assertEqual(len(self.client.docs), 2)
+
+    async def test_disabled_prefilter_bypasses_screening(self):
+        await self.sync.configure({'prefilter_enabled': False})
+        result = await self.run_sync()
+        self.assertFalse(self.prefilter.calls)
+        self.assertEqual(result['run']['prefilter_checked'], 0)
+        self.assertEqual(result['run']['imported'], 1)
+
+    async def test_prefilter_settings_persist_without_changing_analysis_model(self):
+        original = self.sync.status()['config']
+        await self.sync.configure({'prefilter_model': 'screening-model', 'prefilter_reasoning_effort': 'none'})
+        await self.restart()
+        config = self.sync.status()['config']
+        self.assertEqual(config['prefilter_model'], 'screening-model')
+        self.assertEqual(config['prefilter_reasoning_effort'], 'none')
+        self.assertEqual((config['model'],config['reasoning_effort']), (original['model'],original['reasoning_effort']))
+
+    async def test_prefilter_cancellation_preserves_unprocessed_thread(self):
+        entered = asyncio.Event()
+        async def blocked(messages):
+            entered.set()
+            await asyncio.Event().wait()
+        self.prefilter.classify = blocked
+        await self.sync.sync()
+        await asyncio.wait_for(entered.wait(), 2)
+        await self.sync.pause()
+        self.assertFalse(self.builder.calls)
+        self.assertFalse(self.client.docs)
+        self.assertEqual(self.sync.status()['run']['pending'], 1)
+        self.assertEqual(self.sync.status()['run']['prefiltered'], 0)
 
     async def test_pause_cancels_all_parallel_workers_and_resume_retries(self):
         self.append('two', 'Second finding', thread='second')
@@ -440,7 +499,9 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_import_settings_validate_and_persist(self):
         for settings in ({'parallel_threads':0},{'parallel_threads':9},{'parallel_threads':True},
-                         {'model':'bad model'},{'reasoning_effort':'invalid'}):
+                         {'model':'bad model'},{'reasoning_effort':'invalid'},
+                         {'prefilter_enabled':1},{'prefilter_model':''},
+                         {'prefilter_reasoning_effort':'invalid'}):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 await self.sync.configure(settings)
         await self.sync.configure({'model':'gpt-5.6-luna','reasoning_effort':'low','parallel_threads':3})

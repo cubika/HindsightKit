@@ -1,153 +1,296 @@
+import asyncio
 import copy
+import json
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from hindsightkit.mail_filter import routine_thread_reason
+from hindsightkit.mail_filter import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, MailPrefilter
+from hindsightkit.mail_outcome import OutcomeBuilder, QUOTE_MARKER
 
 
-def message(subject, content):
-    return {'source_key': 'mail-one', 'content': content, 'metadata': {
-        'subject': subject, 'thread_id': 'thread-one', 'has_quoted_content': False}}
+def message(text='Your monthly receipt is available in the account portal.', key='private-mail-id', **metadata):
+    return {'source_key': key, 'content': text, 'metadata': {'thread_id': 'private-thread-id',
+        'subject': 'Account update', 'sender_name': 'Sender', 'sent_at': '2026-09-15T12:00:00Z',
+        'received_at': '2026-09-15T12:00:02Z', **metadata}}
 
 
-def pim():
-    return message('PIM: sampleuser activated the Key Vault Administrator role assignment', '''Example Tenant (ID: 00000000-0000-0000-0000-000000000001)
-sampleuser activated the Key Vault Administrator role for the Example-Dev subscription
-View the activation history for this user in the Privileged Identity Management (PIM) portal.
-View history >
-Settings\tValue
-User or Group\tsampleuser
-Role\tKey Vault Administrator
-Resource\tExample-Dev
-Resource type\tsubscription
-Activated by\tsampleuser
-Start\tSeptember 11, 2026 1:54 UTC
-End\tSeptember 11, 2026 9:54 UTC
-Justification\tdev
-Privileged Identity Management protects your organization from accidental or malicious activity by reducing persistent access to Azure resources, providing just-in-time or time-limited access when needed.
-Privacy Statement
-Microsoft Corporation, One Microsoft Way, Redmond, WA 98052
-Facilitated by''')
+def answer(prompt, **changes):
+    payload = json.loads(prompt)
+    return {'thread_id': payload['thread_id'], 'source_ids': [source['source_id'] for source in payload['sources']],
+            'all_sources_reviewed': True, 'decision': 'skip', **changes}
 
 
-def award():
-    return message('Action Required: Please accept your Stock Award',
-                   'This is a synthetic stock-award notice. Visit the rewards portal to read and accept the plan documents.')
+class FakeSession:
+    def __init__(self, client):
+        self.client = client
+
+    async def send_and_wait(self, prompt, **kwargs):
+        self.client.prompts.append(prompt)
+        responses = self.client.response(prompt)
+        if not isinstance(responses, list):
+            responses = [responses]
+        for response in responses:
+            self.client.session_config['tools'][0].handler(SimpleNamespace(arguments=response))
 
 
-def agenda():
-    return message('Working with agents - Example Learning Day FY27 Q1', '''Topic
-Working with agents
-Speaker
-Example Speaker
-Category
-AI
-Language
-English
-Description
-This session introduces practical approaches for delegating routine work to agents.
-FY27 Q1 Example Learning Day Agenda: Learning Day''')
+class FakeClient:
+    def __init__(self, response=answer, **kwargs):
+        self.response, self.config = response, kwargs
+        self.prompts, self.cleanup = [], []
+
+    async def start(self):
+        pass
+
+    async def create_session(self, **kwargs):
+        self.session_config = kwargs
+        return FakeSession(self)
+
+    async def stop(self):
+        self.cleanup.append('stop')
+
+    async def force_stop(self):
+        self.cleanup.append('force_stop')
 
 
-def invitation():
-    return message('[M365Core FHL] Working with agents', '''Working with agents
-Speakers:
-Example Speaker & Another Speaker
-In this session, Example Speaker will share what works, what breaks, and how to delegate recurring work.
-Example will cover practical approaches for using agents in everyday tasks.
-Another will then walk through a demonstration of agents completing recurring tasks.
-👥 Who Should Attend:
-Anyone interested in having their agent complete independent tasks.
-Level:
-Open to All.
-No coding experience required;
-some familiarity with Copilot or other AI assistants is helpful.
-M365 Core FHL – a dedicated week for employees to gain knowledge and expand skills.
-It’s your unique opportunity to FIX an existing product, HACK something new, and LEARN new skills.
-Choose your FHL learning journey!
-Sessions are optional, so join the ones that interest you and support your learning goals.
-📺 Watch recorded sessions: click HERE
-📅 View the full learning schedule: click HERE
-🎤 Interested in leading a session? Sign up HERE
-❓Questions? Contact Example Contact
-+1 425-555-0100,,123456789# United States, Redmond
-(800) 555-0100,,123456789# United States (Toll-free)
-Find a local number''')
-
-
-class RoutineThreadTests(unittest.TestCase):
-    cases = ((pim, 'role_activation_template'), (award, 'award_acceptance_template'),
-             (agenda, 'learning_agenda_template'), (invitation, 'learning_invitation_template'))
+class PrefilterTests(unittest.IsolatedAsyncioTestCase):
+    profile = {'HINDSIGHT_API_LLM_PROVIDER': 'github-copilot', 'HINDSIGHT_API_LLM_MODEL': 'gpt-6-astra',
+               'HINDSIGHT_API_LLM_REASONING_EFFORT': 'xhigh'}
 
     def setUp(self):
-        replacement = patch('hindsightkit.mail_filter._AWARD_BODY_SHA256',
-                            'a994b15e04a5c17b703a3de7facd961e830a52de0542bd2eb0fb7a9da2c36e33')
-        replacement.start()
-        self.addCleanup(replacement.stop)
+        copier = patch('hindsightkit.mail_filter.shutil.copyfile')
+        copier.start()
+        self.addCleanup(copier.stop)
+        self.clients = []
 
-    def test_complete_templates_are_skipped_without_mutating_messages(self):
-        for factory, reason in self.cases:
-            with self.subTest(reason=reason):
-                messages = [factory()]
-                before = copy.deepcopy(messages)
-                self.assertEqual(routine_thread_reason(messages), reason)
-                self.assertEqual(messages, before)
+    def factory(self, response=answer, client_type=FakeClient):
+        def make(**kwargs):
+            client = client_type(response=response, **kwargs)
+            self.clients.append(client)
+            return client
+        return make
 
-    def test_replies_and_multi_message_threads_are_kept(self):
-        for factory, _ in self.cases:
-            for prefix in ('Re: ', 'FW: ', 'Fwd: ', ' 回复：'):
-                item = factory()
-                item['metadata']['subject'] = prefix + item['metadata']['subject']
-                self.assertIsNone(routine_thread_reason([item]))
-            self.assertIsNone(routine_thread_reason([factory(), factory()]))
+    def builder(self, response=answer, **kwargs):
+        return MailPrefilter(copy.deepcopy(self.profile), client_factory=self.factory(response), **kwargs)
 
-    def test_quoted_or_uncertain_quote_metadata_is_kept(self):
-        for factory, _ in self.cases:
-            for value in (True, None, 'false', 0):
-                item = factory()
-                item['metadata']['has_quoted_content'] = value
-                self.assertIsNone(routine_thread_reason([item]))
-            for quote in ('[Earlier quoted message; author and date not verified]', '> Earlier message',
-                          'From: Example Person', 'On Monday Example Person wrote:', '---- Forwarded message ----'):
-                item = factory()
-                item['source_text'] = item['content'] + '\n' + quote
-                self.assertIsNone(routine_thread_reason([item]))
+    async def test_default_fast_model_preserves_outcome_profile_and_isolated_sdk(self):
+        profile = copy.deepcopy(self.profile)
+        builder = MailPrefilter(profile, client_factory=self.factory())
+        messages = [message()]
+        before = copy.deepcopy(messages)
+        result = await builder.classify(messages)
+        self.assertEqual(result, {'decision': 'skip', 'reason': 'prefilter_routine_only',
+                                 'model': DEFAULT_MODEL, 'reasoning_effort': DEFAULT_REASONING_EFFORT})
+        self.assertEqual(profile, self.profile)
+        self.assertEqual(messages, before)
+        client = self.clients[0]
+        self.assertEqual(client.config['mode'], 'empty')
+        self.assertTrue(client.config['use_logged_in_user'])
+        config = client.session_config
+        self.assertEqual(config['model'], DEFAULT_MODEL)
+        self.assertEqual(config['reasoning_effort'], DEFAULT_REASONING_EFFORT)
+        self.assertEqual(config['available_tools'], ['record_classification'])
+        self.assertTrue(config['tools'][0].is_terminal)
+        self.assertTrue(config['tools'][0].skip_permission)
+        for key in ('enable_config_discovery', 'enable_skills', 'enable_file_hooks', 'enable_session_store',
+                    'enable_session_telemetry', 'enable_host_git_operations', 'enable_on_demand_instruction_discovery',
+                    'enable_file_change_tracking', 'manage_schedule_enabled'):
+            self.assertFalse(config[key])
+        for key in ('skill_directories', 'plugin_directories', 'instruction_directories', 'custom_agents'):
+            self.assertEqual(config[key], [])
+        self.assertEqual(config['mcp_servers'], {})
+        self.assertEqual(config['memory'], {'enabled': False})
+        self.assertEqual(config['infinite_sessions'], {'enabled': False})
+        self.assertEqual(client.cleanup, ['stop'])
+        self.assertFalse(Path(client.config['base_directory']).exists())
+        self.assertIs(MailPrefilter._stop_client, OutcomeBuilder._stop_client)
+        self.assertIs(MailPrefilter.close, OutcomeBuilder.close)
+        self.assertEqual(builder.metrics['decision_skip_count'], 1)
+        self.assertEqual(builder.metrics['failure_count'], 0)
 
-    def test_extra_notes_or_missing_body_sections_are_kept(self):
-        for factory, _ in self.cases:
-            for transform in (lambda text: text + '\nAdditional context about the tenant.',
-                              lambda text: 'A comment from the owner.\n' + text,
-                              lambda text: '\n'.join(text.splitlines()[:-1])):
-                item = factory()
-                item['content'] = transform(item['content'])
-                self.assertIsNone(routine_thread_reason([item]))
+    async def test_model_and_reasoning_override_only_prefilter(self):
+        builder = self.builder(model='another-model', reasoning_effort='medium')
+        result = await builder.classify([message()])
+        self.assertEqual(result['model'], 'another-model')
+        self.assertEqual(result['reasoning_effort'], 'medium')
+        self.assertEqual(self.clients[0].session_config['model'], 'another-model')
+        self.assertEqual(builder.profile, self.profile)
 
-    def test_pim_incident_justification_is_kept(self):
-        for reason in ('incident 1234', 'investigating key access', 'dev; access remains blocked', 'routine task and an unknown note'):
-            item = pim()
-            item['content'] = item['content'].replace('Justification\tdev', 'Justification\t' + reason)
-            self.assertIsNone(routine_thread_reason([item]))
+    async def test_each_valid_decision_is_preserved(self):
+        for decision in ('skip', 'keep', 'uncertain'):
+            with self.subTest(decision=decision):
+                builder = self.builder(lambda prompt: answer(prompt, decision=decision))
+                result = await builder.classify([message()])
+                self.assertEqual(result['decision'], decision)
+                self.assertEqual(builder.metrics[f'decision_{decision}_count'], 1)
+                self.assertEqual(builder.metrics['failure_count'], 0)
 
-    def test_learning_technical_findings_are_kept(self):
-        for finding in ('We found the client retries requests twice.', 'The root cause was a stale lease.',
-                        'Observed the old deployment returning empty responses.', 'The workaround is a restart.',
-                        'We confirmed the resource is inaccessible.', 'The operation failed after a timeout.'):
-            for factory in (agenda, invitation):
-                item = factory()
-                item['content'] = item['content'].replace('routine work to agents.', 'routine work to agents. ' + finding)
-                if factory is invitation:
-                    item['content'] = item['content'].replace('recurring work.', 'recurring work. ' + finding)
-                self.assertIsNone(routine_thread_reason([item]))
+    async def test_entire_thread_quotes_and_original_text_reach_model_with_opaque_ids(self):
+        earlier = 'The service needs a minimum lease of 45 seconds.'
+        newest = 'Retrying with the documented minimum still returns an error.'
+        item = message(newest + '\n' + QUOTE_MARKER + '\n' + earlier)
+        item['source_text'] = newest + '\nEarlier message:\n' + earlier + '\nNote: the server overrides this setting.'
+        messages = [item, message('A second reply confirms the same behavior.', key='another-private-id')]
+        before = copy.deepcopy(messages)
+        await self.builder(lambda prompt: answer(prompt, decision='keep')).classify(messages)
+        payload = json.loads(self.clients[0].prompts[0])
+        self.assertEqual(payload['thread_id'], 'thread')
+        self.assertEqual({source['source_id'] for source in payload['sources']}, {'source-1', 'source-2', 'source-3', 'source-4'})
+        texts = [source['text'] for source in payload['sources']]
+        for expected in (newest, earlier, item['source_text'], messages[1]['content']):
+            self.assertIn(expected, texts)
+        quoted = next(source for source in payload['sources'] if source['text'] == earlier)
+        self.assertIsNone(quoted['author'])
+        self.assertIsNone(quoted['reported_at'])
+        for identity in ('private-mail-id', 'private-thread-id', 'another-private-id'):
+            self.assertNotIn(identity, self.clients[0].prompts[0])
+        self.assertEqual(messages, before)
 
-    def test_invalid_or_incomplete_messages_are_kept(self):
-        for invalid in (None, [], {}, [None], [pim(), {'error': 'missing'}]):
-            self.assertIsNone(routine_thread_reason(invalid))
-        for changes in ({'error': 'missing'}, {'skip_reason': 'draft'}, {'content': ''}, {'content': None},
-                        {'metadata': None}, {'source_text': ''}):
-            self.assertIsNone(routine_thread_reason([{**pim(), **changes}]))
-        item = pim()
-        del item['metadata']['thread_id']
-        self.assertIsNone(routine_thread_reason([item]))
+    async def test_topics_organizations_and_replies_always_use_semantic_model(self):
+        for item in (message(subject='PIM: activation'), message(subject='Please accept your Stock Award'),
+                     message('纯日程通知：请于周一参加例会。', subject='任意组织活动'),
+                     message('Routine notice with an unresolved diagnostic observation.', subject='Re: Receipt')):
+            result = await self.builder(lambda prompt: answer(prompt, decision='keep')).classify([item])
+            self.assertEqual(result['decision'], 'keep')
+        self.assertEqual(len(self.clients), 4)
+
+    async def test_invalid_incomplete_or_mixed_inputs_fall_through_without_model(self):
+        invalid = [None, [], {}, [None], [message(), {'error': 'missing'}],
+                   [message(key='')], [message(thread_id='')], [message(subject=[])],
+                   [message(), message(key='second', thread_id='different')], [message(), message()],
+                   [{**message(), 'content': ''}], [{**message(), 'content': None}],
+                   [{**message(), 'source_text': ''}], [{**message(), 'source_text': 12}],
+                   [{**message(), 'error': 'private error text'}], [{**message(), 'skip_reason': 'draft'}],
+                   [message(sent_at='not-a-date')], [message(sender_name=object())]]
+        builder = self.builder()
+        for messages in invalid:
+            with self.subTest(messages=str(messages)[:80]):
+                result = await builder.classify(messages)
+                self.assertEqual(result['decision'], 'uncertain')
+                self.assertEqual(result['reason'], 'prefilter_input_invalid')
+        self.assertEqual(self.clients, [])
+        self.assertEqual(builder.metrics['failure_count'], len(invalid))
+
+    async def test_oversized_input_is_never_truncated_or_classified(self):
+        for item in (message('x' * 100001), {**message(), 'source_text': 'x' * 100001},
+                     message('x' * 99950)):
+            result = await self.builder().classify([item])
+            self.assertEqual(result['decision'], 'uncertain')
+            self.assertEqual(result['reason'], 'prefilter_input_too_large')
+        self.assertEqual(self.clients, [])
+
+    async def test_strict_schema_ids_coverage_and_single_call_required(self):
+        alterations = [lambda prompt: {}, lambda prompt: answer(prompt, thread_id='wrong-thread'),
+            lambda prompt: answer(prompt, source_ids=['unknown-source']),
+            lambda prompt: answer(prompt, source_ids=[]),
+            lambda prompt: answer(prompt, source_ids=['source-1', 'source-1']),
+            lambda prompt: answer(prompt, all_sources_reviewed=False),
+            lambda prompt: answer(prompt, all_sources_reviewed='true'),
+            lambda prompt: answer(prompt, all_sources_reviewed=1),
+            lambda prompt: answer(prompt, decision='drop'),
+            lambda prompt: answer(prompt, explanation='private content'),
+            lambda prompt: [answer(prompt), answer(prompt)], lambda prompt: []]
+        for response in alterations:
+            builder = self.builder(response)
+            result = await builder.classify([message()])
+            self.assertEqual(result['decision'], 'uncertain')
+            self.assertIn(result['reason'], {'prefilter_identity_invalid', 'prefilter_format_invalid'})
+            self.assertEqual(builder.metrics['failure_count'], 1)
+            self.assertEqual(len(self.clients[-1].prompts), 1)
+            self.assertEqual(self.clients[-1].cleanup, ['stop'])
+            self.assertNotIn('private content', json.dumps(result))
+
+    async def test_missing_source_in_multi_message_response_is_uncertain(self):
+        builder = self.builder(lambda prompt: answer(prompt, source_ids=['source-1']))
+        result = await builder.classify([message(), message('A useful finding.', key='another-message')])
+        self.assertEqual(result['decision'], 'uncertain')
+        self.assertEqual(result['reason'], 'prefilter_identity_invalid')
+
+    async def test_profile_and_sdk_failures_are_safe_uncertain_results(self):
+        def broken(prompt):
+            raise RuntimeError('Credential details and private email text')
+        result = await self.builder(broken).classify([message()])
+        self.assertEqual(result['decision'], 'uncertain')
+        self.assertEqual(result['reason'], 'prefilter_model_failed')
+        self.assertNotIn('Credential', json.dumps(result))
+        self.assertEqual(self.clients[0].cleanup, ['stop'])
+        builder = MailPrefilter({'HINDSIGHT_API_LLM_PROVIDER': 'other'}, client_factory=self.factory())
+        result = await builder.classify([message()])
+        self.assertEqual(result['reason'], 'prefilter_copilot_profile_required')
+        self.assertEqual(len(self.clients), 1)
+
+    async def test_timeout_fails_open_and_stops_runtime(self):
+        class WaitingSession(FakeSession):
+            async def send_and_wait(self, *args, **kwargs):
+                await asyncio.Event().wait()
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                self.session_config = kwargs
+                return WaitingSession(self)
+        builder = MailPrefilter(self.profile, timeout=0.02, client_factory=self.factory(client_type=WaitingClient))
+        result = await builder.classify([message()])
+        self.assertEqual(result['decision'], 'uncertain')
+        self.assertEqual(result['reason'], 'prefilter_model_failed')
+        self.assertEqual(self.clients[0].cleanup, ['stop'])
+        self.assertFalse(Path(self.clients[0].config['base_directory']).exists())
+
+    async def test_cancellation_forces_cleanup_and_propagates(self):
+        started = asyncio.Event()
+        class WaitingSession(FakeSession):
+            async def send_and_wait(self, *args, **kwargs):
+                started.set()
+                await asyncio.Event().wait()
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                self.session_config = kwargs
+                return WaitingSession(self)
+        builder = MailPrefilter(self.profile, client_factory=self.factory(client_type=WaitingClient))
+        task = asyncio.create_task(builder.classify([message()]))
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.clients[0].cleanup, ['force_stop'])
+        self.assertFalse(Path(self.clients[0].config['base_directory']).exists())
+        self.assertEqual(builder.metrics['cancellation_count'], 1)
+        self.assertEqual(builder.metrics['decision_skip_count'], 0)
+
+    async def test_failed_cleanup_keeps_runtime_for_close_retry_and_never_skips(self):
+        class BrokenClient(FakeClient):
+            broken = True
+            async def stop(self):
+                if self.broken:
+                    raise RuntimeError('stop failed')
+                await super().stop()
+            async def force_stop(self):
+                if self.broken:
+                    raise RuntimeError('private runtime details')
+                await super().force_stop()
+        builder = MailPrefilter(self.profile, client_factory=self.factory(client_type=BrokenClient))
+        result = await builder.classify([message()])
+        self.assertEqual(result['decision'], 'uncertain')
+        self.assertEqual(result['reason'], 'prefilter_runtime_cleanup_failed')
+        directory = Path(self.clients[0].config['base_directory'])
+        self.assertTrue(directory.exists())
+        self.assertTrue(builder._clients)
+        self.clients[0].broken = False
+        await builder.close()
+        self.assertFalse(directory.exists())
+        self.assertFalse(builder._clients)
+
+    async def test_concurrent_classifications_have_independent_sessions_and_metrics(self):
+        builder = self.builder()
+        results = await asyncio.gather(*(builder.classify([message()]) for _ in range(8)))
+        self.assertEqual([result['decision'] for result in results], ['skip'] * 8)
+        self.assertEqual(len({client.config['base_directory'] for client in self.clients}), 8)
+        self.assertTrue(all(len(client.prompts) == 1 for client in self.clients))
+        self.assertTrue(all(client.cleanup == ['stop'] for client in self.clients))
+        self.assertFalse(builder._clients)
+        self.assertEqual(builder.metrics['decision_skip_count'], 8)
+        for stage in ('runtime_start', 'inference', 'runtime_stop'):
+            self.assertEqual(builder.metrics[stage + '_count'], 8)
+            self.assertGreaterEqual(builder.metrics[stage + '_seconds'], 0)
 
 
 if __name__ == '__main__':

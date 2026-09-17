@@ -143,7 +143,7 @@ async def runner_lifecycle():
             runner = MailSync(Path(directory), config['apiUrl'], bank=bank, source=source, client=client, builder=builder)
             runner.poll_seconds = .25
             await runner.discover()
-            await runner.configure({'interval_minutes': 0})
+            await runner.configure({'interval_minutes': 0, 'prefilter_enabled': False})
 
             async def run():
                 await runner.sync()

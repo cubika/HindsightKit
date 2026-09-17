@@ -8,9 +8,11 @@ import sqlite3
 import subprocess
 
 DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False,
-                       'model': '', 'reasoning_effort': '', 'parallel_threads': 8},
+                       'model': '', 'reasoning_effort': '', 'parallel_threads': 8,
+                       'prefilter_enabled': True, 'prefilter_model': 'gpt-5.6-terra', 'prefilter_reasoning_effort': 'low'},
            'account': None, 'folders': [], 'warnings': [], 'failures': [],
-           'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'prefiltered': 0, 'failed': 0,
+           'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'prefiltered': 0,
+                   'prefilter_checked': 0, 'prefilter_uncertain': 0, 'failed': 0,
                    'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
 EULA_ERROR = ('workiq_eula_required. WorkIQ requires license acceptance before mail access. '
               'Review the WorkIQ terms before resuming.')
@@ -137,7 +139,7 @@ class Adapter:
             return self.status()
         if action == 'config':
             required = {'folder_ids', 'lookback_days', 'interval_minutes'}
-            optional = {'model', 'reasoning_effort', 'parallel_threads'}
+            optional = {'model', 'reasoning_effort', 'parallel_threads', 'prefilter_enabled', 'prefilter_model', 'prefilter_reasoning_effort'}
             if not isinstance(data, dict) or not required <= set(data) or set(data) - required - optional:
                 raise ValueError('Choose folders, a lookback period, and a sync interval.')
         if not self.availability(refresh=True)['ready']:
