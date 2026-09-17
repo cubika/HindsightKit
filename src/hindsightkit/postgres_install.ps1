@@ -257,7 +257,8 @@ function Build-Vector([string]$Installation, [string]$PgRoot, [string]$SourceRoo
     # MSVC expands header __FILE__ macros to absolute paths. Apply its path map
     # through the compiler environment while keeping the official Makefile intact.
     $pathOptions = '/experimental:deterministic /pathmap:"' + $StageRoot + '=."'
-    $start.EnvironmentVariables['_CL_'] = (($start.EnvironmentVariables['_CL_'] + ' ' + $pathOptions).Trim())
+    $existingCompilerOptions = if ($start.EnvironmentVariables.ContainsKey('_CL_')) { $start.EnvironmentVariables['_CL_'] } else { '' }
+    $start.EnvironmentVariables['_CL_'] = (($existingCompilerOptions + ' ' + $pathOptions).Trim())
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     Write-Host "Compiling pgvector $VectorVersion against PostgreSQL $PostgresVersion with Microsoft C++..."

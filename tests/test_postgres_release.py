@@ -326,11 +326,6 @@ Add-Type -TypeDefinition 'public class VersionFixture {
             (source / 'src').mkdir(parents=True)
             (root / 'cache').mkdir()
             (root / 'pgsql').mkdir()
-            (source / 'src/header.h').write_text('''#if !defined(FROM_CL) || !defined(FROM_TRAILING_CL)
-#error Existing compiler options were lost
-#endif
-const char* source_path(void) { return __FILE__; }
-''', encoding='utf-8')
             (source / 'src/probe.c').write_text('#include "header.h"\n', encoding='utf-8')
             (source / 'Makefile.win').write_text('''all: probe.obj
 probe.obj: src/probe.c src/header.h
@@ -339,6 +334,7 @@ install: all
 ''', encoding='utf-8')
             harness = root / 'build-fixture.ps1'
             harness.write_text('''param([string]$Installer, [string]$Root, [switch]$ShortPath)
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
@@ -370,11 +366,22 @@ $CacheDirectory = Join-Path $Root 'cache'
 $PostgresVersion = '18.6'; $VectorVersion = '0.8.6'
 Build-Vector $installation (Join-Path $Root 'pgsql') (Join-Path $Root 'pgvector') $Root
 ''', encoding='utf-8')
-            environment = dict(self.environment, CL='/DFROM_CL=1', _CL_='/DFROM_TRAILING_CL=1')
-            for short_path in (False, True):
-                with self.subTest(short_path=short_path):
+            shells = list(dict.fromkeys(filter(None, [self.shell, shutil.which('pwsh')])))
+            cases = [(shell, short_path, existing) for shell in shells
+                     for short_path in (False, True) for existing in (False, True)]
+            for shell, short_path, existing in cases:
+                with self.subTest(shell=Path(shell).name, short_path=short_path, existing_options=existing):
+                    environment = {key: value for key, value in self.environment.items()
+                                   if key.upper() not in {'CL', '_CL_'}}
+                    guard = ''
+                    if existing:
+                        environment.update(CL='/DFROM_CL=1', _CL_='/DFROM_TRAILING_CL=1')
+                        guard = ('#if !defined(FROM_CL) || !defined(FROM_TRAILING_CL)\n'
+                                 '#error Existing compiler options were lost\n#endif\n')
+                    (source / 'src/header.h').write_text(
+                        guard + 'const char* source_path(void) { return __FILE__; }\n', encoding='utf-8')
                     (source / 'probe.obj').unlink(missing_ok=True)
-                    command = [self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    command = [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                                str(harness), '-Installer', str(self.installer), '-Root', str(root)]
                     if short_path:
                         command.append('-ShortPath')
