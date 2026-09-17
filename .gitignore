@@ -1,6 +1,7 @@
 .venv/
 .runtime/
 .validation/
+/demo-presentation/
 __pycache__/
 *.egg-info/
 .pytest_cache/
