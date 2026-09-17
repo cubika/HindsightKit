@@ -3,32 +3,40 @@ import json
 import re
 from datetime import datetime, timezone
 
-VERSION = '1'
+VERSION = '2'
 BASE_TAGS = {'source:workiq-thread', 'kind:thread-outcome'}
 
 
-def system_names(values, content):
+def content_labels(values, content):
+    """Validate retrieval labels without assigning special rules to entity types."""
+    if not isinstance(values, list):
+        raise ValueError('Content labels must be a list.')
     result = {}
     for value in values:
-        if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9 ._/-]{0,63}', value):
-            raise ValueError('Invalid system label.')
-        value = value.strip()
-        if not re.search(r'(?<![A-Za-z0-9])' + re.escape(value) + r'(?![A-Za-z0-9])', content, re.I):
-            raise ValueError('A system label must occur in the accepted outcome.')
-        result[value.casefold()] = value
+        if not isinstance(value, str):
+            raise ValueError('Invalid content label.')
+        value = ' '.join(value.split())
+        if not 2 <= len(value) <= 64 or not any(char.isalpha() for char in value) or any(
+                not (char.isalnum() or char in ' ._/-+#') for char in value):
+            raise ValueError('Invalid content label.')
+        pattern = r'(?<![A-Za-z0-9_])' + r'\s+'.join(re.escape(part) for part in value.split()) + r'(?![A-Za-z0-9_])'
+        match = re.search(pattern, content, re.I)
+        if match is None:
+            raise ValueError('A content label must occur in the accepted outcome.')
+        canonical = ' '.join(match.group().split())
+        result.setdefault(canonical.casefold(), canonical)
     if len(result) > 5:
-        raise ValueError('At most five system labels are supported.')
+        raise ValueError('At most five content labels are supported.')
     return [result[key] for key in sorted(result)]
 
 
 def tags_for(metadata, previous=(), previous_metadata=None):
     """Refresh owned labels; preserve every unrelated user-created tag."""
     owned = set(json.loads((previous_metadata or metadata).get('managed_tags', '[]')))
-    # Only labels recorded as connector-owned may be replaced.
     old = {tag for tag in previous if tag not in owned}
-    systems = json.loads(metadata.get('systems', '[]'))
+    labels = json.loads(metadata.get('content_tags', '[]'))
     managed = BASE_TAGS | {'status:' + metadata['status']}
-    managed.update('system:' + re.sub(r'[^a-z0-9]+', '-', name.casefold()).strip('-') for name in systems)
+    managed.update('topic:' + '-'.join(label.casefold().split()) for label in labels)
     return sorted(old | managed), sorted(managed - old)
 
 
@@ -37,14 +45,15 @@ def _sent(message):
     value = meta.get('sent_at') or meta.get('received_at')
     return datetime.fromisoformat(value.replace('Z', '+00:00')) if value else datetime.min.replace(tzinfo=timezone.utc)
 
-def source_metadata(content, metadata, messages, *, systems=None):
+def source_metadata(content, metadata, messages, *, content_tags=None):
     """Describe supporting source messages without putting envelopes into memory text."""
     result = dict(metadata)
-    names = system_names(systems if systems is not None else json.loads(result.get('systems', '[]')), content)
+    names = content_labels(content_tags if content_tags is not None else json.loads(result.get('content_tags', '[]')), content)
+    result.pop('systems', None)
     selected = set(json.loads(result.get('source_ids', '[]')))
     supporting = [message for message in messages if message['source_key'] in selected]
     ordered = sorted(supporting, key=lambda m: (_sent(m), m['source_key']))
-    result.update(title=content.splitlines()[0].strip(), systems=json.dumps(names), labels_version=VERSION)
+    result.update(title=content.splitlines()[0].strip(), content_tags=json.dumps(names, ensure_ascii=False), labels_version=VERSION)
     if ordered:
         result['subject'] = re.sub(r'^(?:(?:re|fw|fwd):\s*)+', '', ordered[0]['metadata'].get('subject', '').strip(), flags=re.I)
         sources = []

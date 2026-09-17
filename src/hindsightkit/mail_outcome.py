@@ -42,7 +42,7 @@ class Outcome(BaseModel):
     category: Literal['work', 'repository_local', 'noise', 'insufficient_context']
     status: Literal['unresolved', 'resolved', 'decision']
     title: str = Field(max_length=140)
-    systems: list[str] = Field(default_factory=list, max_length=5)
+    content_tags: list[str] = Field(default_factory=list, max_length=5)
     problem: Claim | None = None
     conclusion: Claim | None = None
     solution: Claim | None = None
@@ -73,8 +73,14 @@ when they contain useful technical details. Exclude invitations, promotion and s
 status/acknowledgment messages without a lasting finding. A substantive incident or service
 finding may mention a repository or PR as supporting context without becoming a code review.
 
-Name up to five systems or services in systems, using names that occur verbatim in the outcome.
-Do not use person names, dates, PR IDs, generic concepts or guessed labels as systems.
+Choose up to five content_tags that help someone find this outcome again. Select distinctive
+concepts, entities or mechanisms from the final outcome, using short phrases or identifiers
+that occur verbatim there. Apply the same selection criteria to every kind of term; there
+are no separate categories for systems, APIs, errors or techniques. Prefer specific terms
+that distinguish this result from unrelated outcomes. Avoid generic words, field labels,
+dates, personal identifiers, synonyms of an already selected tag and incidental discussion.
+A tag means the result discusses that concept, not that it is a confirmed cause. Return fewer
+labels, or none, when additional labels would not help retrieval.
 
 Every claim must cite an exact, continuous excerpt from a supplied source_id. Evidence must
 support all important parts of the claim, including conditions, numbers and ownership. Keep
@@ -279,9 +285,9 @@ def _validate(result, index, previous):
         metadata['last_supported_utc'] = max(_date(value) for value in supported_times).astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
     from .mail_metadata import source_metadata
     try:
-        metadata = source_metadata(content, metadata, list(source_messages.values()), systems=outcome.systems)
+        metadata = source_metadata(content, metadata, list(source_messages.values()), content_tags=outcome.content_tags)
     except ValueError:
-        raise OutcomeError('outcome_system_label_invalid') from None
+        raise OutcomeError('outcome_content_label_invalid') from None
     if len(json.dumps(metadata, ensure_ascii=False).encode()) > 15_000:
         raise OutcomeError('outcome_metadata_too_large')
     if _normalized(content) == _normalized(prior) and all(previous_meta.get(key) == value for key, value in metadata.items()):
@@ -356,7 +362,7 @@ class OutcomeBuilder:
                             raise OutcomeError('outcome_format_invalid')
                         return _validate(captured[0], index, previous)
                     except OutcomeError as error:
-                        if attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_system_label_invalid'}:
+                        if attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_content_label_invalid'}:
                             raise
                 raise OutcomeError('outcome_invalid')
             except OutcomeError:

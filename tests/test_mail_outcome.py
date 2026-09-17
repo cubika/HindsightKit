@@ -36,14 +36,14 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(json.loads(result['metadata']['source_ids']), ['mail-one'])
         self.assertTrue(all(isinstance(value, str) for value in result['metadata'].values()))
 
-    def test_system_labels_are_carried_only_when_present_in_outcome(self):
+    def test_content_labels_are_carried_only_when_present_in_outcome(self):
         _, index = prepare_messages([message()])
-        result = _validate(answer(systems=['Runtime']), index, None)
-        self.assertEqual(json.loads(result['metadata']['systems']), ['Runtime'])
+        result = _validate(answer(content_tags=['Runtime']), index, None)
+        self.assertEqual(json.loads(result['metadata']['content_tags']), ['Runtime'])
         self.assertEqual(result['metadata']['subject'], 'Runtime incident')
         self.assertEqual(json.loads(result['metadata']['source_authors']), ['Owner'])
-        with self.assertRaisesRegex(OutcomeError, 'system_label_invalid'):
-            _validate(answer(systems=['InventedService']), index, None)
+        with self.assertRaisesRegex(OutcomeError, 'content_label_invalid'):
+            _validate(answer(content_tags=['InventedService']), index, None)
 
     def test_unknown_quote_author_time_not_inherited(self):
         rows, index = prepare_messages([message('[Earlier quoted message; author and date not verified]\nRuntime check is blocked until the owner verifies the deployment.')])
