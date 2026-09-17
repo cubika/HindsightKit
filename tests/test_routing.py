@@ -15,6 +15,18 @@ from hindsightkit.server import ClientsExtension
 
 
 class RoutingTests(unittest.TestCase):
+    def test_pending_session_does_not_seed_a_bank_that_was_never_resolved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli.run(['git', 'init', root], capture=True)
+            sessions = root / 'sessions'
+            sessions.mkdir()
+            (sessions / 'pending.json').write_text(json.dumps({'_repository': str(root),
+                'bankId': scope_for(root).bank, '_scope_pending': True}))
+            aliases = root / 'repositories.json'
+            seed_aliases(aliases, sessions, {}, 'fixture-device')
+            self.assertEqual(json.loads(aliases.read_text()), {})
+
     def test_nondefault_origin_ports_remain_separate(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

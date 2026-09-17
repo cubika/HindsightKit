@@ -12,6 +12,7 @@ from mcp.client.stdio import stdio_client
 from mcp import types
 
 from hindsightkit import cli, connection, mcp as memory_mcp
+from hindsightkit import memory_control
 
 
 class McpTests(unittest.TestCase):
@@ -22,7 +23,7 @@ class McpTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def test_explicit_bank_works_without_vscode_roots(self):
+    def test_explicit_bank_requires_vscode_roots_to_honor_repository_switch(self):
         async def check():
             params = StdioServerParameters(command=sys.executable,
                 args=['-u', str(Path(__file__).with_name('mcp_fixture.py')), 'vscode'],
@@ -32,8 +33,8 @@ class McpTests(unittest.TestCase):
                 async with ClientSession(reader, writer) as client:
                     await client.initialize()
                     result = await client.call_tool('recall', {'query': 'shared bank'})
-                    self.assertFalse(result.is_error, result)
-                    self.assertEqual([item['bank'] for item in result.structured_content['memories']], ['shared-on-server'])
+                    self.assertTrue(result.is_error, result)
+                    self.assertIn('did not supply workspace roots', str(result.content))
         asyncio.run(asyncio.wait_for(check(), timeout=45))
 
     def test_vscode_roots_and_cli_cwd_are_isolated_without_model_calls(self):
@@ -79,6 +80,30 @@ class McpTests(unittest.TestCase):
                 self.assertTrue(result.is_error)
         asyncio.run(asyncio.wait_for(check(), timeout=120))
 
+    def test_vscode_session_observes_workspace_toggle_without_restart(self):
+        async def check():
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                cli.run(['git', 'init', root], capture=True)
+                async def list_roots(_):
+                    return types.ListRootsResult(roots=[types.Root(uri=root.as_uri())])
+                params = StdioServerParameters(command=sys.executable,
+                    args=['-u', str(Path(__file__).with_name('mcp_fixture.py')), 'vscode'],
+                    env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
+                with patch('builtins.print'):
+                    memory_control.command('off', root)
+                async with stdio_client(params) as (reader, writer):
+                    async with ClientSession(reader, writer, list_roots_callback=list_roots) as client:
+                        await client.initialize()
+                        for action, disabled in [('off', True), ('on', False), ('off', True)]:
+                            with patch('builtins.print'):
+                                memory_control.command(action, root)
+                            result = await client.call_tool('recall', {'query': 'Fixture query'})
+                            self.assertEqual(result.is_error, disabled, result)
+                            if disabled:
+                                self.assertIn('disabled for this repository', str(result.content))
+        asyncio.run(asyncio.wait_for(check(), timeout=90))
+
 
 class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_advertised_mail_is_available_without_local_import_state(self):
@@ -89,7 +114,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         async def action(server):
             tool = await server.get_tool('recall_mail')
             self.assertIsNotNone(tool)
-            return await tool.fn(query='shared mail')
+            return (await server.call_tool('recall_mail', {'query': 'shared mail'})).structured_content
         result, constructor = await self.call_tools(config, action, client, saved_mail=False)
         self.assertEqual(result['bank'], 'hindsightkit-mail')
         constructor.assert_called_once_with(base_url=config['apiUrl'], api_key='synthetic-key', timeout=90)
@@ -107,8 +132,11 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
                 directory = Path(temp) / 'mail'
                 directory.mkdir()
                 (directory / 'sync.sqlite3').touch()
-            memory_mcp.serve("vscode")
-            result = await action(server)
+            # Keep a real MCP dispatch (including its repository guard), with
+            # a non-Git fixture directory and deterministic bank discovery.
+            with patch.object(memory_mcp, 'resolve', new=AsyncMock(side_effect=lambda config, scope: scope)):
+                memory_mcp.serve("cli", temp)
+                result = await action(server)
         return result, constructor
 
     async def test_recall_mail_uses_server_endpoint_auth_and_source_fact_options(self):
@@ -120,7 +148,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         async def action(server):
             tool = await server.get_tool("recall_mail")
             self.assertNotIn("bank_id", tool.parameters.get("properties", {}))
-            return await tool.fn(query="Mail finding", max_tokens=1024)
+            return (await server.call_tool("recall_mail", {"query": "Mail finding", "max_tokens": 1024})).structured_content
         result, constructor = await self.call_tools(config, action, client)
         constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=90)
         client.arecall.assert_awaited_once()
@@ -141,7 +169,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await server.get_tool("recall_mail"))
             client.arecall.assert_not_awaited()
             normal = await server.get_tool("recall")
-            return await normal.fn(query="Allowed shared finding", ctx=None, max_tokens=1024)
+            return (await server.call_tool("recall", {"query": "Allowed shared finding", "max_tokens": 1024})).structured_content
         result, constructor = await self.call_tools(config, action, client)
         constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=config["apiToken"], timeout=330)
         self.assertEqual([item["bank"] for item in result["memories"]], ["allowed-shared-bank"])

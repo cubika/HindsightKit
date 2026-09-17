@@ -794,6 +794,8 @@ def main(argv=None):
     setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
     for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
+    memory_parser = sub.add_parser('memory', help='Enable, disable, or inspect memory for this local Git repository.')
+    memory_parser.add_argument('action', choices=['on', 'off', 'status'])
     share_parser = sub.add_parser('share', help='After installation, prepare a connection code for another computer.')
     share_parser.add_argument('--relay', action='store_true', help='Enable a private relay for computers that cannot connect directly.')
     share_parser.add_argument('--address', help='Direct HTTP(S) address that the other computer can reach.')
@@ -813,6 +815,9 @@ def main(argv=None):
     try:
         if args.command == 'setup':
             setup(args)
+        elif args.command == 'memory':
+            from .memory_control import command
+            command(args.action)
         elif args.command in {'share', 'connect'}:
             from . import remote
             getattr(remote, args.command)(args)

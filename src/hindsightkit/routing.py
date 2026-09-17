@@ -66,7 +66,7 @@ def seed_aliases(path, sessions, old_config, device=None, api_url=None):
         value = json.loads(record.read_text(encoding='utf-8'))
         if api_url and value.get('apiUrl') != api_url:
             continue
-        if value.get('_repository'):
+        if value.get('_repository') and not value.get('_scope_pending'):
             candidates.add((value['_repository'], value.get('bankId')))
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + '.lock', timeout=5):

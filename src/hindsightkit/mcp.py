@@ -1,13 +1,14 @@
 """Native memory operations with host-selected, session-fixed bank access."""
 import asyncio
-import json
 import os
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from fastmcp import Context, FastMCP
-from . import connection
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import Middleware
+from . import connection, memory_control
 from .memory import Memory, Scope, SHARED_BANK, scope_for
 from .routing import resolve
 
@@ -27,47 +28,77 @@ def scope_from_roots(roots) -> Scope:
 def serve(context: str, directory: str | None = None):
     config = connection.load()
     from .remote import prepare_client
-    prepare_client(config)
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
                     'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
     server = FastMCP('HindsightKit', instructions=instructions)
     # A CLI process inherits the agent's launch cwd. VS Code supplies MCP roots.
     scope = Scope(connection.fixed_bank(config)) if connection.fixed_bank(config) else None
-    if context == 'cli' and scope is None:
+    local_scope = None
+    repository = None
+    session_event = None
+    if context == 'cli':
         session_id = os.environ.get('COPILOT_AGENT_SESSION_ID')
         if session_id:
             from .hooks import session_config
-            path = Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
-            config = json.loads(path.read_text(encoding='utf-8'))
-            _, pinned = session_config({'sessionId': session_id, 'cwd': directory or os.getcwd()}, config)
-            scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', SHARED_BANK))
+            session_event = {'sessionId': session_id, 'cwd': directory or os.getcwd()}
+            _, pinned = session_config(session_event, config, resolve_scope=False)
+            repository = pinned['_memory_repository']
+            if not pinned['_scope_pending']:
+                scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', SHARED_BANK))
         else:
-            scope = asyncio.run(resolve(config, scope_for(directory or os.getcwd())))
+            local_scope = scope_for(directory or os.getcwd())
+            repository = local_scope.repository
     lock = asyncio.Lock()
     root_uris = None
 
     async def memory(ctx: Context):
-        nonlocal scope, root_uris
+        nonlocal scope, root_uris, local_scope, repository
         async with lock:
-            if context == 'vscode' and not connection.fixed_bank(config):
-                capabilities = ctx.session.client_capabilities
-                if not capabilities or not capabilities.roots:
+            if context == 'vscode':
+                capabilities = ctx.session.client_capabilities if ctx is not None else None
+                if capabilities and capabilities.roots:
+                    roots = await asyncio.wait_for(ctx.session.list_roots(), timeout=5)
+                    current = tuple(sorted(str(root.uri) for root in roots.roots))
+                    if root_uris is not None and current != root_uris:
+                        raise ValueError('The workspace changed. Restart the Hindsight MCP server before using memory.')
+                    if local_scope is None:
+                        local_scope = await asyncio.to_thread(scope_from_roots, roots.roots)
+                        repository = local_scope.repository
+                        root_uris = current
+                else:
                     raise ValueError('VS Code did not supply workspace roots; repository memory access is unavailable.')
-                roots = await asyncio.wait_for(ctx.session.list_roots(), timeout=5)
-                current = tuple(sorted(str(root.uri) for root in roots.roots))
-                if root_uris is not None and current != root_uris:
-                    raise ValueError('The workspace changed. Restart the Hindsight MCP server before using memory.')
-                if scope is None:
-                    scope = await resolve(config, await asyncio.to_thread(scope_from_roots, roots.roots))
-                    root_uris = current
+            if not (await asyncio.to_thread(memory_control.state, repository)).enabled:
+                raise ToolError('Memory is disabled for this repository. Run hindsightkit memory on to enable it.')
+            await asyncio.to_thread(prepare_client, config)
+            if scope is None:
+                if session_event is not None:
+                    _, pinned = await asyncio.to_thread(session_config, session_event, config)
+                    if pinned['_scope_pending']:
+                        raise ToolError('Memory is disabled for this repository. Run hindsightkit memory on to enable it.')
+                    scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', SHARED_BANK))
+                else:
+                    scope = await resolve(config, local_scope)
         return scope
 
+    class RepositoryMemoryGuard(Middleware):
+        async def on_call_tool(self, request, call_next):
+            # Covers optional connector tools as well as core memory operations.
+            try:
+                await memory(request.fastmcp_context)
+            except (ValueError, RuntimeError, OSError) as exc:
+                raise ToolError(str(exc)) from exc
+            return await call_next(request)
+
+    server.add_middleware(RepositoryMemoryGuard())
+
     async def call(ctx, operation, **arguments):
-        selected = await memory(ctx)
+        # The middleware has already checked the switch and resolved the scope.
+        if scope is None:
+            raise RuntimeError('Memory scope was not initialized.')
         client = connection.sdk(config, timeout=330)
         try:
-            service = Memory(client, selected)
+            service = Memory(client, scope)
             result = await service.retain(**arguments) if operation == 'retain' else await service.read(operation, **arguments)
             await connection.report(config, 'copilot-cli' if context == 'cli' else 'vscode')
             return result

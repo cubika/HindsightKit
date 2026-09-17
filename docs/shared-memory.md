@@ -17,6 +17,26 @@ Clones with the same normalized `origin` host and repository path use the same b
 
 The selected scope stays fixed for a coding session. Use one repository per VS Code window. If its workspace roots change, restart the Hindsight MCP server before using memory. Start a fresh Copilot CLI session when switching repository context.
 
+## Pause memory for a repository
+
+Run these commands inside the repository or one of its worktrees:
+
+```powershell
+hindsightkit memory off
+hindsightkit memory status
+hindsightkit memory on
+```
+
+`hk` accepts the same commands when that alias is installed. Memory is on by default. The setting is stored in local Git configuration, shared by the clone's worktrees and subdirectories. It is not committed or copied to other clones or computers. Running these commands outside Git reports an error.
+
+`off` stops subsequent automatic recall and session saving in Copilot CLI. It also blocks the repository's MCP calls to `retain`, `recall`, `reflect`, and optional `recall_mail`. Tools can remain visible; a call reports that repository memory is disabled. The check happens before relay startup, bank discovery, or memory requests. In-flight requests can finish. Existing saved memory and context already loaded into a chat remain available. Server connector jobs continue independently.
+
+`on` restores MCP access and automatic recall on the next call. Start a new Copilot CLI session to resume automatic session saving: a session that spans a pause will not save its transcript afterward, so enabling memory cannot upload the conversation from the paused period. New sessions started while memory is off also skip automatic saving for the rest of that session.
+
+The switch follows the repository selected when the session began. Changing the CLI working directory does not change that selection. VS Code must supply workspace roots, including for a connection using a fixed bank. Switching VS Code workspace roots requires restarting its MCP server.
+
+After upgrading an older installation, restart the MCP server and start a new CLI session once to load this support. Later `off`/`on` changes do not require restarting the MCP server.
+
 ## Server and client roles
 
 The server owns the database, embedding model, dashboard, and optional connector jobs. Its Copilot account supplies the model calls. Coding clients run the editor and CLI integrations and send memory requests to the selected server. A client-only installation has no local database or model, and an unreachable server does not cause it to create a replacement.

@@ -13,9 +13,10 @@ from . import connection
 from .cli import home, node, runtime
 from .memory import Memory, Scope, scope_for
 from .routing import resolve
+from . import memory_control
 
 
-def session_config(event: dict, config: dict) -> tuple[Path, dict]:
+def session_config(event: dict, config: dict, *, resolve_scope=True) -> tuple[Path, dict]:
     session_id = event.get('sessionId')
     if not isinstance(session_id, str) or not session_id:
         raise ValueError('Copilot did not provide a session ID; skipping memory to avoid mixing sessions.')
@@ -29,12 +30,25 @@ def session_config(event: dict, config: dict) -> tuple[Path, dict]:
             pinned = json.loads(path.read_text(encoding='utf-8'))
             directory = pinned['_directory']
             scope = Scope(pinned['bankId'], pinned['_repository'], pinned.get('_shared_bank', 'hindsightkit-shared'))
+            repository = pinned['_memory_repository'] if '_memory_repository' in pinned else scope_for(directory).repository
+            pending = pinned.get('_scope_pending', False)
+            capture_epoch = pinned.get('_capture_epoch', '')
         else:
             directory = str(Path(event.get('cwd') or os.getcwd()).resolve(strict=True))
             bank = connection.fixed_bank(config)
-            scope = Scope(bank) if bank else asyncio.run(resolve(config, scope_for(directory)))
+            local = scope_for(directory)
+            repository = local.repository
+            scope = Scope(bank) if bank else local
+            pending = not bank
+            current = memory_control.state(repository)
+            capture_epoch = current.capture_epoch if current.enabled else None
+        if pending and resolve_scope and memory_control.state(repository).enabled:
+            scope = asyncio.run(resolve(config, scope))
+            pending = False
         resolved = {**config, 'bankId': scope.bank, 'dynamicBankId': False, 'optInOnly': False,
                     '_directory': directory, '_repository': scope.repository,
+                    '_memory_repository': repository, '_scope_pending': pending,
+                    '_capture_epoch': capture_epoch,
                     '_shared_bank': scope.shared_bank,
                     'autoSeed': False, 'codebaseSurvey': False, 'manageBankConfig': False}
         for key in ['mapPathToBank', 'optInPaths', 'harnesses', 'banks']:
@@ -65,14 +79,27 @@ def run(event_name: str):
     config = json.loads(config_path.read_text(encoding='utf-8'))
     if config.get('disabled'):
         return
-    from .remote import prepare_client
-    prepare_client(config)
     event = json.load(sys.stdin)
-    path, pinned = session_config(event, config)
+    path, pinned = session_config(event, config, resolve_scope=False)
+    current = memory_control.state(pinned['_memory_repository'])
+    if not current.enabled:
+        return
     if event_name == 'sessionStart':
         return
     if event_name == 'agentStop':
         if config.get('retainSessions') is False:
+            return
+        if pinned['_capture_epoch'] != current.capture_epoch:
+            print('HindsightKit: automatic session saving is paused for this session after memory was disabled. Start a new Copilot session to resume saving.', file=sys.stderr)
+            return
+    from .remote import prepare_client
+    prepare_client(config)
+    path, pinned = session_config(event, config)
+    current = memory_control.state(pinned['_memory_repository'])
+    if not current.enabled:
+        return
+    if event_name == 'agentStop':
+        if pinned['_capture_epoch'] != current.capture_epoch:
             return
         # Keep the official parser, retries and idempotent document writes unchanged.
         event['cwd'] = pinned['_directory']

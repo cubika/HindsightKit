@@ -34,6 +34,8 @@ Services stay running when the terminal closes. After restarting Windows, run `h
 
 Open one repository per VS Code window. No per-repository enable step is needed. The [memory scope guide](docs/shared-memory.md) explains repository identity, cross-computer use, and access limits.
 
+Run `hindsightkit memory off` inside a repository to pause its hooks and MCP memory tools. Use `hindsightkit memory on` to re-enable them and `hindsightkit memory status` to inspect the setting. The switch stays local to that clone and applies to its worktrees. See [pausing repository memory](docs/shared-memory.md#pause-memory-for-a-repository) for session behavior.
+
 Stored memory remains in Hindsight's database; model requests use the server's Copilot account. Remembered information may be incomplete or wrong, so inspect source evidence when it matters.
 
 ## Connect another computer

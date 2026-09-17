@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 17, 2026: repository memory switch
+
+Synthetic MCP dispatch checks verified that `memory off` blocks `recall_mail` along with the core memory tools before transport startup, bank discovery, or SDK calls. Re-enabling the same MCP process restored access. Existing mail tests now use MCP dispatch so they exercise this guard. The focused `test_m*.py` run passed 163 tests. After integrating the mail batching revert from master, the final `python -m unittest discover -s tests -v` run passed all 397 tests in 396.2 seconds, including connector fixtures. No mailbox, live memory bank, or model was accessed.
+
 Record connector test scope, sample selection, procedures, measurements, failures, cleanup or retention, and conclusions here. Keep mailbox contents, credentials, and opaque cursors out of Git. The entries below describe their recorded runs, not the current state of a particular installation. No live tests were rerun during the documentation review.
 
 The message-level importer was replaced by the [current thread-outcome contract](workiq-mail.md). Its earlier extraction results are retained as history and do not validate that contract. In particular, the earlier acceptance of PR-specific findings does not satisfy the current shared-memory scope.
