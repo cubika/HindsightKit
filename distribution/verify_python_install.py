@@ -34,7 +34,8 @@ def verify(bundle: Path, uv: str, destination: Path | None = None):
                UV_NO_CONFIG='1', HTTP_PROXY='http://127.0.0.1:1', HTTPS_PROXY='http://127.0.0.1:1',
                ALL_PROXY='http://127.0.0.1:1', NO_PROXY='', PYTHONUTF8='1')
     try:
-        for role in ('client', 'server'):
+        roles = ('client',) if manifest.get('profile') == 'client' else ('client', 'server')
+        for role in roles:
             env['UV_CACHE_DIR'] = str(root / ('empty-cache-' + role))
             venv = root / role
             if venv.exists():
@@ -51,6 +52,10 @@ assert m.version('hindsightkit') == sys.argv[1]
 assert pathlib.Path(hindsightkit.cli.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())
 if sys.argv[2] == 'server':
     import hindsight_api, hindsight_embed, onnxruntime, asyncpg
+else:
+    import importlib.util
+    assert importlib.util.find_spec('hindsight_api') is None
+    assert importlib.util.find_spec('hindsight_embed') is None
 print(json.dumps({'role':sys.argv[2], 'installed':True, 'application_version':m.version('hindsightkit')}))
 '''
             run([python, '-c', probe, manifest['project_version'], role], env)
@@ -58,7 +63,7 @@ print(json.dumps({'role':sys.argv[2], 'installed':True, 'application_version':m.
             run([python, '-m', 'hindsightkit.cli', '--help'], env)
             # A repeat must resolve from the same local bundle without downloads.
             run(command, env)
-        print(json.dumps({'offline_installation':'passed', 'roles':['client','server'],
+        print(json.dumps({'offline_installation':'passed', 'roles':list(roles),
                           'empty_cache':True, 'index_access':False, 'repeat':'passed'}))
     finally:
         if parent:

@@ -38,7 +38,7 @@ def wheel(root, name, version, *, tag="py3-none-any", metadata_name=None):
 
 
 def refresh_manifest(directory, source):
-    manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64",
+    manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64", "profile": "full",
                 "project_version": "0.1.1", "lock_sha256": bundle.sha256(source / "uv.lock"),
                 "files": {path.relative_to(directory).as_posix(): bundle.sha256(path)
                           for path in sorted(directory.rglob("*"))
@@ -78,6 +78,64 @@ def fixture(root):
 
 
 class PythonBundleTests(unittest.TestCase):
+    def test_client_bundle_contains_only_exact_client_closure_and_unchanged_wheels(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, full = fixture(Path(temporary))
+            client = Path(temporary) / "client"
+            manifest = bundle.create_client_bundle(full, client, source)
+            self.assertEqual(manifest["profile"], "client")
+            self.assertEqual(set(manifest["files"]), {"requirements-client.txt",
+                "wheels/hindsightkit-0.1.1-py3-none-any.whl", "wheels/client_dependency-1.0-py3-none-any.whl"})
+            self.assertFalse((client / "requirements-server.txt").exists())
+            self.assertEqual(manifest, bundle.validate_bundle(client, source, profile="client"))
+            for relative in manifest["files"]:
+                self.assertEqual((client / relative).read_bytes(), (full / relative).read_bytes())
+            self.assertLess(sum(path.stat().st_size for path in client.rglob("*") if path.is_file()),
+                            sum(path.stat().st_size for path in full.rglob("*") if path.is_file()))
+            self.assertEqual(bundle.validate_bundle(full, source)["profile"], "full")
+
+    def test_client_bundle_rejects_server_wheels_and_requirements_even_with_updated_manifest(self):
+        for relative in ("requirements-server.txt", "wheels/server_dependency-2.0-cp310-abi3-win_amd64.whl"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                source, full = fixture(Path(temporary))
+                client = Path(temporary) / "client"
+                manifest = bundle.create_client_bundle(full, client, source)
+                shutil.copyfile(full / relative, client / relative)
+                manifest["files"][relative] = bundle.sha256(client / relative)
+                write(client, bundle.MANIFEST_NAME, json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, "Unexpected requirements|not in the client"):
+                    bundle.validate_bundle(client, source, profile="client")
+
+    def test_client_bundle_is_not_accepted_as_full_and_missing_client_wheel_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, full = fixture(Path(temporary))
+            client = Path(temporary) / "client"
+            manifest = bundle.create_client_bundle(full, client, source)
+            with self.assertRaisesRegex(ValueError, "manifest differs"):
+                bundle.validate_bundle(client, source)
+            relative = "wheels/client_dependency-1.0-py3-none-any.whl"
+            (client / relative).unlink()
+            del manifest["files"][relative]
+            write(client, bundle.MANIFEST_NAME, json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "missing locked client wheels"):
+                bundle.validate_bundle(client, source, profile="client")
+
+    def test_client_copy_rejects_unverified_input_and_unsafe_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, full = fixture(Path(temporary))
+            for output in (full / "client", source / "src/client", source):
+                with self.subTest(output=output), self.assertRaisesRegex(ValueError, "overlap"):
+                    bundle.create_client_bundle(full, output, source)
+            existing = Path(temporary) / "existing"
+            write(existing, "keep.txt", "preserve")
+            with self.assertRaisesRegex(ValueError, "new or empty"):
+                bundle.create_client_bundle(full, existing, source)
+            self.assertEqual((existing / "keep.txt").read_text(), "preserve")
+            write(full, "requirements-client.txt", "tampered")
+            with self.assertRaisesRegex(ValueError, "SHA256"):
+                bundle.create_client_bundle(full, Path(temporary) / "uncreated", source)
+            self.assertFalse((Path(temporary) / "uncreated").exists())
+
     def test_accepts_complete_client_and_server_profiles_with_original_wheels(self):
         with tempfile.TemporaryDirectory() as temporary:
             source, directory = fixture(Path(temporary))

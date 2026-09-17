@@ -95,6 +95,8 @@ def runtime() -> Path:
 
 
 def install_node_packages(client=False):
+    from filelock import FileLock
+    from .install_progress import run_install
     directory = home() / ('client-runtime' if client else 'runtime')
     directory.mkdir(parents=True, exist_ok=True)
     source_root = PACKAGE / 'client' if client else PACKAGE
@@ -102,15 +104,19 @@ def install_node_packages(client=False):
     stamp = directory / '.installed-lock'
     digest = hashlib.sha256(lock.read_bytes()).hexdigest()
     component = 'hindsight-coding-agents/dist/installer.js' if client else 'hindsight-control-plane/standalone/server.js'
-    if stamp.is_file() and stamp.read_text() == digest and (directory / 'node_modules/@vectorize-io' / component).is_file():
-        return
-    for name in ['package.json', 'package-lock.json']:
-        source = source_root / name
-        if source.is_file():
-            shutil.copyfile(source, directory / name)
-    print('Installing official Copilot integration' + ('.' if client else ' and Hindsight UI...'), flush=True)
-    run(npm() + ['ci', '--omit=dev', '--no-audit', '--no-fund', '--registry', 'https://registry.npmjs.org'], cwd=directory)
-    stamp.write_text(digest)
+    label = 'Copilot client integration' if client else 'Hindsight dashboard and server integration'
+    with FileLock(str(directory / '.install.lock'), timeout=60):
+        if stamp.is_file() and stamp.read_text() == digest and (directory / 'node_modules/@vectorize-io' / component).is_file():
+            print(f'Reusing {label} at {directory}.', flush=True)
+            return
+        for name in ['package.json', 'package-lock.json']:
+            source = source_root / name
+            if source.is_file():
+                shutil.copyfile(source, directory / name)
+        run_install(npm() + ['ci', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=info',
+                            '--foreground-scripts', '--registry', 'https://registry.npmjs.org'],
+                    cwd=directory, label=label)
+        stamp.write_text(digest)
 
 
 async def copilot_authenticated():
@@ -419,7 +425,12 @@ def status():
             healthy = False
     if not connection.has_server():
         if not path.is_file():
-            raise RuntimeError('Run setup on the server, or setup --server URL on this client.')
+            directory = home() / 'client-runtime'
+            if ((directory / '.installed-lock').is_file() and
+                    (directory / 'node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js').is_file()):
+                print('Client: installed; not connected. Run hindsightkit connect.')
+                return True
+            raise RuntimeError('Run setup --client-only to install a client, then hindsightkit connect.')
         return healthy
     return server_status() and healthy
 
@@ -491,11 +502,15 @@ def stop_profile_services():
 
 
 def validate_setup_options(args):
-    if args.server:
+    client_only = getattr(args, 'client_only', False)
+    if args.server or client_only:
         if (getattr(args, 'server_only', False) or args.model or args.model_dir
                 or args.port or args.reasoning_effort):
             raise ValueError('Client setup accepts the server address; server-only, model and port settings belong on the server.')
-        connection.validate_url(args.server)
+        if args.server:
+            connection.validate_url(args.server)
+        elif args.api_key_env:
+            raise ValueError('--api-key-env requires --server during client-only setup.')
     if args.port is not None and not 0 <= args.port <= 65535:
         raise ValueError('Choose an API port between 1 and 65535, or 0 for the default.')
     if args.model_dir:
@@ -535,6 +550,8 @@ def setup(args):
         require_client_prerequisites()
     if args.server:
         setup_client(args)
+    elif getattr(args, 'client_only', False):
+        setup_client_only()
     else:
         local = setup_server(args)
         if not getattr(args, 'server_only', False):
@@ -614,7 +631,6 @@ def setup_server(args):
 def setup_client(args, *, local_server=None, transport=None):
     validate_setup_options(args)
     require_client_prerequisites()
-    from hindsight_copilot.instructions import RULE_TEXT, write_rule
     api_url = connection.validate_url(local_server['apiUrl'] if local_server else args.server)
     coding_config = connection.config_path()
     previous = json.loads(coding_config.read_text(encoding='utf-8')) if coding_config.is_file() else {}
@@ -642,6 +658,40 @@ def setup_client(args, *, local_server=None, transport=None):
         info['transport'] = transport
     candidate['hindsightkit'] = info
     install_node_packages(client=True)
+    install_client_integrations(candidate, previous, authenticate=local_server is None)
+    asyncio.run(connection.register(candidate))
+    print(f'\nClient connected to {api_url} as {info["name"]}.')
+    print('Reload VS Code and enable its Hindsight MCP server. Start a fresh Copilot CLI session.')
+
+
+def setup_client_only():
+    """Install client components without selecting or contacting a memory server."""
+    path = connection.config_path()
+    previous = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
+    if previous is not None:
+        if not previous.get('hindsightkit'):
+            raise RuntimeError('Existing Hindsight settings are not managed by HindsightKit. Use hindsightkit connect to select a connection.')
+        connection.validate_url(previous.get('apiUrl', ''))
+    install_node_packages(client=True)
+    if previous is not None:
+        install_client_integrations(previous, previous, write_config=False)
+        print(f'Client integrations updated. Existing connection preserved: {previous["apiUrl"]}')
+        print('Reload VS Code and start a fresh Copilot CLI session to use the updated client.')
+    else:
+        ensure_copilot()
+        print('Client installed. No memory server is connected yet.')
+    if connection.has_server():
+        print('Existing local server settings and data were preserved. Client setup did not start or reconfigure it.')
+    print('Connect with hindsightkit connect, or hindsightkit connect --server http://<server-host>:9077.')
+
+
+def install_client_integrations(candidate, previous, *, authenticate=False, write_config=True):
+    """Refresh this client's launchers while preserving unrelated editor settings."""
+    from hindsight_copilot.instructions import RULE_TEXT, write_rule
+    api_url = connection.validate_url(candidate['apiUrl'])
+    coding_config = connection.config_path()
+    info = candidate['hindsightkit']
+    old = previous.get('hindsightkit', {})
     selected_runtime = home() / 'client-runtime'
     def integration(action, *values, **options):
         return integrate(action, *values, runtime_path=selected_runtime, **options)
@@ -650,11 +700,12 @@ def setup_client(args, *, local_server=None, transport=None):
     for directory in user_directories:
         integration('preflight', directory / 'mcp.json', cli_mcp, coding_config, api_url,
                     'replace' if old else '')
-    if local_server is None:
+    if authenticate:
         ensure_copilot()
-    remove_project_registration(coding_config, previous.get('apiUrl', api_url), previous)
-    # Authentication is passed on stdin, never in process arguments.
-    integration('config', coding_config, api_url, data={'apiToken': candidate['apiToken'], 'hindsightkit': info})
+    if write_config:
+        remove_project_registration(coding_config, previous.get('apiUrl', api_url), previous)
+        # Authentication is passed on stdin, never in process arguments.
+        integration('config', coding_config, api_url, data={'apiToken': candidate['apiToken'], 'hindsightkit': info})
     backup(cli_mcp)
     backup(Path.home() / '.copilot/hooks/hindsight-coding-agents.json')
     integration('install-cli', Path.home(), coding_config, api_url, node(), sys.executable)
@@ -667,9 +718,7 @@ def setup_client(args, *, local_server=None, transport=None):
     for directory in user_directories:
         integration('vscode', directory / 'mcp.json', sys.executable, coding_config)
         integration('check', directory / 'mcp.json', coding_config, sys.executable)
-    asyncio.run(connection.register(candidate))
-    print(f'\nClient connected to {api_url} as {info["name"]}.')
-    print('Reload VS Code and enable its Hindsight MCP server. Start a fresh Copilot CLI session.')
+
 
 def clients():
     result = asyncio.run(connection.request(connection.management(), 'GET', '/ext/hindsightkit/clients'))
@@ -685,7 +734,7 @@ def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
     sub = parser.add_subparsers(dest='command', required=True)
-    setup_parser = sub.add_parser('setup', help='Install a local server and client, or use --server URL to connect a client.')
+    setup_parser = sub.add_parser('setup', help='Install a local server and client, or use --client-only to prepare a client.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
     setup_parser.add_argument('--reasoning-effort', choices=['low', 'medium', 'high', 'xhigh', 'max'],
@@ -693,6 +742,7 @@ def main(argv=None):
     setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
     setup_parser.add_argument('--no-open', action='store_true')
     setup_parser.add_argument('--server', help='Install a client connected to this HTTP(S) server address.')
+    setup_parser.add_argument('--client-only', action='store_true', help='Install client components; connect to a memory server separately.')
     setup_parser.add_argument('--server-only', action='store_true', help='Install only the server, without editor or Copilot client integration.')
     setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
     for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
@@ -733,6 +783,8 @@ def main(argv=None):
                 start()
             else:
                 from .remote import resume
+                if not connection.config_path().is_file():
+                    raise RuntimeError('This client is not connected. Run hindsightkit connect first.')
                 resume()
         elif args.command == 'stop':
             from .remote import stop as stop_remote

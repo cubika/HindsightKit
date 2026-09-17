@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
+import shutil
 import stat
 import struct
 import subprocess
@@ -18,7 +19,7 @@ import tomllib
 from urllib.parse import unquote, urlsplit
 import zipfile
 
-from packaging.markers import Marker, default_environment
+from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.tags import compatible_tags, cpython_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -28,10 +29,11 @@ MANIFEST_NAME = "python-bundle.json"
 PROFILES = ("client", "server")
 PIP_VERSION = "26.2.1"
 BUILD_CONSTRAINTS = "setuptools==84.0.0\nwheel==0.48.0\n"
-TARGET = {**default_environment(), "implementation_name": "cpython",
+TARGET = {"implementation_name": "cpython",
           "implementation_version": "3.12.0", "os_name": "nt",
           "platform_machine": "AMD64", "platform_python_implementation": "CPython",
-          "platform_system": "Windows", "python_full_version": "3.12.0",
+          "platform_system": "Windows", "platform_release": "10", "platform_version": "10.0",
+          "python_full_version": "3.12.0",
           "python_version": "3.12", "sys_platform": "win32", "extra": ""}
 WINDOWS_TAGS = set(cpython_tags((3, 12), platforms=["win_amd64"])) | set(
     compatible_tags((3, 12), interpreter="cp312", platforms=["win_amd64"]))
@@ -203,18 +205,23 @@ def unique_object(pairs):
     return result
 
 
-def validate_bundle(bundle_directory: Path, source_root: Path) -> dict:
+def validate_bundle(bundle_directory: Path, source_root: Path, *, profile: str = "full") -> dict:
     """Verify complete locked profiles, unmodified upstream wheels, and file hashes."""
+    if profile not in {"full", "client"}:
+        raise ValueError("Python bundle profile must be full or client")
+    required_profiles = PROFILES if profile == "full" else ("client",)
+    wheel_profile = "server" if profile == "full" else "client"
     bundle_directory, source_root = ordinary_path(bundle_directory), ordinary_path(source_root)
     project_version, profiles = source_metadata(source_root)
     manifest_path = ordinary_path(bundle_directory / MANIFEST_NAME)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-    expected = {"schema": 1, "python": "3.12", "platform": "windows-x64",
+    expected = {"schema": 1, "python": "3.12", "platform": "windows-x64", "profile": profile,
                 "project_version": project_version, "lock_sha256": sha256(source_root / "uv.lock")}
     if set(manifest) != set(expected) | {"files"} or any(manifest.get(key) != value for key, value in expected.items()):
         raise ValueError("Python bundle manifest differs from the project or lockfile")
     declared = manifest["files"]
-    if not isinstance(declared, dict) or not {f"requirements-{profile}.txt" for profile in PROFILES} <= set(declared):
+    required_names = {f"requirements-{role}.txt" for role in required_profiles}
+    if not isinstance(declared, dict) or not required_names <= set(declared):
         raise ValueError("Python bundle manifest is missing profile requirements")
     actual_files = {}
     for path in bundle_directory.rglob("*"):
@@ -228,6 +235,8 @@ def validate_bundle(bundle_directory: Path, source_root: Path) -> dict:
             continue
         if not re.fullmatch(r"requirements-(?:client|server)\.txt|wheels/[A-Za-z0-9_.+-]+\.whl", relative):
             raise ValueError(f"Unexpected Python bundle file: {relative}")
+        if not relative.startswith("wheels/") and relative not in required_names:
+            raise ValueError(f"Unexpected requirements in {profile} Python bundle: {relative}")
         actual_files[relative] = sha256(path)
     if len({name.lower() for name in declared}) != len(declared) or actual_files != declared:
         raise ValueError("Python bundle files failed SHA256 verification")
@@ -239,24 +248,55 @@ def validate_bundle(bundle_directory: Path, source_root: Path) -> dict:
         key = wheel_identity(path, source_root=source_root)
         if key in wheels:
             raise ValueError(f"Duplicate package wheel: {key[0]}")
-        if key not in profiles["server"]:
-            raise ValueError(f"Wheel is not in the server dependency lock: {path.name}")
+        if key not in profiles[wheel_profile]:
+            raise ValueError(f"Wheel is not in the {wheel_profile} dependency lock: {path.name}")
         if key[0] != "hindsightkit":
-            package = profiles["server"][key]
+            package = profiles[wheel_profile][key]
             sources = {unquote(Path(urlsplit(item["url"]).path).name): item["hash"]
                        for item in package.get("wheels", [])}
             if sources.get(path.name) != "sha256:" + digest:
                 raise ValueError(f"Wheel differs from the upstream dependency lock: {path.name}")
         wheels[key] = digest
-    if set(wheels) != set(profiles["server"]):
-        raise ValueError("Python bundle is missing locked server wheels")
-    for profile in PROFILES:
-        requirements = parse_requirements((bundle_directory / f"requirements-{profile}.txt").read_text(encoding="utf-8"))
-        if set(requirements) != set(profiles[profile]):
-            raise ValueError(f"Python {profile} requirements differ from the locked dependency graph")
+    if set(wheels) != set(profiles[wheel_profile]):
+        raise ValueError(f"Python bundle is missing locked {wheel_profile} wheels")
+    for role in required_profiles:
+        requirements = parse_requirements((bundle_directory / f"requirements-{role}.txt").read_text(encoding="utf-8"))
+        if set(requirements) != set(profiles[role]):
+            raise ValueError(f"Python {role} requirements differ from the locked dependency graph")
         if any(hashes != {wheels[key]} for key, hashes in requirements.items()):
-            raise ValueError(f"Python {profile} requirement hashes differ from the bundled wheels")
+            raise ValueError(f"Python {role} requirement hashes differ from the bundled wheels")
     return manifest
+
+
+def create_client_bundle(full_directory: Path, output: Path, source_root: Path) -> dict:
+    """Copy the exact client closure from a verified full bundle."""
+    full_directory, output = ordinary_path(full_directory), ordinary_path(output)
+    source_root = ordinary_path(source_root)
+    full = validate_bundle(full_directory, source_root)
+    if output == full_directory or output.is_relative_to(full_directory) or full_directory.is_relative_to(output):
+        raise ValueError("Client bundle output overlaps the full bundle")
+    if output == source_root or source_root.is_relative_to(output) or any(
+            output == source_root / name or output.is_relative_to(source_root / name)
+            for name in ("src", "docs", "distribution")):
+        raise ValueError("Client bundle output overlaps source inputs")
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise ValueError("Client bundle output must be new or empty")
+    _, profiles = source_metadata(source_root)
+    selected = {"requirements-client.txt": full["files"]["requirements-client.txt"]}
+    for relative, digest in full["files"].items():
+        if relative.startswith("wheels/") and wheel_identity(full_directory / relative) in profiles["client"]:
+            selected[relative] = digest
+    output.mkdir(parents=True, exist_ok=True)
+    for relative, digest in selected.items():
+        source = ordinary_path(full_directory / relative)
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        if sha256(target) != digest:
+            raise ValueError(f"Full Python bundle changed while copying: {relative}")
+    manifest = {**full, "profile": "client", "files": selected}
+    (output / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return validate_bundle(output, source_root, profile="client")
 
 
 def run(arguments, *, cwd: Path, capture=False):
@@ -316,7 +356,7 @@ def build_bundle(*, source_root: Path, output: Path, uv: str = "uv") -> dict:
         requirements = "".join(f"{name}=={version} --hash=sha256:{wheels[(name, version)]}\n"
                                for name, version in sorted(profiles[profile]))
         (output / f"requirements-{profile}.txt").write_text(requirements, encoding="utf-8", newline="\n")
-    manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64",
+    manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64", "profile": "full",
                 "project_version": project_version, "lock_sha256": sha256(source_root / "uv.lock"),
                 "files": {path.relative_to(output).as_posix(): sha256(path)
                           for path in sorted(output.rglob("*")) if path.is_file()}}

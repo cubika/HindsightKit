@@ -9,12 +9,14 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import tempfile
 import tomllib
 from urllib.parse import urlsplit
 import zipfile
 
 
 APP_NAME = "hindsightkit-windows-x64.zip"
+CLIENT_APP_NAME = "hindsightkit-client-windows-x64.zip"
 POSTGRES_VERSION = "18.6"
 VECTOR_VERSION = "0.8.6"
 POSTGRES_NAME = f"postgresql-{POSTGRES_VERSION}-pgvector-{VECTOR_VERSION}-windows-x64.zip"
@@ -197,17 +199,22 @@ def postgres_files(root: Path, needles: tuple[bytes, ...]):
     return result
 
 
-def validate_python_bundle(bundle_directory: Path, source_root: Path) -> dict:
+def python_bundle_module():
     spec = importlib.util.spec_from_file_location(
         "hindsightkit_python_bundle", Path(__file__).with_name("build_python_bundle.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.validate_bundle(bundle_directory, source_root)
+    return module
 
 
-def python_files(root: Path, source_root: Path, needles: tuple[bytes, ...]):
+def validate_python_bundle(bundle_directory: Path, source_root: Path, *, profile="full") -> dict:
+    return python_bundle_module().validate_bundle(bundle_directory, source_root, profile=profile)
+
+
+def python_files(root: Path, source_root: Path, needles: tuple[bytes, ...], *, profile="full"):
     manifest_hash = inspect_file(root / "python-bundle.json", needles)
-    manifest = validate_python_bundle(root, source_root)
+    manifest = (validate_python_bundle(root, source_root) if profile == "full" else
+                validate_python_bundle(root, source_root, profile=profile))
     files = {}
     for path in tree_files(root):
         relative = path.relative_to(root).as_posix()
@@ -279,6 +286,7 @@ def installation_notes(version: str, release_url: str, repository: str, visibili
         local = f"irm '{installer}' | iex"
         server = f"& ([scriptblock]::Create((irm '{installer}'))) -ServerOnly"
         client = f"& ([scriptblock]::Create((irm '{installer}'))) -Server 'http://server-host:9077'"
+        prepare_client = f"& ([scriptblock]::Create((irm '{installer}'))) -ClientOnly"
     else:
         host = urlsplit(release_url).netloc
         login = f"""
@@ -297,6 +305,7 @@ if ($LASTEXITCODE -ne 0) {{ throw 'GitHub sign-in failed.' }}
         local = download + "& ([scriptblock]::Create($hindsightkitInstaller))"
         server = "& ([scriptblock]::Create($hindsightkitInstaller)) -ServerOnly"
         client = "& ([scriptblock]::Create($hindsightkitInstaller)) -Server 'http://server-host:9077'"
+        prepare_client = "& ([scriptblock]::Create($hindsightkitInstaller)) -ClientOnly"
     advanced = ("Use one of these commands instead of the default installation command."
                 if visibility == "public" else
                 "Download and check the installer as above, then replace its final invocation with one of these commands.")
@@ -314,7 +323,10 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
                         if version == "v0.1.0" else
                         "Pinned Python packages are bundled in the application archive from this release; "
                         "setup installs them without contacting PyPI.\n"
-                        "The Python interpreter, Node.js, npm dependencies, and the embedding model still download during setup.")
+                        "The Python interpreter, Node.js, and npm dependencies still download during setup. "
+                        "A local server also downloads the embedding model.")
+    client_download = ("Run this on the other computer:" if visibility == "public" else
+                       "Sign in and download the installer as above, then use this final invocation on the other computer:")
     return f"""# HindsightKit {version}
 
 Requires Windows x64, Git, and a GitHub account with Copilot access.
@@ -333,8 +345,15 @@ this uses a small amount of Copilot allowance.
 
 ## Connect another computer later
 
-After installation, run {tick}hindsightkit share{tick} on the memory server and
-{tick}hindsightkit connect{tick} on the other computer. Paste the connection code at the hidden prompt.
+Run {tick}hindsightkit share{tick} on the memory server.
+{client_download}
+
+{fence}powershell
+{prepare_client}
+{fence}
+
+This prepares the client command without installing a local memory server or model.
+Then run {tick}hindsightkit connect{tick} and paste the connection code at the hidden prompt.
 The code contains a server key; transfer it privately and keep it out of Git and command-line arguments.
 
 If direct networking is unavailable, use {tick}hindsightkit share --relay{tick}.
@@ -359,11 +378,14 @@ For a client without a local database or model, replace the example address with
 ## Downloads
 
 The installer verifies the application and PostgreSQL archives with SHA256.
+New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains only client Python packages.
+The default installation uses {tick}{APP_NAME}{tick}. Computers with an existing local server
+keep the full package so their server can still be managed.
 PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
 {python_downloads}
 
 Assets come from [this release]({release_url.replace('/download/', '/tag/')}) and use the fixed {tick}{version}{tick} tag.
-{tick}SHA256SUMS{tick} covers the two ZIP packages, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
+{tick}SHA256SUMS{tick} covers the three ZIP packages, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
 and {tick}release-notes.md{tick}. It does not include itself or GitHub's source archives.
 """
 
@@ -403,8 +425,8 @@ def package_release(*, version: str, repository: str, server_url: str,
             relative = path.relative_to(source_root).as_posix()
             application["app/" + relative] = (path, inspect_file(path, needles))
     bundled_python, python_summary = python_files(python_directory, source_root, needles)
-    application.update(bundled_python)
-    if len({name.lower() for name in application}) != len(application):
+    full_application = {**application, **bundled_python}
+    if len({name.lower() for name in full_application}) != len(full_application):
         raise ValueError("Duplicate Windows path in application package")
     postgres = postgres_files(postgres_directory, needles)
     template_path = ordinary_path(source_root / "distribution/install.ps1")
@@ -412,21 +434,30 @@ def package_release(*, version: str, repository: str, server_url: str,
     template = template_path.read_text(encoding="utf-8-sig")
     substitutions = {"@@VERSION@@": version, "@@RELEASE_URL@@": release_url,
                      "@@PACKAGE_NAME@@": APP_NAME, "@@PACKAGE_SHA256@@": "",
+                     "@@CLIENT_PACKAGE_NAME@@": CLIENT_APP_NAME, "@@CLIENT_PACKAGE_SHA256@@": "",
                      "@@REPOSITORY@@": repository,
                      "@@REQUIRES_AUTH@@": "$true" if requires_auth else "$false"}
     if any(template.count(token) != 1 for token in substitutions) \
             or set(re.findall(r"@@[A-Z0-9_]+@@", template)) != set(substitutions):
         raise ValueError("Installer template must contain each supported token exactly once")
-    output.mkdir(parents=True, exist_ok=True)
-    pg_hash = write_archive(output / POSTGRES_NAME, postgres)
-    release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
-               "requires_auth": requires_auth,
-               "python": python_summary,
-               "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
-                            "postgres_version": POSTGRES_VERSION, "vector_version": VECTOR_VERSION}}
-    app_hash = write_archive(output / APP_NAME, application,
-                             {"app/release.json": json.dumps(release, indent=2) + "\n"})
+    with tempfile.TemporaryDirectory(prefix="hindsightkit-client-package-") as temporary:
+        client_directory = Path(temporary) / "python"
+        python_bundle_module().create_client_bundle(python_directory, client_directory, source_root)
+        client_python, client_summary = python_files(client_directory, source_root, needles, profile="client")
+        output.mkdir(parents=True, exist_ok=True)
+        pg_hash = write_archive(output / POSTGRES_NAME, postgres)
+        release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
+                   "requires_auth": requires_auth, "package_role": "full",
+                   "python": python_summary,
+                   "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
+                                "postgres_version": POSTGRES_VERSION, "vector_version": VECTOR_VERSION}}
+        app_hash = write_archive(output / APP_NAME, full_application,
+                                 {"app/release.json": json.dumps(release, indent=2) + "\n"})
+        client_release = {**release, "package_role": "client", "python": client_summary}
+        client_hash = write_archive(output / CLIENT_APP_NAME, {**application, **client_python},
+                                    {"app/release.json": json.dumps(client_release, indent=2) + "\n"})
     substitutions["@@PACKAGE_SHA256@@"] = app_hash
+    substitutions["@@CLIENT_PACKAGE_SHA256@@"] = client_hash
     for token, value in substitutions.items():
         template = template.replace(token, value)
     (output / "install.ps1").write_text(template, encoding="utf-8", newline="\n")

@@ -4,11 +4,11 @@ This guide is for maintainers. Users should follow [installation](installation.m
 
 ## Validate a candidate
 
-1. Update the project version and dependency locks. The candidate version must match `pyproject.toml`, for example `v0.1.1` for `0.1.1`.
+1. Update the project version and dependency locks. The candidate version must match `pyproject.toml`, for example `v0.1.2` for `0.1.2`.
 2. Push the candidate branch, then manually run the release workflow against that branch with the version in its `tag` input. Manual dispatch checks out the selected workflow ref. It uploads artifacts only and does not create a release or publish a tag.
 3. Review the Windows test and packaging results, then download the `windows-release` artifact for installation acceptance. Keep the candidate unpublished until those checks pass.
 
-The Windows job installs locked test dependencies, runs the repository suite, builds the pinned PostgreSQL/pgvector distribution, and checks a disposable database. It also builds the Python wheel bundle and checks fresh client and server environments with package-index access disabled. After packaging, it repeats those Python checks using the final application archive. These CI steps do not make Copilot model calls.
+The Windows job installs locked test dependencies, runs the repository suite, builds the pinned PostgreSQL/pgvector distribution, and checks a disposable database. It also builds the Python wheel bundle and checks fresh client and server environments with package-index access disabled. After packaging, it checks installation from both the full and client application archives. These CI steps do not make Copilot model calls.
 
 The offline Python check uses separate empty caches, an unreachable proxy, `--offline`, `--no-index`, and `--require-hashes`. It imports the installed application and role-specific modules, runs `uv pip check` and CLI help, then repeats synchronization. This checks Python package installation; interpreter, npm, model, and interactive setup remain separate acceptance steps.
 
@@ -24,17 +24,20 @@ The workflow gets the repository address and visibility from GitHub context. Gen
 | --- | --- |
 | `install.ps1` | Generated bootstrap with the release address and application checksum |
 | `hindsightkit-windows-x64.zip` | Application, lockfiles, documentation, release metadata, and the pinned Python wheel bundle |
+| `hindsightkit-client-windows-x64.zip` | Application with the smaller client Python dependency bundle, selected for a new client-only installation |
 | `postgresql-18.6-pgvector-0.8.6-windows-x64.zip` | Official PostgreSQL, the compiled unmodified pgvector extension, Microsoft runtime DLLs, upstream notices, and a file manifest |
 | `QUICKSTART.md` and `release-notes.md` | Instructions generated for this release |
 | `SHA256SUMS` | Checksums for the other release assets |
 
-The Python bundle contains `python-bundle.json`, `requirements-client.txt`, `requirements-server.txt`, and `wheels`. The manifest identifies Windows x64/Python 3.12, the project version, lockfile hash, and hashes of all requirements and wheel files. The validator checks both dependency sets against the lockfile, upstream wheel hashes, wheel paths, and the application wheel's source contents. Wheels retain their original bytes and license files.
+The full Python bundle contains `python-bundle.json`, `requirements-client.txt`, `requirements-server.txt`, and `wheels`. The client bundle contains its manifest, client requirements, and only the client wheels. Each manifest identifies its profile, Windows x64/Python 3.12, the project version, lockfile hash, and file hashes. The validator checks the corresponding dependency set against the lockfile, upstream wheel hashes, wheel paths, and the application wheel's source contents. Wheels retain their original bytes and license files. The installer uses the full archive on a computer with an existing local server profile to preserve management commands.
 
-The packager requires this validated bundle and a verified PostgreSQL distribution. It rejects private runtime files, linked paths, changed inputs, overlapping output directories, and detected local build paths. Archives exclude database clusters, credentials, logs, and a developer's Python environment. The Python interpreter, Node.js, npm components, and embedding model still download during setup.
+The packager requires the validated full bundle and a verified PostgreSQL distribution, then derives and validates the client bundle. It rejects private runtime files, linked paths, changed inputs, overlapping output directories, and detected local build paths. Archives exclude database clusters, credentials, logs, and a developer's Python environment. The Python interpreter, Node.js, and npm components still download during setup; local server setup also needs the embedding model and database distribution.
 
 ## Installation acceptance
 
-Before describing a release as installed on a clean machine, check its downloads, Copilot login, model download, complete local setup, repeat setup, and an upgrade that preserves disposable test memory. For the v0.1.1 candidate, also check installation on a connection that failed to download the v0.1.0 wheel. Preserve the stage log and relevant console output, then record the result and any remaining limit in [release validation](release-validation.md). CI success alone does not establish that these checks passed.
+Before describing a release as installed on a clean machine, check its downloads, Copilot login, model download, complete local setup, repeat setup, and an upgrade that preserves disposable test memory. Check offline Python installation on a connection that failed to download the v0.1.0 wheel. Preserve stage logs and relevant console output, then record each result and its limits in [release validation](release-validation.md).
+
+For v0.1.2, also check fresh `-ClientOnly` preparation without an endpoint, the smaller client archive, later direct/code connection, and `-Server` as a shortcut. On an existing server installation, confirm that client setup preserves settings and memory without starting or reconfiguring server components. Exercise npm output, silent-process heartbeats, failures, retries, and reuse messages. These checks remain pending until actual runs are recorded; CI configuration alone does not establish a pass.
 
 A draft in a public repository is not anonymously downloadable. Use a controlled test release for the public download path, or inspect draft assets with authenticated access. Restricted repositories require an account with access. Never change repository visibility as an installation workaround without the owner's authorization.
 
@@ -47,7 +50,7 @@ Use Windows x64 CPython 3.12, the repository's prepared development environment,
 ```powershell
 .venv/Scripts/python.exe distribution/build_python_bundle.py --source-root . --output dist/python
 .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/python --uv uv
-.venv/Scripts/python.exe distribution/package_release.py --version v0.1.1 --repository OWNER/REPOSITORY --server-url https://github.com --visibility public --postgres-directory C:/path/to/server-18.6 --python-directory dist/python --output dist/release
+.venv/Scripts/python.exe distribution/package_release.py --version v0.1.2 --repository OWNER/REPOSITORY --server-url https://github.com --visibility public --postgres-directory C:/path/to/server-18.6 --python-directory dist/python --output dist/release
 ```
 
 Check each command's exit status before continuing. Use `--visibility internal` or `--visibility private` when access is restricted. Packaging itself reads and validates the inputs; it does not upload a release or start a database. The template at `distribution/install.ps1` cannot be run directly before its release fields are generated.

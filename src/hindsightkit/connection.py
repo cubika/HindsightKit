@@ -31,7 +31,9 @@ def load() -> dict:
     path = config_path()
     if path.is_file():
         return json.loads(path.read_text(encoding='utf-8'))
-    return server_load()
+    if has_server():
+        return server_load()
+    raise RuntimeError('This client is not connected. Run hindsightkit connect or hindsightkit connect --server URL.')
 
 
 def server_load() -> dict:

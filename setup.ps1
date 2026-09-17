@@ -7,6 +7,7 @@ param(
     [int]$Port = 0,
     [string]$Server,
     [switch]$ServerOnly,
+    [switch]$ClientOnly,
     [string]$ApiKeyEnv,
     [switch]$NoOpen
 )
@@ -27,7 +28,7 @@ function Write-InstallStatus([string]$Message) {
 }
 
 # Validate before installing dependencies or touching an existing connection.
-$clientOnly = [bool]$Server
+$clientOnly = [bool]$Server -or [bool]$ClientOnly
 if ($clientOnly -and ($ServerOnly -or $Model -or $ModelDir -or $Port -or $ReasoningEffort)) {
     throw 'Client setup accepts -Server; model and port options belong on the server.'
 }
@@ -47,6 +48,7 @@ if ($ModelDir) {
     }
 }
 if ($ApiKeyEnv) {
+    if ($clientOnly -and -not $Server) { throw '-ApiKeyEnv requires -Server during client-only installation.' }
     $selectedKey = [Environment]::GetEnvironmentVariable($ApiKeyEnv)
     if (-not $selectedKey) { throw 'The selected API-key environment variable is empty.' }
     if ($selectedKey -match '[^\x00-\x7f]|\s') { throw 'Connection key must contain ASCII characters without whitespace.' }
@@ -95,10 +97,15 @@ function Invoke-Checked {
 }
 
 $releaseInstall = [bool]$env:HINDSIGHTKIT_RELEASE_MANIFEST
+$serverProfile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
+$hadServer = (Test-Path -LiteralPath $serverProfile -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.venv/Lib/site-packages/hindsight_api') -PathType Container)
+$needsServer = -not $clientOnly -or $hadServer
 $pythonBundle = Join-Path $PSScriptRoot 'python'
 $wheels = Join-Path $pythonBundle 'wheels'
 if ($releaseInstall) {
-    foreach ($required in @('requirements-client.txt', 'requirements-server.txt')) {
+    $requiredProfiles = if ($needsServer) { @('requirements-client.txt', 'requirements-server.txt') } else { @('requirements-client.txt') }
+    foreach ($required in $requiredProfiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $pythonBundle $required) -PathType Leaf)) {
             throw "The release Python bundle is missing $required. Download a complete release; setup will not use PyPI."
         }
@@ -109,6 +116,10 @@ if ($releaseInstall) {
     }
 }
 Write-InstallStatus 'Installation options validated.'
+if ($clientOnly) {
+    Write-InstallStatus 'Client-only installation: no local dashboard, database, or model will be installed or started.'
+    if ($hadServer) { Write-InstallStatus 'Existing local server detected: preserving its management dependencies and data. Client setup will not reconfigure it.' }
+}
 $toolsDirectory = Join-Path $PSScriptRoot '.runtime/tools'
 New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
 
@@ -179,10 +190,6 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     $env:UV_CACHE_DIR = Join-Path $PSScriptRoot '.runtime/uv-cache'
     $env:PYTHONUTF8 = '1'
     # A new release has an empty venv; retain local server management dependencies.
-    $serverProfile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
-    $hadServer = (Test-Path -LiteralPath $serverProfile -PathType Leaf) -or
-        (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.venv/Lib/site-packages/hindsight_api') -PathType Container)
-    $needsServer = -not $clientOnly -or $hadServer
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
     if ($releaseInstall) {
         $stage = 'Prepare Python 3.12'
@@ -231,6 +238,7 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     if ($Port) { $setupArgs += @('--port', "$Port") }
     if ($Server) { $setupArgs += @('--server', $Server) }
     if ($ServerOnly) { $setupArgs += '--server-only' }
+    if ($clientOnly) { $setupArgs += '--client-only' }
     if ($ApiKeyEnv) { $setupArgs += @('--api-key-env', $ApiKeyEnv) }
     if ($NoOpen) { $setupArgs += '--no-open' }
     # Shell-local aliases and functions are invisible to the Python child's PATH scan.

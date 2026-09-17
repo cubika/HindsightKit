@@ -18,7 +18,7 @@ from hindsightkit import cli, connection
 
 def options(**values):
     return argparse.Namespace(**dict(dict(server=None, api_key_env=None, model=None,
-        server_only=False, model_dir=None, port=None, reasoning_effort=None, no_open=True), **values))
+        server_only=False, client_only=False, model_dir=None, port=None, reasoning_effort=None, no_open=True), **values))
 
 
 class RemoteSetupTests(unittest.TestCase):
@@ -106,15 +106,122 @@ class RemoteSetupTests(unittest.TestCase):
             self.assertEqual(cli.main(['setup']), 0)
             self.assertIsNone(setup.call_args.args[0].server)
             self.assertFalse(setup.call_args.args[0].server_only)
+            self.assertFalse(setup.call_args.args[0].client_only)
+            self.assertEqual(cli.main(['setup', '--client-only']), 0)
+            self.assertTrue(setup.call_args.args[0].client_only)
             self.assertEqual(cli.main(['setup', '--server-only']), 0)
             self.assertTrue(setup.call_args.args[0].server_only)
             self.assertEqual(cli.main(['setup', '--server', 'http://example.invalid:9077']), 0)
             self.assertEqual(setup.call_args.args[0].server, 'http://example.invalid:9077')
+            self.assertEqual(cli.main(['setup', '--client-only', '--server', 'http://example.invalid:9077']), 0)
+            self.assertTrue(setup.call_args.args[0].client_only)
             for flag in ['--api-url', '--bank', '--device-name', '--share', '--listen', '--local', '--replace-connection']:
                 with self.subTest(flag=flag), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     cli.main(['setup', flag])
             for name in ['api_url', 'bank', 'device_name', 'share', 'listen', 'local', 'replace_connection']:
                 self.assertFalse(hasattr(setup.call_args.args[0], name))
+
+    def test_client_only_install_does_not_select_or_contact_a_server(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.client_environment(root) as state, \
+                 patch('hindsightkit.command.install', return_value='hindsightkit.exe') as launcher, \
+                 patch.object(connection, 'has_server', return_value=False), \
+                 patch.object(cli, 'setup_server') as server, patch.object(cli, 'stop_profile_services') as stop:
+                cli.setup(options(client_only=True))
+                state.packages.assert_called_once_with(client=True)
+                state.auth.assert_called_once_with()
+                launcher.assert_called_once_with(root / 'runtime/bin')
+                state.integrate.assert_not_called()
+                state.request.assert_not_awaited()
+                state.register.assert_not_awaited()
+                server.assert_not_called()
+                stop.assert_not_called()
+                self.assertFalse(state.path.exists())
+
+    def test_client_only_upgrade_refreshes_integrations_offline_and_preserves_connection_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.client_environment(root) as state, \
+                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch.object(connection, 'has_server', return_value=True), \
+                 patch.object(cli, 'setup_server') as server, patch.object(cli, 'stop_profile_services') as stop:
+                previous = {'apiUrl': 'http://127.0.0.1:41234', 'apiToken': 'saved-client-key',
+                    'optInOnly': False, 'custom': 'preserved',
+                    'hindsightkit': {'mode': 'client', 'activity': True, 'deviceId': 'saved-device',
+                        'transport': {'mode': 'connect', 'tunnel_id': 'private-tunnel',
+                                      'remote_port': 9077, 'local_port': 41234}}}
+                state.path.write_text(json.dumps(previous, indent=4) + '\n', encoding='utf-8')
+                original = state.path.read_bytes()
+                state.request.side_effect = AssertionError('A disconnected server cannot block a client upgrade')
+                for _ in range(2):
+                    cli.setup(options(client_only=True))
+                self.assertEqual(state.path.read_bytes(), original)
+                self.assertEqual(state.profile_path.read_text(), 'HINDSIGHT_API_TENANT_API_KEY=server-only-key\n')
+                self.assertEqual(state.packages.call_count, 2)
+                state.auth.assert_not_called()
+                state.request.assert_not_awaited()
+                state.register.assert_not_awaited()
+                server.assert_not_called()
+                stop.assert_not_called()
+                actions = [call.args[0] for call in state.integrate.call_args_list]
+                self.assertEqual(actions, ['preflight', 'install-cli', 'vscode', 'check'] * 2)
+                for call in state.integrate.call_args_list:
+                    self.assertEqual(call.kwargs['runtime_path'], root / 'runtime/client-runtime')
+                    if call.args[0] == 'install-cli':
+                        self.assertEqual(call.args[-1], cli.sys.executable)
+                    if call.args[0] == 'vscode':
+                        self.assertEqual(call.args[2], cli.sys.executable)
+
+    def test_client_only_upgrade_rejects_unmanaged_config_without_changes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.client_environment(root) as state:
+                state.path.write_text('{"apiUrl": "https://existing.invalid"}\n')
+                before = state.path.read_bytes()
+                with self.assertRaisesRegex(RuntimeError, 'not managed by HindsightKit'):
+                    cli.setup(options(client_only=True))
+                self.assertEqual(state.path.read_bytes(), before)
+                state.packages.assert_not_called()
+                state.integrate.assert_not_called()
+
+    def test_client_only_with_server_connects_without_local_server_setup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.client_environment(root) as state, \
+                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch.object(cli, 'setup_server') as server:
+                cli.setup(options(client_only=True, server='https://memory.invalid', api_key_env='TEST_MEMORY_KEY'))
+                server.assert_not_called()
+                self.assertEqual(json.loads(state.path.read_text())['apiUrl'], 'https://memory.invalid')
+                state.register.assert_awaited_once()
+
+    def test_unconnected_client_status_and_commands_do_not_import_server_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / 'client-runtime'
+            installed = directory / 'node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js'
+            installed.parent.mkdir(parents=True)
+            installed.write_text('// installed fixture')
+            (directory / '.installed-lock').write_text('verified-lock')
+            output = io.StringIO()
+            with patch.object(cli, 'home', return_value=root), \
+                 patch.object(connection, 'config_path', return_value=root / 'unconnected.json'), \
+                 patch.object(connection, 'has_server', return_value=False), \
+                 patch.object(connection, 'server_load', side_effect=AssertionError('No server dependencies')), \
+                 patch.object(connection, 'request', new_callable=AsyncMock) as request, \
+                 patch('hindsightkit.remote.status'), patch('hindsightkit.remote.resume') as resume, \
+                 patch.object(cli, 'prepare_env'), contextlib.redirect_stdout(output), \
+                 contextlib.redirect_stderr(output):
+                self.assertTrue(cli.status())
+                self.assertIn('installed; not connected', output.getvalue())
+                self.assertEqual(cli.main(['start']), 1)
+                self.assertEqual(cli.main(['check']), 1)
+                self.assertIn('hindsightkit connect', output.getvalue())
+                with self.assertRaisesRegex(RuntimeError, 'not connected'):
+                    connection.load()
+                request.assert_not_awaited()
+                resume.assert_not_called()
 
     def test_default_setup_selects_server_even_with_a_saved_client(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -159,7 +266,9 @@ class RemoteSetupTests(unittest.TestCase):
             with patch.object(cli, 'setup_server') as server, patch.object(cli, 'setup_client') as client, \
                  patch.object(cli.Path, 'home', return_value=root), \
                  patch.dict(os.environ, {'COPILOT_HOME': str(root / '.copilot')}):
-                for args in [options(server='http://host', server_only=True), options(port=65536),
+                for args in [options(server='http://host', server_only=True),
+                             options(client_only=True, server_only=True), options(client_only=True, model='server-model'),
+                             options(client_only=True, api_key_env='NOT_USED'), options(port=65536),
                              options(model_dir=str(root / 'missing')), options(server='ftp://host')]:
                     with self.subTest(args=args), self.assertRaises((ValueError, FileNotFoundError)):
                         cli.setup(args)

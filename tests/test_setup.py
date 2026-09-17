@@ -183,6 +183,71 @@ catch { Write-InstallStatus $_.Exception.Message; exit 19 }
                     self.assertEqual(hook['args'][:3], ['-m', 'hindsightkit.cli', 'hook'])
             self.assertEqual(json.loads(config.read_text())['optInOnly'], False)
 
+    def test_client_upgrade_rewrites_real_editor_and_hook_paths_without_connection_changes(self):
+        runtime = cli.home() / 'client-runtime'
+        if not (runtime / 'node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js').is_file():
+            self.skipTest('Install client runtime dependencies before integration tests.')
+        actual_integrate = cli.integrate
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            isolated_runtime = base / 'kit/client-runtime'
+            shutil.copytree(runtime, isolated_runtime)
+            config = base / '.hindsight/coding-agent.json'
+            config.parent.mkdir()
+            candidate = {'apiUrl': 'http://127.0.0.1:41234', 'apiToken': 'saved-test-key',
+                'serverMode': 'self-hosted', 'optInOnly': False,
+                'hindsightkit': {'mode': 'client', 'activity': True, 'deviceId': 'saved-test-device',
+                    'transport': {'mode': 'connect', 'tunnel_id': 'test-private-relay',
+                                  'local_port': 41234, 'remote_port': 9077}}}
+            config.write_text(json.dumps(candidate, indent=4) + '\n', encoding='utf-8')
+            original = config.read_bytes()
+            old_python = str(base / 'old-release/python.exe')
+            mcp = base / '.copilot/mcp-config.json'
+            mcp.parent.mkdir()
+            mcp.write_text(json.dumps({'mcpServers': {
+                'hindsight': {'command': old_python, 'args': ['-m', 'hindsightkit.cli', 'mcp', '--context', 'cli']},
+                'other': {'command': 'preserved-command'}}}))
+            editor = base / 'Code/mcp.json'
+            editor.parent.mkdir()
+            editor.write_text(json.dumps({'servers': {
+                'hindsight': {'command': old_python, 'args': ['-m', 'hindsightkit.cli', 'mcp', '--context', 'vscode']},
+                'other': {'command': 'preserved-command'}}}))
+            hook_path = base / '.copilot/hooks/hindsight-coding-agents.json'
+            hook_path.parent.mkdir()
+            hook_path.write_text(json.dumps({'version': 1, 'hooks': {'sessionStart': [
+                {'type': 'command', 'exec': old_python, 'args': ['-m', 'hindsightkit.cli', 'hook', 'sessionStart']},
+                {'command': 'echo retained-user-hook', 'timeout': 1}]}}))
+
+            def integration(action, *args, **options):
+                options['runtime_path'] = isolated_runtime
+                return actual_integrate(action, *args, **options)
+
+            with patch.object(cli.Path, 'home', return_value=base), \
+                 patch.object(cli, 'home', return_value=base / 'kit'), \
+                 patch.object(cli.connection, 'config_path', return_value=config), \
+                 patch.object(cli, 'vscode_user_directories', return_value=[editor.parent]), \
+                 patch.object(cli, 'integrate', side_effect=integration), \
+                 patch.object(cli.connection, 'request', side_effect=AssertionError('No network during upgrade')), \
+                 patch.object(cli.connection, 'register', side_effect=AssertionError('No registration during upgrade')), \
+                 patch.object(cli, 'ensure_copilot', side_effect=AssertionError('No login during upgrade')):
+                for _ in range(2):
+                    cli.install_client_integrations(candidate, candidate, write_config=False)
+            self.assertEqual(config.read_bytes(), original)
+            cli_config = json.loads(mcp.read_text())['mcpServers']
+            vs_config = json.loads(editor.read_text())['servers']
+            self.assertEqual(cli_config['hindsight']['command'], cli.sys.executable)
+            self.assertEqual(vs_config['hindsight']['command'], cli.sys.executable)
+            self.assertEqual(cli_config['other']['command'], 'preserved-command')
+            self.assertEqual(vs_config['other']['command'], 'preserved-command')
+            hooks = json.loads(hook_path.read_text())['hooks']
+            self.assertEqual(hooks['sessionStart'][0]['command'], 'echo retained-user-hook')
+            for entries in hooks.values():
+                for hook in entries:
+                    if hook.get('command') == 'echo retained-user-hook':
+                        continue
+                    self.assertEqual(hook['exec'], cli.sys.executable)
+                    self.assertEqual(hook['env']['HINDSIGHT_CONFIG'], str(config))
+
 
 if __name__ == '__main__':
     unittest.main()

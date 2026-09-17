@@ -1,12 +1,12 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.1 Windows x64 preview. Linux, macOS, and Windows ARM are not supported. Installation checks and their scope are recorded in [release validation](release-validation.md).
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.2 Windows x64 candidate; validation and publication are pending. The new `-ClientOnly` entry requires v0.1.2. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks.
 
 ## Before installing
 
 - Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
 - Install Git for coding integrations, and have a Copilot account available for sign-in. A dedicated server installed with ServerOnly does not need Git for client routing.
-- Allow downloads from GitHub, npm, Node.js, and the embedding model host. The v0.1.1 application archive contains the pinned Python packages, but the Python interpreter, Node.js, npm components, and embedding model still download during setup.
+- Allow downloads from GitHub, npm, and Node.js. Python packages come in the release archive, but the interpreter, Node.js, and npm components still download. A new local server also downloads the embedding model and database distribution.
 - For a private or internal release, install GitHub CLI and sign in with an account that can read the repository. The release page provides its authenticated command. A browser login does not authenticate PowerShell downloads.
 
 The installer uses the default Copilot profile. A custom `COPILOT_HOME` must be unset before setup. WorkIQ is optional and is not installed by HindsightKit.
@@ -23,6 +23,22 @@ After a successful run, reload VS Code, use Copilot Chat in agent mode, and allo
 
 An existing remote client connection is preserved by default setup. Use the separate [connect command](devtunnel.md) to choose another server or return to local memory.
 
+## Prepare a client for another server
+
+Use the v0.1.2 release page's `-ClientOnly` command. On a fresh client it selects the smaller archive, containing the 87 locked client Python packages, and prepares the command and Copilot components. It does not invent a default endpoint, contact a memory server, or install a local dashboard, database, or model.
+
+After preparation, choose the server:
+
+```powershell
+hindsightkit connect
+```
+
+Paste the server's connection code at the hidden prompt. If the server address is already known, use `hindsightkit connect --server http://memory-host:9077`; the key is requested separately. The installer option `-Server http://memory-host:9077` is a shortcut that selects client-only installation and connects in the same run.
+
+On a computer with a local HindsightKit server profile, the installer keeps the full package so server management commands remain available. Client-only setup preserves the server's settings and data without reinstalling, starting, or reconfiguring its dashboard, database, or model. It does not uninstall the server or stop a server that is already running. Existing managed client connections are preserved and their integrations refreshed.
+
+If an earlier default installation already succeeded, run `connect` directly; its local dashboard can remain installed. If installation failed, rerun the appropriate release installer after checking the failure. Do not delete the database to switch client connections.
+
 ## Optional installer arguments
 
 The downloaded `install.ps1` accepts these arguments. When using a release page's script-block command, append the argument to that invocation. Do not paste a connection key into a command line.
@@ -30,7 +46,8 @@ The downloaded `install.ps1` accepts these arguments. When using a release page'
 | Argument | Purpose |
 | --- | --- |
 | `-ServerOnly` | Install only the server. Default: false. |
-| `-Server http://memory-host:9077` | Advanced client-only installation against a known server. It requests the connection key separately and omits a new database, dashboard, and model. |
+| `-ClientOnly` | Prepare client components, then choose a server with `hindsightkit connect`. No local server or endpoint is created. |
+| `-Server http://memory-host:9077` | Shortcut for client-only installation and connection to a known server. It requests the key separately. |
 | `-NoOpen` | Do not open the dashboard after setup. |
 | `-InstallDir C:\Apps\HindsightKit` | Change the release application, managed Python, and installation-log location. It does not relocate memory or user configuration. |
 | `-Model` / `-ReasoningEffort` | Select model settings for a new server profile. |
@@ -38,7 +55,7 @@ The downloaded `install.ps1` accepts these arguments. When using a release page'
 | `-ModelDir C:\models\e5` | Reuse the official multilingual E5 model. The directory must contain `onnx\model.onnx` and tokenizer files, including `tokenizer.json`. |
 | `-ApiKeyEnv NAME` | Read a connection key from a named environment variable for automated setup. |
 
-Server model/port options cannot be combined with `-Server`. On a machine that already has a local server, client installation retains the Python server dependencies so its management commands remain available.
+`-ClientOnly` and `-Server` cannot be combined with `-ServerOnly` or server model/port options. `-ApiKeyEnv` during client-only installation requires `-Server`. Client-only preparation without an endpoint keeps connection-key entry for the later `connect` command.
 
 ## Model configuration
 
@@ -102,13 +119,21 @@ An existing external PostgreSQL URL is retained and checked. Its administrator m
 
 ### Find the failed stage
 
-The v0.1.1 release installer prints the failed stage, the first matching dependency error, and a log path under `<InstallDir>\logs`. With the default directory, logs are in `%LOCALAPPDATA%\HindsightKit\logs`. The installer restricts this directory to the current user and SYSTEM.
+The release installer prints the failed stage, the first matching dependency error, and a log path under `<InstallDir>\logs`. With the default directory, logs are in `%LOCALAPPDATA%\HindsightKit\logs`. The installer restricts this directory to the current user and SYSTEM.
 
-The log contains stage messages and dependency-command output, not a complete terminal transcript. Interactive configuration output, including Copilot login and connection-key prompts, is excluded. Keep the relevant console error if the failure occurs during that stage.
+The log contains stage messages and dependency-command output, not a complete terminal transcript. In v0.1.2, npm output is also logged during client or server integration installation. Copilot login and connection-key prompts remain excluded. Keep the relevant console error if the failure occurs during an interactive stage.
+
+### npm installation takes time
+
+The v0.1.2 installer displays npm output and the working directory, then prints `Still installing ... elapsed ...` every ten seconds while the process runs. Completion includes elapsed time. These messages report a running process; they do not estimate a completion percentage. Matching installed components print `Reusing` instead of running npm again.
+
+An earlier hosted run spent about five minutes installing dashboard npm components before moving to client integration. A wait of several minutes is possible, but that measurement does not identify the reason for another machine's wait. Use the current npm output and installation log to distinguish a slow download from an error. Failure summaries preserve the first error, recent output, exit code, working directory, and log path; credentials in npm output are redacted.
+
+An active Copilot session does not determine npm's download progress. Reload VS Code and start a new Copilot CLI session after installation to load updated hooks and configuration. Restarting those clients is not a remedy for a stalled npm request.
 
 ### Python packages fail to install
 
-The v0.1.1 release installs its wheels using `--offline`, `--no-index`, and `--require-hashes`. It stops on a missing bundle or checksum failure instead of falling back to PyPI. Use the complete application archive from that release. The Python interpreter is a separate download; check the stage name to distinguish it from package installation.
+Release installation uses `--offline`, `--no-index`, and `--require-hashes` for Python packages. It stops on a missing bundle or checksum failure instead of falling back to PyPI. Use the complete application archive selected by the installer. The Python interpreter is a separate download; check the stage name to distinguish it from package installation.
 
 In v0.1.0, the locked `hindsight-api-slim 0.10.0` wheel failed with TLS `HandshakeFailure` on `files.pythonhosted.org` while the index remained reachable. The error was reproduced locally and also appeared in the second machine's supplied log. Switching to the system certificate store did not resolve the locally reproduced failure. The network component responsible was not identified.
 
@@ -116,7 +141,7 @@ An older source installation may keep working because its packages and cache alr
 
 ### Node.js output is unclear
 
-The v0.1.1 output distinguishes three states: `Downloading Node.js` starts the transfer, `Installed Node.js` follows extraction and version verification, and `Reusing Node.js` confirms an existing suitable runtime. Release installs use the pinned managed copy so they do not depend on a source checkout. Source setup can reuse a suitable Node.js from PATH.
+The output distinguishes three states: `Downloading Node.js` starts the transfer, `Installed Node.js` follows extraction and version verification, and `Reusing Node.js` confirms an existing suitable runtime. Release installs use the pinned managed copy so they do not depend on a source checkout. Source setup can reuse a suitable Node.js from PATH.
 
 The v0.1.0 message `Installing Node.js...` only marked entry into the download/install path; reuse was silent. A later uv error means the installation stopped after that stage.
 

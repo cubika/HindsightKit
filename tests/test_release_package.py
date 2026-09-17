@@ -44,6 +44,7 @@ class ReleasePackageTests(unittest.TestCase):
         write(source, "distribution/install.ps1", "\n".join([
             "$version = '@@VERSION@@'", "$url = '@@RELEASE_URL@@'",
             "$name = '@@PACKAGE_NAME@@'", "$sha = '@@PACKAGE_SHA256@@'",
+            "$clientName = '@@CLIENT_PACKAGE_NAME@@'", "$clientSha = '@@CLIENT_PACKAGE_SHA256@@'",
             "$repository = '@@REPOSITORY@@'", "$requiresAuth = @@REQUIRES_AUTH@@",
         ]))
         for name in package.REQUIRED_POSTGRES:
@@ -81,7 +82,7 @@ class ReleasePackageTests(unittest.TestCase):
         requirement = f"hindsightkit==0.1.1 --hash=sha256:{package.inspect_file(wheel)}\n"
         for role in ("client", "server"):
             write(directory, f"requirements-{role}.txt", requirement)
-        manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64",
+        manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64", "profile": "full",
                     "project_version": "0.1.1", "lock_sha256": package.inspect_file(source / "uv.lock"),
                     "files": {path.relative_to(directory).as_posix(): package.inspect_file(path)
                               for path in directory.rglob("*") if path.is_file()}}
@@ -112,7 +113,7 @@ class ReleasePackageTests(unittest.TestCase):
             with patch.object(subprocess, "run", side_effect=AssertionError("Packaging must not run tools")):
                 release = package.package_release(**args)
             self.assertEqual({path.name for path in output.iterdir()}, {
-                package.APP_NAME, package.POSTGRES_NAME, "install.ps1", "QUICKSTART.md",
+                package.APP_NAME, package.CLIENT_APP_NAME, package.POSTGRES_NAME, "install.ps1", "QUICKSTART.md",
                 "release-notes.md", "SHA256SUMS"})
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
@@ -121,11 +122,19 @@ class ReleasePackageTests(unittest.TestCase):
                     "app/python/requirements-client.txt", "app/python/requirements-server.txt",
                     "app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"})
                 self.assertEqual(json.loads(archive.read("app/release.json")), release)
+                self.assertEqual(release["package_role"], "full")
                 self.assertTrue(all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist()))
                 for path in args["python_directory"].rglob("*"):
                     if path.is_file():
                         self.assertEqual(archive.read("app/python/" + path.relative_to(args["python_directory"]).as_posix()),
                                          path.read_bytes())
+            with zipfile.ZipFile(output / package.CLIENT_APP_NAME) as archive:
+                client_release = json.loads(archive.read("app/release.json"))
+                self.assertEqual(client_release["package_role"], "client")
+                self.assertNotIn("app/python/requirements-server.txt", archive.namelist())
+                self.assertEqual(json.loads(archive.read("app/python/python-bundle.json"))["profile"], "client")
+                self.assertEqual(archive.read("app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"),
+                                 (args["python_directory"] / "wheels/hindsightkit-0.1.1-py3-none-any.whl").read_bytes())
             with zipfile.ZipFile(output / package.POSTGRES_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"pgsql/" + name for name in package.REQUIRED_POSTGRES}
                                  | {"pgsql/" + package.POSTGRES_MANIFEST})
@@ -139,17 +148,19 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertNotIn("@@", installer)
             self.assertIn("$requiresAuth = $false", installer)
             self.assertIn(package.inspect_file(output / package.APP_NAME), installer)
+            self.assertIn(package.inspect_file(output / package.CLIENT_APP_NAME), installer)
             notes = (output / "QUICKSTART.md").read_text()
             self.assertIn(f"irm '{base}/install.ps1' | iex", notes)
             self.assertNotIn("gh auth login", notes)
             self.assertIn("-ServerOnly", notes)
+            self.assertIn("-ClientOnly", notes)
             self.assertIn("-Server 'http://server-host:9077'", notes)
             self.assertIn("Windows x64, Git, and a GitHub account with Copilot access", notes)
             self.assertLess(notes.index("hindsightkit share"), notes.index("Advanced installation"))
             self.assertIn("hindsightkit connect", notes)
             self.assertIn("Pinned Python packages are bundled", notes)
             self.assertIn("without contacting PyPI", notes)
-            self.assertIn("embedding model still download during setup", notes)
+            self.assertIn("local server also downloads the embedding model", notes)
             self.assertNotIn("Known v0.1.0 download issue", notes)
             self.assertIn("It does not include itself or GitHub's source archives", notes)
             checksums = dict(line.split("  ", 1)[::-1] for line in (output / "SHA256SUMS").read_text().splitlines())
@@ -188,6 +199,48 @@ class ReleasePackageTests(unittest.TestCase):
             package.package_release(**repeated)
             for path in args["output"].iterdir():
                 self.assertEqual(path.read_bytes(), (repeated["output"] / path.name).read_bytes())
+
+    def test_client_archive_omits_server_dependencies_from_the_full_wheel_pool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            source, pool = args["source_root"], args["python_directory"]
+            server = pool / "wheels/hindsight_api_slim-0.10.0-py3-none-any.whl"
+            with zipfile.ZipFile(server, "w") as archive:
+                archive.writestr("hindsight_api/__init__.py", "SERVER = True\n")
+                archive.writestr("hindsight_api_slim-0.10.0.dist-info/METADATA",
+                                 "Metadata-Version: 2.4\nName: hindsight-api-slim\nVersion: 0.10.0\n")
+                archive.writestr("hindsight_api_slim-0.10.0.dist-info/WHEEL",
+                                 "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                archive.writestr("hindsight_api_slim-0.10.0.dist-info/RECORD", "")
+                archive.writestr("hindsight_api_slim-0.10.0.dist-info/licenses/LICENSE", "Original fixture license.\n")
+            digest = package.inspect_file(server)
+            lock = source / "uv.lock"
+            lock.write_text(lock.read_text().replace("server = []", 'server = [{name = "hindsight-api-slim"}]') +
+                            '\n[[package]]\nname = "hindsight-api-slim"\nversion = "0.10.0"\n'
+                            'source = {registry = "https://pypi.org/simple"}\n'
+                            f'wheels = [{{url = "https://files.pythonhosted.org/{server.name}", hash = "sha256:{digest}"}}]\n')
+            requirements = pool / "requirements-server.txt"
+            requirements.write_text(requirements.read_text() + f"hindsight-api-slim==0.10.0 --hash=sha256:{digest}\n")
+            manifest_path = pool / "python-bundle.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["lock_sha256"] = package.inspect_file(lock)
+            manifest["files"] = {path.relative_to(pool).as_posix(): package.inspect_file(path)
+                                 for path in pool.rglob("*") if path.is_file() and path != manifest_path}
+            write(pool, "python-bundle.json", json.dumps(manifest))
+            package.package_release(**args)
+            with zipfile.ZipFile(args["output"] / package.APP_NAME) as full, \
+                    zipfile.ZipFile(args["output"] / package.CLIENT_APP_NAME) as client:
+                full_wheels = {name for name in full.namelist() if name.endswith(".whl")}
+                client_wheels = {name for name in client.namelist() if name.endswith(".whl")}
+                self.assertEqual(full_wheels - client_wheels, {"app/python/wheels/" + server.name})
+                self.assertEqual(json.loads(full.read("app/release.json"))["python"]["packages"], 2)
+                self.assertEqual(json.loads(client.read("app/release.json"))["python"]["packages"], 1)
+                self.assertNotIn("hindsight-api-slim", client.read("app/python/requirements-client.txt").decode())
+                self.assertNotIn("app/python/requirements-server.txt", client.namelist())
+                self.assertEqual(full.read(next(iter(client_wheels))), client.read(next(iter(client_wheels))))
+                self.assertEqual(full.read("app/python/wheels/" + server.name), server.read_bytes())
+            self.assertLess((args["output"] / package.CLIENT_APP_NAME).stat().st_size,
+                            (args["output"] / package.APP_NAME).stat().st_size)
 
     def test_historical_notes_keep_the_v010_download_limitation(self):
         notes = package.installation_notes("v0.1.0",
@@ -280,7 +333,7 @@ class ReleasePackageTests(unittest.TestCase):
             "https://github.com/restricted-owner/HindsightKit/releases/download/v0.1.1",
             "restricted-owner/HindsightKit", "internal")
         blocks = re.findall(chr(96) * 3 + r"powershell\n(.*?)\n" + chr(96) * 3, notes, re.S)
-        self.assertEqual(len(blocks), 4)
+        self.assertEqual(len(blocks), 5)
         download = blocks[1].rsplit("& ([scriptblock]::Create($hindsightkitInstaller))", 1)[0]
         commands = [blocks[1], *(download + command for command in blocks[2:])]
         self.assertEqual(notes.count("gh release download"), 1)
@@ -289,8 +342,8 @@ class ReleasePackageTests(unittest.TestCase):
             for role, command in enumerate(commands):
                 for outcome in ("success", "failed", "empty"):
                     with self.subTest(role=role, outcome=outcome):
-                        payload = ("param([switch]$ServerOnly,[string]$Server) "
-                                   "Write-Output ('EXECUTED:' + [string]$ServerOnly + ':' + $Server)")
+                        payload = ("param([switch]$ClientOnly,[switch]$ServerOnly,[string]$Server) "
+                                   "Write-Output ('EXECUTED:' + [string]$ClientOnly + ':' + [string]$ServerOnly + ':' + $Server)")
                         output = "" if outcome == "empty" else "Write-Output @'\n" + payload + "\n'@"
                         code = 1 if outcome == "failed" else 0
                         script.write_text("$ErrorActionPreference = 'Stop'\n"
@@ -300,7 +353,7 @@ class ReleasePackageTests(unittest.TestCase):
                             "-File", str(script)], capture_output=True, text=True, timeout=30)
                         if outcome == "success":
                             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                            expected = ("False:", "True:", "False:http://server-host:9077")[role]
+                            expected = ("False:False:", "True:False:", "False:True:", "False:False:http://server-host:9077")[role]
                             self.assertIn("EXECUTED:" + expected, result.stdout)
                         else:
                             self.assertNotEqual(result.returncode, 0)

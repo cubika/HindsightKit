@@ -2,6 +2,18 @@
 
 These records separate completed checks from pending acceptance work. They do not guarantee that every machine or network can finish installation. Connector-specific measurements are in [connector validation](connector-validation.md).
 
+## v0.1.2 candidate: client preparation and npm progress
+
+Release acceptance and publication are pending. The candidate adds `-ClientOnly` to prepare the command and Copilot components without selecting or contacting a memory server. A later `connect` accepts a connection code or `--server` address. The installer's existing `-Server` option selects client-only installation and connection in one run.
+
+The fresh-client archive contains the 87-package client dependency set, separate from the full 194-package server set. This is the locked package selection, not a new installation result. A machine with a local server profile retains the full archive for management dependencies; client setup preserves existing data and configuration without installing, starting, or reconfiguring the dashboard, database, or model. This mode does not uninstall an existing server.
+
+Seven targeted progress-helper tests passed using local synthetic processes. They covered silent-process heartbeats, stdout/stderr streaming before process completion, log append, nonzero exits with the first error and recent output, credential redaction, process-start errors, and interrupt ownership. The interrupt test confirmed that stopping the helper's own process left an unrelated process running. These tests made no npm network requests or real package installations.
+
+The candidate connects that helper to npm installation. It prints elapsed-time heartbeats and the working directory, appends redacted output to the installer log, and preserves error details on failure. Reuse is reported when the installed component and lock stamp match. A previous hosted log recorded 325.2 seconds between starting dashboard npm installation and moving to client integration. That measured duration shows that the step can take minutes; it does not diagnose a wait reported on another machine.
+
+Still pending: the final repository suite and hosted candidate build, installation from both generated archives, fresh-client preparation without an endpoint, later direct/code connection, repeat installation, and preservation of an existing local server during client-only setup. The v0.1.1 results below validate that earlier version and do not establish these new cases.
+
 ## v0.1.1, September 17, 2026
 
 Hosted packaging, affected-machine installation, and repeat-install acceptance passed for candidate commit `091711b`. Version 0.1.1 was then published from `3875b9d`; the intervening changes were validation documentation only. It includes a Python wheel bundle in the application archive, with separate client/server requirements and SHA256 hashes. Release setup uses that bundle with package-index access disabled. The Python interpreter, Node.js, npm components, and embedding model remain downloads. Source setup continues to use the dependency lock and package hosts.

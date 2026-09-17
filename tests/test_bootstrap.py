@@ -29,6 +29,7 @@ class BootstrapTests(unittest.TestCase):
         self.env.update(TEST_ARCHIVE=str(self.archive), TEST_SETUP_LOG=str(self.log),
                         TEST_DOWNLOAD_LOG=str(self.download_log), TEST_INSTALL_DIR=str(self.destination),
                         LOCALAPPDATA=str(self.root / 'local app data'),
+                        USERPROFILE=str(self.root / 'profile'),
                         HINDSIGHTKIT_HOME=str(self.root / 'settings'),
                         HINDSIGHTKIT_RELEASE_MANIFEST='original-manifest',
                         HINDSIGHTKIT_INSTALL_LOG='original-log',
@@ -40,8 +41,8 @@ class BootstrapTests(unittest.TestCase):
         self.release_url = RELEASE_URL.replace('v0.1.0', version)
         manifest = {'schema': 1, 'version': version, 'release_url': self.release_url}
         payload = {
-            'app/setup.ps1': '''param([switch]$ServerOnly, [string]$Server, [switch]$NoOpen)
-@{ directory=$PSScriptRoot; serverOnly=[bool]$ServerOnly; server=$Server;
+            'app/setup.ps1': '''param([switch]$ServerOnly, [switch]$ClientOnly, [string]$Server, [switch]$NoOpen)
+@{ directory=$PSScriptRoot; serverOnly=[bool]$ServerOnly; clientOnly=[bool]$ClientOnly; server=$Server;
    manifest=$env:HINDSIGHTKIT_RELEASE_MANIFEST; python=$env:UV_PYTHON_INSTALL_DIR;
    preference=$env:UV_PYTHON_PREFERENCE; hkConflict=$env:HINDSIGHTKIT_HK_CONFLICT;
    installLog=$env:HINDSIGHTKIT_INSTALL_LOG } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
@@ -65,17 +66,22 @@ exit 0
         for key, value in {'VERSION': self.version, 'RELEASE_URL': self.release_url,
                            'PACKAGE_NAME': 'hindsightkit-windows-x64.zip',
                            'PACKAGE_SHA256': digest, 'REPOSITORY': 'example/HindsightKit',
+                           'CLIENT_PACKAGE_NAME': 'hindsightkit-client-windows-x64.zip',
+                           'CLIENT_PACKAGE_SHA256': digest,
                            'REQUIRES_AUTH': '$true' if authenticated else '$false'}.items():
             template = template.replace('@@' + key + '@@', value)
         installer = self.root / 'install.ps1'
         installer.write_text(template, encoding='utf-8')
         wrapper = self.root / 'invoke.ps1'
         invocation = ('& $script ' + args) if args else "(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'install.ps1') -Raw) | iex"
-        self.env['TEST_RELEASE_URL'] = self.release_url + '/hindsightkit-windows-x64.zip'
+        wants_client = '-ClientOnly' in args or '-Server ' in args
+        has_server = (Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env').is_file()
+        self.env['TEST_PACKAGE_NAME'] = 'hindsightkit-client-windows-x64.zip' if wants_client and not has_server else 'hindsightkit-windows-x64.zip'
+        self.env['TEST_RELEASE_URL'] = self.release_url + '/' + self.env['TEST_PACKAGE_NAME']
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
 function hk { 'unrelated user function' }
 function gh {
-    $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', 'hindsightkit-windows-x64.zip', '--output')
+    $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', $env:TEST_PACKAGE_NAME, '--output')
     if ($args.Count -ne 10) { throw 'Unexpected authenticated arguments.' }
     for ($index=0; $index -lt $expected.Count; $index++) {
         if ($args[$index] -ne $expected[$index]) { throw 'Unexpected authenticated download target.' }
@@ -145,6 +151,26 @@ try {
         self.run_installer(digest, '-Server http://memory-host:9077')
         self.assertEqual(json.loads(self.log.read_text(encoding='utf-8-sig'))['server'], 'http://memory-host:9077')
 
+    def test_client_only_selects_client_archive_and_no_server_address(self):
+        digest = self.package()
+        self.run_installer(digest, '-ClientOnly')
+        receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
+        self.assertTrue(receipt['clientOnly'])
+        self.assertFalse(receipt['serverOnly'])
+        self.assertFalse(receipt['server'])
+        self.assertIn('hindsightkit-client-windows-x64.zip', self.download_log.read_text())
+
+    def test_existing_local_server_keeps_full_management_package_without_server_setup(self):
+        profile = Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env'
+        profile.parent.mkdir(parents=True)
+        profile.write_text('existing server settings')
+        digest = self.package()
+        result = self.run_installer(digest, '-ClientOnly')
+        self.assertTrue(json.loads(self.log.read_text(encoding='utf-8-sig'))['clientOnly'])
+        self.assertIn('Existing local server detected', result.stdout)
+        self.assertNotIn('hindsightkit-client-windows-x64.zip', self.download_log.read_text())
+        self.assertEqual(profile.read_text(), 'existing server settings')
+
     def test_new_version_keeps_old_runtime_and_existing_settings(self):
         digest = self.package()
         self.run_installer(digest)
@@ -204,6 +230,8 @@ try {
     def test_conflicting_roles_fail_before_writing_installation(self):
         digest = self.package()
         self.run_installer(digest, '-ServerOnly -Server http://memory-host:9077', expected=1)
+        self.assertFalse(self.destination.exists())
+        self.run_installer(digest, '-ServerOnly -ClientOnly', expected=1)
         self.assertFalse(self.destination.exists())
 
 

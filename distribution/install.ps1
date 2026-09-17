@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$ServerOnly,
+    [switch]$ClientOnly,
     [string]$Server,
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'HindsightKit'),
     [string]$Model,
@@ -19,6 +20,8 @@ $releaseVersion = '@@VERSION@@'
 $releaseUrl = '@@RELEASE_URL@@'
 $packageName = '@@PACKAGE_NAME@@'
 $packageSha256 = '@@PACKAGE_SHA256@@'
+$clientPackageName = '@@CLIENT_PACKAGE_NAME@@'
+$clientPackageSha256 = '@@CLIENT_PACKAGE_SHA256@@'
 $releaseRepository = '@@REPOSITORY@@'
 $requiresAuth = @@REQUIRES_AUTH@@
 $installLog = $null
@@ -123,8 +126,10 @@ function Remove-InstallStage([string]$Root, [string]$Stage) {
 function Install-HindsightKit {
     if ($releaseVersion.StartsWith('@@')) { throw 'Use install.ps1 from a published release. This file is a packaging template.' }
     if ($env:OS -ne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne 'AMD64')) { throw 'HindsightKit requires x64 Windows.' }
-    if ($ServerOnly -and $Server) { throw 'ServerOnly and Server cannot be combined.' }
-    if ($Server -and ($Model -or $ModelDir -or $Port -or $ReasoningEffort)) { throw 'Model and port options belong on the server.' }
+    $clientInstall = [bool]$ClientOnly -or [bool]$Server
+    if ($ServerOnly -and $clientInstall) { throw 'ServerOnly and client-only options cannot be combined.' }
+    if ($clientInstall -and ($Model -or $ModelDir -or $Port -or $ReasoningEffort)) { throw 'Model and port options belong on the server.' }
+    if ($clientInstall -and $ApiKeyEnv -and -not $Server) { throw '-ApiKeyEnv requires -Server during client-only installation.' }
     if ($ReasoningEffort -and $ReasoningEffort -notin @('low', 'medium', 'high', 'xhigh', 'max')) { throw 'Unknown reasoning effort.' }
     if ($Port -lt 0 -or $Port -gt 65535) { throw 'Choose an API port between 1 and 65535, or 0 for the default.' }
     if ($Server) {
@@ -149,6 +154,14 @@ function Install-HindsightKit {
     catch { throw 'Another HindsightKit installation is running, or the installation directory is not writable.' }
     $stage = $null
     try {
+        $existingServer = Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env') -PathType Leaf
+        if ($clientInstall -and -not $existingServer) {
+            $packageName = $clientPackageName
+            $packageSha256 = $clientPackageSha256
+            Write-InstallMessage 'Client package selected: no UI, database, or local model dependencies.'
+        } elseif ($clientInstall) {
+            Write-InstallMessage 'Existing local server detected. Keeping its management dependencies; only client setup will run.'
+        }
         $versionRoot = Assert-InstallDirectory (Join-Path $root 'versions')
         New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
         $app = Assert-InstallDirectory (Join-Path $versionRoot ($releaseVersion + '-' + $packageSha256.Substring(0, 12)))
@@ -186,6 +199,7 @@ function Install-HindsightKit {
         Write-InstallMessage ("Using verified application: " + $app)
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $app 'setup.ps1'))
         if ($ServerOnly) { $arguments += '-ServerOnly' }
+        if ($clientInstall) { $arguments += '-ClientOnly' }
         if ($Server) { $arguments += @('-Server', $Server) }
         if ($Model) { $arguments += @('-Model', $Model) }
         if ($ReasoningEffort) { $arguments += @('-ReasoningEffort', $ReasoningEffort) }
@@ -224,7 +238,11 @@ function Install-HindsightKit {
         $commandDirectory = Join-Path $commandRoot 'bin'
         $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
         Write-InstallMessage "HindsightKit $releaseVersion installed successfully."
-        if (-not $ServerOnly) { Write-Host 'Reload VS Code and open a new Copilot CLI session.' }
+        if ($clientInstall -and -not $Server) {
+            Write-Host 'Client is ready. Use hindsightkit connect to choose a server; existing connections are preserved.'
+        } elseif (-not $ServerOnly) {
+            Write-Host 'Reload VS Code and open a new Copilot CLI session.'
+        }
     } finally {
         try { if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-InstallStage $root $stage } }
         finally { $lock.Dispose() }

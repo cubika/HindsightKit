@@ -4,15 +4,15 @@ HindsightKit installs a [Hindsight](https://github.com/vectorize-io/hindsight) m
 
 ## Install from a release
 
-The v0.1.1 preview supports **Windows x64** with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in.
+The v0.1.2 Windows x64 candidate described here is awaiting validation and publication. Use Windows PowerShell 5.1 or PowerShell 7, install Git, and have a Copilot account available for sign-in. Use the commands from the published version you select; v0.1.2 options are unavailable in older installers.
 
 1. Open **Releases** in this repository and select a published version.
-2. Copy its installation command into PowerShell. A restricted repository requires GitHub CLI sign-in as shown on that release page.
-3. Finish any Copilot login prompt. After setup succeeds, reload VS Code, allow the Hindsight MCP server, and start a new Copilot CLI session.
+2. Use its default command to host memory on this computer, or its `-ClientOnly` command to prepare a coding client for an existing server. A restricted repository requires GitHub CLI sign-in as shown on that release page.
+3. Finish any Copilot login prompt. Connect a new client to its server as described below. After connection succeeds, reload VS Code, allow the Hindsight MCP server, and start a new Copilot CLI session.
 
-The default command installs the local server and coding integrations together. Version 0.1.1 bundles pinned Python packages in the application archive and installs them locally with hash verification. The Python interpreter, Node.js, npm components, embedding model, and precompiled PostgreSQL/pgvector distribution still require downloads. No source checkout or C++ compiler is needed. Setup checks a temporary memory through the real model provider and removes the test bank afterward; this uses Copilot allowance.
+The default command installs the local server and coding integrations together. `-ClientOnly` prepares the client command and Copilot components without creating a server connection, local dashboard, database, or model. A fresh client uses the smaller client archive. An existing local server keeps its management dependencies and data; client setup does not reconfigure or start it.
 
-Version 0.1.1 removes the PyPI wheel download step that failed on affected v0.1.0 installations. It distinguishes downloaded and reused Node.js runtimes and records installation stages in a log. The tests and installation checks are recorded in [release validation](docs/release-validation.md).
+Python packages are bundled with hashes. Python, Node.js, and npm components still need downloads; a new local server also needs the embedding model and precompiled PostgreSQL/pgvector distribution. No source checkout or C++ compiler is needed. Server setup checks a temporary memory through Copilot and removes it afterward. npm installation prints output and elapsed-time heartbeats; see [troubleshooting](docs/installation.md#npm-installation-takes-time). Tests and pending acceptance checks are recorded in [release validation](docs/release-validation.md).
 
 See [installation, upgrades, and file locations](docs/installation.md) for details. Building or installing from a checkout is covered separately in [development](docs/development.md).
 
@@ -38,7 +38,9 @@ Stored memory remains in Hindsight's database; model requests use the server's C
 
 ## Connect another computer
 
-Remote access is an optional step after installation. On the memory server, run `hindsightkit share`. On the coding computer, run `hindsightkit connect` and paste the connection code at the hidden prompt.
+On the memory server, run `hindsightkit share`. Prepare the coding computer with the release's `-ClientOnly` installation command, then run `hindsightkit connect` and paste the connection code at the hidden prompt. For a known address, use `hindsightkit connect --server http://memory-host:9077`; the key is requested separately.
+
+If HindsightKit is already installed successfully, run `connect` directly. An existing local dashboard does not need to be removed.
 
 When direct access is unavailable, use `hindsightkit share --relay` to prepare a private relay. The [remote connection guide](docs/devtunnel.md) covers sign-in, background recovery, and returning to local memory. Connection codes contain the server key and must be shared privately.
 
