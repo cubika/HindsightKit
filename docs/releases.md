@@ -45,3 +45,9 @@ The integrated suite passed 222 tests, including PowerShell pipe execution, both
 PostgreSQL and pgvector were rebuilt from the checked upstream archives. The first attempt to package an older local build found a developer path in vector.dll; compiler path mapping removed it from the rebuilt binary. Both the rebuilt distribution and the packaged ZIP passed disposable database checks for extensions, restricted permissions, restart, and persistence across repeated setup. The packaged installation used a checked local download cache and no compiler. Test databases were removed; no model calls or mailbox reads were made.
 
 GitHub Actions execution, public release downloads, and a complete installation with fresh Python/npm/model downloads and Copilot login on a clean machine remain unverified. The local checks do not establish that those external steps have passed.
+
+## Connection commands and authenticated releases
+
+The final local suite passed 270 tests. Separate share/connect commands leave the installer unchanged. Tests cover direct discovery, invalid keys and certificates, failed-connection rollback, background process ownership, stable relay ports, and restoration of local memory. Private/internal release instructions and both authenticated asset download paths passed fixture checks.
+
+A disposable private Microsoft tunnel forwarded a synthetic HTTP response through the real relay service on this machine. The managed host/client processes started without visible terminals, reused their saved instance, stopped cleanly, and restarted on the same local port. The CLI selected another forwarding port when the server port was occupied; the stable proxy continued to work. All test tunnels and workers were removed. This did not read or forward existing memory. It validates the real relay service and local wrapper, not a second machine's account or network policy.
