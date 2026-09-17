@@ -107,3 +107,5 @@ The v0.1.1 candidate CI passed 303 repository tests, including connector fixture
 The final v0.1.1 release builds also passed 303 tests, including those fixtures. The actual local installation and repeat-install checks preserved the server profile, database metadata, and a pre-install synthetic memory; that temporary bank was deleted afterward. No live mailbox read was part of these acceptance checks.
 
 The v0.1.2 client-installation candidate passed 323 tests, including connector fixtures. No live mailbox acquisition was used. Client-only setup on an existing full installation left its server and database configuration unchanged; packaging and installation evidence is in [release validation](release-validation.md).
+
+The published v0.1.2 builds also passed 323 tests and final full/client package checks. No mailbox reads or model calls were part of the isolated client-installation acceptance.

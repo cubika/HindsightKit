@@ -2,9 +2,9 @@
 
 These records separate completed checks from pending acceptance work. They do not guarantee that every machine or network can finish installation. Connector-specific measurements are in [connector validation](connector-validation.md).
 
-## v0.1.2 candidate: client preparation and npm progress
+## v0.1.2: client preparation and npm progress
 
-Client-installation acceptance passed within the scopes below. Publication is pending. The candidate adds `-ClientOnly` to prepare the command and Copilot components without selecting or contacting a memory server. A later `connect` accepts a connection code or `--server` address. The installer's existing `-Server` option selects client-only installation and connection in one run.
+Client-installation acceptance passed within the scopes below, and v0.1.2 was published from product commit `4593b0d`. It adds `-ClientOnly` to prepare the command and Copilot components without selecting or contacting a memory server. A later `connect` accepts a connection code or `--server` address. The installer's existing `-Server` option selects client-only installation and connection in one run.
 
 The hosted candidate build passed 323 tests. Its client archive was 24,706,898 bytes with 87 wheels; the full archive was 286,713,128 bytes with 194 wheels. Downloaded artifacts passed checksum verification. Offline installation and repeat synchronization passed from both final archives. A fresh client environment contained neither `hindsight-api-slim` nor `hindsight-embed`.
 
@@ -18,7 +18,7 @@ That test mocked Copilot authentication and command registration to keep the use
 
 A separate run executed the actual generated bootstrap with `-ClientOnly` on an existing full installation. The installer selected the full package because the local server profile existed, updated the installed command, and ran no dashboard/server setup stage. Server-profile, client-configuration, and cluster-metadata SHA256 hashes were unchanged, and the run did not change server data. The already running local server components remained healthy afterward. Client setup preserved management dependencies without stopping, uninstalling, or restarting that server.
 
-The candidate is ready for release based on these checks. Publication and download verification at the final release URLs remain separate steps. The v0.1.1 results below describe the earlier server installation and memory-preservation checks.
+The final hosted builds passed 323 tests and verified offline installations from both archives. Downloaded release assets matched their checksums; each client archive was about 24.7 MB and contained 87 wheels, with no Hindsight API or embedded server wheel. The application wheel matched the full package. Published anonymous and authenticated installer downloads were verified, and the public client ZIP returned HTTP 200. The v0.1.1 results below describe the earlier server installation and memory-preservation checks.
 
 ## v0.1.1, September 17, 2026
 
