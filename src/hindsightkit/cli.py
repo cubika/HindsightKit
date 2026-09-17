@@ -18,6 +18,7 @@ import tempfile
 import uuid
 import webbrowser
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from . import connection
 
@@ -440,7 +441,6 @@ def require_local():
 
 def configure_sharing(key, bank):
     """Configure the official authentication and HTTP extension without replacing the engine."""
-    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
     config, paths = profile_config()
     updates = {
         'HINDSIGHT_API_HOST': '0.0.0.0',
@@ -458,11 +458,7 @@ def configure_sharing(key, bank):
         raise RuntimeError('Remove conflicting MCP authentication overrides before shared setup.')
     if any(config.get(name) != value for name, value in updates.items()):
         # Explicit shared setup may restart only this profile to apply listening/auth changes.
-        manager = DaemonEmbedManager()
-        if manager.is_ui_running(PROFILE):
-            run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
-        if manager.is_running(PROFILE):
-            run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+        stop_profile_services()
         backup(paths.config)
         text = paths.config.read_text(encoding='utf-8')
         for name, value in updates.items():
@@ -472,11 +468,71 @@ def configure_sharing(key, bank):
         paths.config.write_text(text, encoding='utf-8')
 
 
+def stop_profile_services():
+    """Stop only this installation's official services before replacing their runtime."""
+    from .connectors import stop
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    stop(home() / 'connectors')
+    manager = DaemonEmbedManager()
+    if manager.is_ui_running(PROFILE):
+        run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
+    if manager.is_running(PROFILE):
+        run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+
+
+def validate_setup_options(args):
+    if args.server:
+        if (getattr(args, 'server_only', False) or args.model or args.model_dir
+                or args.port or args.reasoning_effort):
+            raise ValueError('Client setup accepts the server address; server-only, model and port settings belong on the server.')
+        connection.validate_url(args.server)
+    if args.port is not None and not 0 <= args.port <= 65535:
+        raise ValueError('Choose an API port between 1 and 65535, or 0 for the default.')
+    if args.model_dir:
+        directory = Path(args.model_dir).resolve(strict=True)
+        if not (directory / 'onnx/model.onnx').is_file() or not (directory / 'tokenizer.json').is_file():
+            raise ValueError('--model-dir must contain onnx/model.onnx and tokenizer.json for multilingual-e5-small.')
+    if args.api_key_env:
+        api_key(args)
+    selected_home = os.environ.get('COPILOT_HOME')
+    if selected_home and Path(selected_home).resolve() != (Path.home() / '.copilot').resolve():
+        raise RuntimeError('This setup uses the default Copilot profile. Unset COPILOT_HOME before setup.')
+
+
+def require_client_prerequisites():
+    if not shutil.which('git'):
+        raise RuntimeError('Git must be installed for automatic repository memory selection.')
+
+
+def can_connect_local_client(api_url):
+    path = connection.config_path()
+    if not path.is_file():
+        return True
+    previous = json.loads(path.read_text(encoding='utf-8'))
+    destination = previous.get('apiUrl')
+    # Leave any explicitly selected different destination under the user's control.
+    if not destination:
+        return True
+    target = urlsplit(connection.validate_url(destination))
+    local = urlsplit(api_url)
+    return (target.scheme == local.scheme and target.port == local.port
+            and target.hostname in {'127.0.0.1', 'localhost', '::1'})
+
+
 def setup(args):
+    validate_setup_options(args)
+    if not getattr(args, 'server_only', False):
+        require_client_prerequisites()
     if args.server:
         setup_client(args)
     else:
-        setup_server(args)
+        local = setup_server(args)
+        if not getattr(args, 'server_only', False):
+            if can_connect_local_client(local['apiUrl']):
+                setup_client(args, local_server=local)
+            else:
+                print('Existing client connection preserved. To connect this computer to the local server, run:')
+                print('hindsightkit setup --server ' + local['apiUrl'])
     from .command import install
     launcher = install(home() / 'bin')
     print(f'Command installed: {launcher}. Open a new terminal to use hindsightkit.')
@@ -496,6 +552,7 @@ def api_key(args, previous=None, *, generate=False):
 
 def setup_server(args):
     # Server setup owns the official profile, never the editor connection settings.
+    validate_setup_options(args)
     from .memory import SHARED_BANK
     from .postgres import setup_database, private_directory, restrict_access
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
@@ -515,9 +572,11 @@ def setup_server(args):
     device = connection.device_id(old_config.get('hindsightkit', {}).get('deviceId'))
     seed_aliases(home() / 'repositories.json', home() / 'sessions', old_config, device,
                  f'http://127.0.0.1:{paths.port}')
-    install_node_packages()
     ensure_copilot()
     configure_sharing(key, bank)
+    # An existing daemon can still import code from a previous release directory.
+    stop_profile_services()
+    install_node_packages()
     key_path = home() / 'server/connection-key.txt'
     private_directory(key_path.parent)
     key_path.write_text(key, encoding='utf-8')
@@ -535,31 +594,32 @@ def setup_server(args):
     asyncio.run(connection.request(connection.server_load(), 'GET', '/ext/hindsightkit/connection'))
     print(f'\nServer ready. API: http://{socket.gethostname()}:{paths.port}\nDashboard: {ui_url}')
     print(f'Client connection key: {key_path}')
-    print('On a coding machine: .\\setup.ps1 -Server http://<server-host>:' + str(paths.port))
+    print('On another coding machine, run the release installer with -Server http://<server-host>:' + str(paths.port)
+          + ' (or .\\setup.ps1 -Server http://<server-host>:' + str(paths.port) + ').')
     if not args.no_open:
         webbrowser.open(ui_url)
+    return {'apiUrl': api_url, 'apiToken': key}
 
 
-def setup_client(args):
+def setup_client(args, *, local_server=None):
+    validate_setup_options(args)
+    require_client_prerequisites()
     from hindsight_copilot.instructions import RULE_TEXT, write_rule
-    if args.model or args.model_dir or args.port or args.reasoning_effort:
-        raise ValueError('Client setup accepts the server address; model and port settings belong on the server.')
-    if not shutil.which('git'):
-        raise RuntimeError('Git must be installed for automatic repository memory selection.')
-    selected_home = os.environ.get('COPILOT_HOME')
-    if selected_home and Path(selected_home).resolve() != (Path.home() / '.copilot').resolve():
-        raise RuntimeError('This setup uses the default Copilot profile. Unset COPILOT_HOME before setup.')
-    api_url = connection.validate_url(args.server)
+    api_url = connection.validate_url(local_server['apiUrl'] if local_server else args.server)
     coding_config = connection.config_path()
     previous = json.loads(coding_config.read_text(encoding='utf-8')) if coding_config.is_file() else {}
     old = previous.get('hindsightkit', {})
     # Reuse a saved key only for the same destination. Never send it to a new host.
-    saved_key = previous.get('apiToken') if previous.get('apiUrl') == api_url and old else None
-    if not saved_key and connection.has_server():
-        local = connection.server_load()
-        if api_url == local['apiUrl']:
-            saved_key = local.get('apiToken')
-    candidate = {'apiUrl': api_url, 'apiToken': api_key(args, saved_key)}
+    if local_server:
+        key = local_server['apiToken']
+    else:
+        saved_key = previous.get('apiToken') if previous.get('apiUrl') == api_url and old else None
+        if not saved_key and connection.has_server():
+            local = connection.server_load()
+            if api_url == local['apiUrl']:
+                saved_key = local.get('apiToken')
+        key = api_key(args, saved_key)
+    candidate = {'apiUrl': api_url, 'apiToken': key}
     discovered = asyncio.run(connection.request(candidate, 'GET', '/ext/hindsightkit/connection'))
     if discovered.get('protocol') != 1 or discovered.get('routing') != 'repository':
         raise RuntimeError('The server does not support this client. Run setup on the server first.')
@@ -578,7 +638,8 @@ def setup_client(args):
     for directory in user_directories:
         integration('preflight', directory / 'mcp.json', cli_mcp, coding_config, api_url,
                     'replace' if old else '')
-    ensure_copilot()
+    if local_server is None:
+        ensure_copilot()
     remove_project_registration(coding_config, previous.get('apiUrl', api_url), previous)
     # Authentication is passed on stdin, never in process arguments.
     integration('config', coding_config, api_url, data={'apiToken': candidate['apiToken'], 'hindsightkit': info})
@@ -612,7 +673,7 @@ def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
     sub = parser.add_subparsers(dest='command', required=True, metavar='{setup,start,stop,status,check,clients,ui,connectors,copilot}')
-    setup_parser = sub.add_parser('setup', help='Install and start the server, or install a client with --server URL.')
+    setup_parser = sub.add_parser('setup', help='Install a local server and client, or use --server URL to connect a client.')
     setup_parser.add_argument('--port', type=int)
     setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
     setup_parser.add_argument('--reasoning-effort', choices=['low', 'medium', 'high', 'xhigh', 'max'],
@@ -620,6 +681,7 @@ def main(argv=None):
     setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
     setup_parser.add_argument('--no-open', action='store_true')
     setup_parser.add_argument('--server', help='Install a client connected to this HTTP(S) server address.')
+    setup_parser.add_argument('--server-only', action='store_true', help='Install only the server, without editor or Copilot client integration.')
     setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
     for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)

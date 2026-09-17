@@ -14,6 +14,26 @@ from hindsightkit.memory import scope_for, SHARED_BANK
 
 
 class SetupTests(unittest.TestCase):
+    def test_release_upgrade_stops_only_running_hindsightkit_profile_services(self):
+        with patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as manager, \
+             patch('hindsightkit.connectors.stop') as stop_connectors, \
+             patch.object(cli, 'run') as run, patch.object(cli, 'executable', return_value='new-release/hindsight-embed'):
+            manager.return_value.is_ui_running.return_value = True
+            manager.return_value.is_running.return_value = True
+            cli.stop_profile_services()
+            self.assertEqual([call.args[0] for call in run.call_args_list], [
+                ['new-release/hindsight-embed', '--profile', 'hindsightkit', 'ui', 'stop'],
+                ['new-release/hindsight-embed', '--profile', 'hindsightkit', 'daemon', 'stop'],
+            ])
+            manager.return_value.is_ui_running.assert_called_once_with('hindsightkit')
+            manager.return_value.is_running.assert_called_once_with('hindsightkit')
+            stop_connectors.assert_called_once_with(cli.home() / 'connectors')
+            manager.return_value.is_ui_running.return_value = False
+            manager.return_value.is_running.return_value = False
+            run.reset_mock()
+            cli.stop_profile_services()
+            run.assert_not_called()
+
     def test_command_path_registration_is_idempotent_and_preserves_others(self):
         directory = Path(tempfile.gettempdir()) / 'HindsightKit command'
         original = os.pathsep.join(['first', str(directory), 'last'])

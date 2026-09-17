@@ -6,21 +6,23 @@ Run a [Hindsight](https://github.com/vectorize-io/hindsight) memory server and c
 
 If the machines cannot reach each other directly, use the [Dev Tunnels guide](docs/devtunnel.md).
 
-Install and start the server:
+For installation without a checkout, open **Releases** in the repository you are viewing and copy the command from a published version. Each repository's release contains an installer and instructions with its own download address. See [release installation](docs/releases.md).
+
+From a checkout, install the server and coding integrations on this machine:
 
 ```powershell
 .\setup.ps1
 ```
 
-Install a client on a coding machine:
+To install only the server, use `.\setup.ps1 -ServerOnly`. To connect a coding machine to an existing server:
 
 ```powershell
 .\setup.ps1 -Server http://memory-host:9077
 ```
 
-For entirely local use, run both commands on the same machine, using http://127.0.0.1:9077 for the client. Server setup starts the API listening automatically. Client setup asks for the server connection key once; the hostname and memory routing are automatic. See [server and client setup](docs/shared-memory.md) for keys, tunnels, upgrades, and client activity.
+The default installation connects the local coding integrations automatically and reuses the server's key. A remote client asks for the connection key once; the hostname and memory routing are automatic. An existing remote client connection is preserved during local setup. See [server and client setup](docs/shared-memory.md) for keys, tunnels, upgrades, and client activity.
 
-Server setup installs Hindsight, standalone PostgreSQL, embeddings, and the dashboard. It does not register coding integrations. Client setup installs the coding integrations without a database, models, or dashboard. Each role keeps its own settings, including when both run on one machine. The server uses its Copilot account for model calls; coding clients use their own Copilot login.
+Server setup installs Hindsight, standalone PostgreSQL, embeddings, and the dashboard. ServerOnly skips coding integrations. Client setup installs the coding integrations without a database, models, or dashboard. Each role keeps its own settings, including when both run on one machine. The server uses its Copilot account for model calls; coding clients use their own Copilot login.
 Setup adds the native hindsightkit command to your user PATH. It also installs hk when that name is available; both commands accept the same arguments in PowerShell and CMD. An existing HindsightKit hk command is updated. If another command uses hk, setup leaves it alone and prints a notice; hindsightkit remains available. Setup does not edit shell profiles.
 
 The commands work immediately in the PowerShell session that ran setup. Open a new terminal for other sessions; restart VS Code if its integrated terminal still inherits an older PATH.
@@ -39,7 +41,7 @@ Optional settings:
 .\setup.ps1 -ModelDir C:\models\e5
 ```
 
-The model directory must contain the official E5 ONNX graph at `onnx/model.onnx` and its tokenizer files. Without this option, Hindsight downloads its default multilingual E5 model. First setup downloads Python packages, the official EDB PostgreSQL 18.6 Windows x64 binaries, and pgvector 0.8.6 source. Both database archives have pinned SHA256 checksums. pgvector is compiled with its official Windows Makefile. If MSVC C++ tools are missing, setup installs Microsoft's signed Build Tools; Windows may ask for administrator approval. Existing PostgreSQL installations are left alone. Download failures stop setup with a nonzero exit; rerun after resolving network access. Standard uv/npm/Hugging Face proxy settings apply.
+The model directory must contain the official E5 ONNX graph at `onnx/model.onnx` and its tokenizer files. Without this option, Hindsight downloads its default multilingual E5 model. First setup downloads Python and npm packages and the embedding model. Release installers use a checked PostgreSQL 18.6 and pgvector 0.8.6 binary package, including the required Microsoft runtime DLLs; users do not need C++ Build Tools. A checkout installation builds pgvector with its official Windows Makefile and installs Microsoft's signed Build Tools if needed. Windows may ask for administrator approval for that source build. Existing PostgreSQL installations are left alone. Download failures stop setup with a nonzero exit; rerun after resolving network access. Standard uv/npm/Hugging Face proxy settings apply.
 
 PostgreSQL runs as a separate local server with its own data directory. Setup enables `vector` for similarity search, `pg_trgm` for entity matching, and `pg_stat_statements` for query diagnostics. Native full-text search needs no extra extension. PostgreSQL's other bundled contrib extensions remain available for explicit use. The server listens only on 127.0.0.1, uses SCRAM passwords and data checksums, and gives Hindsight a database-owner account without superuser privileges. Credentials and database files are restricted to the installing Windows user and SYSTEM.
 
@@ -96,7 +98,9 @@ The settings host stores its process record in `~/.hindsightkit/connectors`. Mai
 
 | Location | Contents |
 | --- | --- |
-| This checkout's .venv | Pinned Python runtime packages |
+| %LOCALAPPDATA%/HindsightKit/versions/<version>-<hash> | Release application and its .venv; independent of a source checkout |
+| %LOCALAPPDATA%/HindsightKit/python | Python runtime managed by the release installer |
+| This checkout's .venv | Python packages when installing from source |
 | ~/.hindsightkit/bin | Native hindsightkit command and optional hk short command |
 | ~/.hindsightkit/runtime | Official npm components |
 | ~/.hindsightkit/client-runtime | Official npm integration for client installations |
@@ -116,7 +120,7 @@ The settings host stores its process record in `~/.hindsightkit/connectors`. Mai
 | %APPDATA%/Code/User/mcp.json | VS Code user-level MCP registration |
 | ~/.copilot/copilot-instructions.md | Global memory instructions |
 
-Existing unrelated MCP servers and VS Code JSONC comments are preserved. Changed files receive a `.hindsightkit-backup` copy once. Conflicting Hindsight endpoints or disabled-learning settings stop setup. The official coding-agent configuration itself must be strict JSON. This release uses the default Copilot profile; a custom COPILOT_HOME must be unset before setup. Keep this checkout and runtime directory in place while using the installed environment.
+Existing unrelated MCP servers and VS Code JSONC comments are preserved. Changed files receive a `.hindsightkit-backup` copy once. Conflicting Hindsight endpoints or disabled-learning settings stop setup. The official coding-agent configuration itself must be strict JSON. This release uses the default Copilot profile; a custom COPILOT_HOME must be unset before setup. Release installations keep their application files in a managed directory. A source installation still requires its checkout to remain in place.
 
 Pinned components: Hindsight 0.10.0, coding-agents 0.6.1, hindsight-copilot 0.1.0, PostgreSQL 18.6, pgvector 0.8.6, and Copilot CLI 1.0.85. Python and npm dependency locks are committed. Local embeddings use ONNX multilingual E5 and ranking uses Hindsight's RRF, without Torch or a separate neural reranker.
 

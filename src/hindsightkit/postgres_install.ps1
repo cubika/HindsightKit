@@ -2,7 +2,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Destination,
-    [Parameter(Mandatory = $true)][string]$CacheDirectory
+    [Parameter(Mandatory = $true)][string]$CacheDirectory,
+    [string]$DistributionUrl,
+    [string]$DistributionSha256
 )
 
 Set-StrictMode -Version Latest
@@ -79,7 +81,7 @@ function Get-VerifiedArchive([string]$Url, [string]$Name, [string]$Sha256) {
     }
     $partial = Assert-ChildPath $CacheDirectory ($cached + '.part-' + [guid]::NewGuid().ToString('N'))
     try {
-        Write-Host "Downloading $Name from its official publisher..."
+        Write-Host "Downloading $Name..."
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
@@ -163,6 +165,11 @@ function Expand-OfficialArchive([string]$Archive, [string]$Root, [string]$Prefix
                 throw "Unexpected archive root: $($entry.FullName)"
             }
             $relative = $entry.FullName.Substring($Prefix.Length)
+            if ($relative -match '[\\:]' -or @($relative.TrimEnd('/').Split('/') | Where-Object { $_ -in @('.', '..') }).Count -gt 0 -or
+                (($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000 -or
+                ($entry.ExternalAttributes -band [int][IO.FileAttributes]::ReparsePoint)) {
+                throw "Unsafe archive entry: $($entry.FullName)"
+            }
             if (-not $relative -or $relative.EndsWith('/')) { continue }
             if ($Directories.Count -gt 0 -and $relative.Contains('/') -and $relative.Split('/')[0] -notin $Directories) { continue }
             $target = Assert-ChildPath $Root (Join-Path $Root $relative)
@@ -204,6 +211,10 @@ function Build-Vector([string]$Installation, [string]$PgRoot, [string]$SourceRoo
     $start.RedirectStandardError = $true
     $start.EnvironmentVariables['PGROOT'] = $PgRoot
     $start.EnvironmentVariables['HINDSIGHTKIT_VCVARS'] = Join-Path $Installation 'VC\Auxiliary\Build\vcvars64.bat'
+    # MSVC expands header __FILE__ macros to absolute paths. Apply its path map
+    # through the compiler environment while keeping the official Makefile intact.
+    $pathOptions = '/experimental:deterministic /pathmap:"' + $StageRoot + '=."'
+    $start.EnvironmentVariables['_CL_'] = (($start.EnvironmentVariables['_CL_'] + ' ' + $pathOptions).Trim())
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     Write-Host "Compiling pgvector $VectorVersion against PostgreSQL $PostgresVersion with Microsoft C++..."
@@ -235,13 +246,21 @@ function Assert-Distribution([string]$Root, [bool]$VerifyManifest) {
         if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) { throw "Refusing an existing PostgreSQL directory without $ManifestName. Choose a new destination." }
         $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
         if ($manifest.schema -ne 1 -or $manifest.postgres_version -ne $PostgresVersion -or $manifest.vector_version -ne $VectorVersion -or
-            $manifest.postgres_sha256 -ne $PostgresSha256 -or $manifest.vector_sha256 -ne $VectorSha256) {
+            $manifest.architecture -ne 'windows-x64' -or $manifest.postgres_sha256 -ne $PostgresSha256 -or $manifest.vector_sha256 -ne $VectorSha256) {
             throw 'Existing PostgreSQL installation differs from the pinned distribution. Choose a new destination; existing files were preserved.'
         }
         foreach ($relative in $required) {
             if ($null -eq $manifest.files.PSObject.Properties[$relative]) { throw "Installed file is absent from the distribution manifest: $relative" }
         }
+        foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse -Force) {
+            $relative = $file.FullName.Substring($Root.Length + 1).Replace('\', '/')
+            if ($relative -ne $ManifestName -and $null -eq $manifest.files.PSObject.Properties[$relative]) {
+                throw "Installed file is absent from the distribution manifest: $relative"
+            }
+        }
         foreach ($property in $manifest.files.PSObject.Properties) {
+            if ($property.Name -match '[\\:]' -or @($property.Name.Split('/') | Where-Object { $_ -in @('', '.', '..') }).Count -gt 0 -or
+                $property.Value -notmatch '^[a-fA-F0-9]{64}$') { throw 'The distribution manifest contains an invalid file entry.' }
             $path = Assert-ChildPath $Root (Join-Path $Root $property.Name)
             if ((Get-Sha256 $path) -ne $property.Value) { throw "Installed file failed SHA256 verification: $($property.Name). Existing files were preserved." }
         }
@@ -285,6 +304,15 @@ function Write-DistributionManifest([string]$Root, [string]$RuntimeVersion) {
 if ($env:OS -ne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne 'AMD64')) {
     throw 'This installer requires x64 Windows.'
 }
+$useDistribution = $PSBoundParameters.ContainsKey('DistributionUrl') -or $PSBoundParameters.ContainsKey('DistributionSha256')
+if ($useDistribution) {
+    $parsedDistribution = $null
+    if (-not [uri]::TryCreate($DistributionUrl, [UriKind]::Absolute, [ref]$parsedDistribution) -or
+        $parsedDistribution.Scheme -ne 'https' -or -not $parsedDistribution.Host -or $parsedDistribution.UserInfo -or
+        $parsedDistribution.Fragment -or $DistributionUrl -match '\s' -or $DistributionSha256 -notmatch '^[a-fA-F0-9]{64}$') {
+        throw 'A release distribution requires an HTTPS URL without credentials or a fragment and a valid SHA256.'
+    }
+}
 $Destination = Get-AbsoluteDirectory $Destination
 $CacheDirectory = Get-AbsoluteDirectory $CacheDirectory
 if ($Destination.Equals($CacheDirectory, [StringComparison]::OrdinalIgnoreCase) -or
@@ -301,22 +329,31 @@ if (Test-Path -LiteralPath $Destination) {
     $stageRoot = Assert-ChildPath $parent (Join-Path $parent ('.hindsightkit-postgres-' + [guid]::NewGuid().ToString('N')))
     New-Item -ItemType Directory -Path $stageRoot | Out-Null
     try {
-        $postgresArchive = Get-VerifiedArchive $PostgresUrl 'postgresql-18.6-1-windows-x64-binaries.zip' $PostgresSha256
-        $vectorArchive = Get-VerifiedArchive $VectorUrl 'pgvector-v0.8.6.zip' $VectorSha256
-        $installation = Get-CppTools
         $pgRoot = Join-Path $stageRoot 'pgsql'
-        $sourceRoot = Join-Path $stageRoot 'pgvector'
-        Write-Host 'Extracting the official PostgreSQL server, client tools, headers, libraries, and all bundled extensions...'
-        Expand-OfficialArchive $postgresArchive $pgRoot 'pgsql/' @('bin', 'lib', 'share', 'include', 'doc')
-        Expand-OfficialArchive $vectorArchive $sourceRoot 'pgvector-0.8.6/' @()
-        $runtimeVersion = Install-CppRuntime $installation $pgRoot
-        Build-Vector $installation $pgRoot $sourceRoot $stageRoot
-        Copy-Item -LiteralPath (Join-Path $sourceRoot 'LICENSE') -Destination (Join-Path $pgRoot 'share\extension\vector-LICENSE')
-        Assert-Distribution $pgRoot $false
-        Write-DistributionManifest $pgRoot $runtimeVersion
+        if ($useDistribution) {
+            $archiveName = 'hindsightkit-postgres-' + $DistributionSha256.ToLowerInvariant() + '.zip'
+            $archive = Get-VerifiedArchive $DistributionUrl $archiveName $DistributionSha256
+            Write-Host 'Extracting the precompiled PostgreSQL release and pgvector...'
+            Expand-OfficialArchive $archive $pgRoot 'pgsql/' @()
+        } else {
+            $postgresArchive = Get-VerifiedArchive $PostgresUrl 'postgresql-18.6-1-windows-x64-binaries.zip' $PostgresSha256
+            $vectorArchive = Get-VerifiedArchive $VectorUrl 'pgvector-v0.8.6.zip' $VectorSha256
+            $installation = Get-CppTools
+            $sourceRoot = Join-Path $stageRoot 'pgvector'
+            Write-Host 'Extracting the official PostgreSQL server, client tools, headers, libraries, and all bundled extensions...'
+            Expand-OfficialArchive $postgresArchive $pgRoot 'pgsql/' @('bin', 'lib', 'share', 'include', 'doc')
+            Expand-OfficialArchive $vectorArchive $sourceRoot 'pgvector-0.8.6/' @()
+            $runtimeVersion = Install-CppRuntime $installation $pgRoot
+            Build-Vector $installation $pgRoot $sourceRoot $stageRoot
+            Copy-Item -LiteralPath (Join-Path $sourceRoot 'LICENSE') -Destination (Join-Path $pgRoot 'share\extension\vector-LICENSE')
+            Assert-Distribution $pgRoot $false
+            Write-DistributionManifest $pgRoot $runtimeVersion
+        }
+        Write-Host 'Verifying the PostgreSQL distribution and all file checksums...'
         Assert-Distribution $pgRoot $true
-        if (Test-Path -LiteralPath $Destination) { throw 'Destination appeared while building PostgreSQL. Existing files were preserved; rerun setup.' }
+        if (Test-Path -LiteralPath $Destination) { throw 'Destination appeared while preparing PostgreSQL. Existing files were preserved; rerun setup.' }
         [IO.Directory]::Move($pgRoot, $Destination)
+        Write-Host "Installed PostgreSQL $PostgresVersion and pgvector $VectorVersion."
     } finally {
         if (Test-Path -LiteralPath $stageRoot) {
             $checkedStage = Assert-ChildPath $parent $stageRoot

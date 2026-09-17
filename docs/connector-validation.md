@@ -36,7 +36,7 @@ User review identified two gaps in the preceding acceptance criteria: temporary 
 
 This records a design decision, not a new runtime result. The thread outcome implementation is pending. Future runs must validate replacement, withdrawal, idempotency, out-of-order updates, provenance, and bounded memory growth against the [WorkIQ design](workiq-mail.md). The preceding extraction results do not establish that these requirements passed.
 
-The renamed project is HindsightKit at C:/Users/bili1/source/HindsightKit. This documentation change moved the recorded results without changing their measurements, clarified planned versus existing behavior, and updated documentation links. It did not run new email/model tests, alter stored memory, or verify whether old installation data remains after the rename.
+The renamed project is HindsightKit. This documentation change moved the recorded results without changing their measurements, clarified planned versus existing behavior, and updated documentation links. It did not run new email/model tests, alter stored memory, or verify whether old installation data remains after the rename.
 
 ## September 17, 2026: one current outcome implementation
 
@@ -79,3 +79,7 @@ The systems-only field was replaced with content_tags. Dynamic labels now share 
 For the three existing outcomes, one isolated Copilot request selected labels from the already accepted text without rewriting it. It completed in 29.7 seconds. The selected terms included single-master flow, SPO proxy address, all-zero OIDs, -ForReconciliation, DsApiWrongServerException, EntityResolver.ResolveAsync and P2P-to-SNS fallback. These were not selected by exception-specific or service-specific extraction rules. All labels passed the shared validator. This one-time backfill call is separate from normal ingestion.
 
 After confirming no prepared publication was pending, the existing documents were retagged through the official API. Old connector-owned system labels were replaced; other user labels were preserved. All three text bodies and content hashes were unchanged, and the bank still held three documents and three world units. Metadata provenance remained intact. The live metadata test also verified positive and negative topic-filtered recall in a disposable bank, then deleted it. Regression cases cover namespace migration, user-label collisions, case/whitespace handling, Unicode terms, punctuation-bearing identifiers and labels absent from the final text.
+
+## September 17, 2026: installation and release regression
+
+After integrating the metadata changes with the release installer, all 222 repository tests passed, including the connector fixtures. These checks did not read a mailbox, call a model, or change imported memory. Release setup now stops the managed connector host before replacing server runtime components; saved connector settings remain in place. Installation and packaging checks are recorded in [release verification](releases.md#local-verification-september-17-2026).
