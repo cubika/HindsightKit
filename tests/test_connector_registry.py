@@ -1,5 +1,4 @@
 import asyncio
-from copy import deepcopy
 import json
 from pathlib import Path
 import sqlite3
@@ -9,8 +8,9 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from hindsightkit.connector_registry import Connector, ConnectorHost, enabled_connectors, register_tools
-from hindsightkit.workiq_connector import Adapter, DEFAULT, EULA_ERROR, _accept_workiq_eula, saved_status
+from hindsightkit.workiq_connector import Adapter, EULA_ERROR, _accept_workiq_eula, saved_status
 from hindsightkit.mail_source import WorkIQError
+from hindsightkit.mail_ledger import initialize, new_config, new_run, new_status
 
 
 def settings(root, enabled=False):
@@ -19,7 +19,7 @@ def settings(root, enabled=False):
     db = sqlite3.connect(directory / 'sync.sqlite3')
     with db:
         db.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)')
-        db.execute('INSERT INTO settings VALUES (?,?)', ('config', json.dumps({**DEFAULT['config'], 'enabled':enabled})))
+        db.execute('INSERT INTO settings VALUES (?,?)', ('config', json.dumps({**new_config(), 'enabled':enabled})))
     db.close()
     return directory
 
@@ -77,7 +77,7 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lazy_runtime_uses_authenticated_sdk_and_pause_releases_resources(self):
         fake = Mock()
-        fake.status.return_value = deepcopy(DEFAULT)
+        fake.status.return_value = new_status()
         fake.discover = AsyncMock()
         fake.pause, fake.close, fake.boot = AsyncMock(), AsyncMock(), AsyncMock()
         config = {'apiUrl':'http://127.0.0.1:9077','apiToken':'test-private-token'}
@@ -114,16 +114,19 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp:
             directory = settings(Path(temp))
             db = sqlite3.connect(directory/'sync.sqlite3')
+            initialize(db)
             with db:
-                db.execute('CREATE TABLE threads(payload TEXT, state TEXT, has_outcome INTEGER, subject TEXT, error TEXT)')
-                db.execute('INSERT INTO threads VALUES (?,?,?,?,?)', ('pending-private-data','prepared',1,'Pending thread',None))
-                db.execute('CREATE TABLE discovery_errors(id TEXT, error TEXT)')
-                db.execute('INSERT INTO discovery_errors VALUES (?,?)', (json.dumps({'subject':'Unavailable mail'}), 'protected'))
+                db.execute('UPDATE settings SET value=? WHERE key=?',
+                           (json.dumps({**new_config(), 'folder_ids':['inbox']}), 'config'))
+                db.execute('INSERT INTO threads(id,conversation,payload,state,has_outcome,subject) VALUES (?,?,?,?,?,?)',
+                           ('thread', 'conversation', 'pending-private-data', 'prepared', 1, 'Pending thread'))
+                db.execute('INSERT INTO discovery_errors VALUES (?,?,?,?)', ('unavailable', 'inbox', 'protected', None))
             db.close()
             with patch('hindsightkit.mail_sync.MailSync') as make:
                 value = saved_status(directory)
             make.assert_not_called()
             self.assertEqual(value['run']['pending'],1)
+            self.assertEqual(value['run']['failed'],1)
             self.assertEqual(value['failures'],[{'subject':'Unidentified thread','reason':'protected'}])
             self.assertNotIn('pending-private-data',json.dumps(value))
 
@@ -131,7 +134,7 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
         from hindsightkit.mail_sync import MailSync
         with tempfile.TemporaryDirectory() as temp:
             runner = MailSync(Path(temp), 'unused')
-            runner._put('config', {**DEFAULT['config'], 'folder_ids':['inbox']})
+            runner._put('config', {**new_config(), 'folder_ids':['inbox']})
             try:
                 with patch('hindsightkit.mail_source.find_workiq', side_effect=WorkIQError('missing')):
                     for method in [runner.start, runner.sync]:
@@ -152,7 +155,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                 db = sqlite3.connect(directory / 'sync.sqlite3')
                 try:
                     with db:
-                        db.execute('INSERT INTO settings VALUES (?,?)', ('run', json.dumps({**DEFAULT['run'], 'error': error})))
+                        db.execute('INSERT INTO settings VALUES (?,?)', ('run', json.dumps({**new_run(), 'error': error})))
                 finally:
                     db.close()
                 adapter = Adapter(directory, {'apiUrl': 'unused'})

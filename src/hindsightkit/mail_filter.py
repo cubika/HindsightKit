@@ -1,8 +1,6 @@
 """Classify complete threads before the main outcome model."""
 import asyncio
 import json
-from pathlib import Path
-import shutil
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -152,8 +150,6 @@ class MailPrefilter(OutcomeBuilder):
             profile, _ = profile_config()
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise ValueError('prefilter_copilot_profile_required')
-        from copilot import CopilotClient
-        from copilot.session import PermissionNoResult
         from copilot.tools import Tool, ToolResult
         captured = []
 
@@ -163,31 +159,10 @@ class MailPrefilter(OutcomeBuilder):
 
         tool = Tool(name='record_classification', description='Return whether the full thread needs outcome analysis.',
                     parameters=Classification.model_json_schema(), handler=finish, skip_permission=True, is_terminal=True)
-        with self._runtime_directory() as directory:
-            account = Path.home() / '.copilot/config.json'
-            if account.is_file():
-                shutil.copyfile(account, Path(directory) / 'config.json')
-            client = (self.client_factory or CopilotClient)(mode='empty', base_directory=directory,
-                working_directory=directory, use_logged_in_user=True, builtin_plugin_directories=[], log_level='error')
-            self._clients.add(client)
-            self._directories[client] = directory
-            try:
-                with self._measure('runtime_start'):
-                    await asyncio.wait_for(client.start(), self.timeout)
-                    session = await asyncio.wait_for(client.create_session(model=self.model, reasoning_effort=self.reasoning_effort,
-                        available_tools=['record_classification'], tools=[tool], tool_search={'enabled': False},
-                        system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
-                        working_directory=directory, config_directory=directory, enable_config_discovery=False,
-                        enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
-                        enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
-                        mcp_servers={}, custom_agents=[], enable_host_git_operations=False,
-                        enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
-                        infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
-                        mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False), self.timeout)
-                with self._measure('inference'):
-                    await asyncio.wait_for(session.send_and_wait(prompt, timeout=self.timeout), self.timeout)
-                if len(captured) != 1:
-                    raise ValueError('prefilter_format_invalid')
-                return _decision(captured[0], source_ids)
-            finally:
-                await self._stop_client(client)
+        async with self._session(tool, INSTRUCTIONS, model=self.model, reasoning_effort=self.reasoning_effort,
+                                 startup_timeout=self.timeout) as session:
+            with self._measure('inference'):
+                await asyncio.wait_for(session.send_and_wait(prompt, timeout=self.timeout), self.timeout)
+            if len(captured) != 1:
+                raise ValueError('prefilter_format_invalid')
+            return _decision(captured[0], source_ids)

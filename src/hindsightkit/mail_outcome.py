@@ -1,6 +1,6 @@
 """Prepare one evidence-backed current outcome using the official Copilot SDK."""
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timezone
 from decimal import Decimal
 import hashlib
@@ -368,6 +368,36 @@ class OutcomeBuilder:
         if any(isinstance(result, BaseException) for result in results):
             raise OutcomeError('outcome_runtime_cleanup_failed')
 
+    @asynccontextmanager
+    async def _session(self, tool, instructions, *, model, reasoning_effort, startup_timeout):
+        from copilot import CopilotClient
+        from copilot.session import PermissionNoResult
+
+        with self._runtime_directory() as directory:
+            account = Path.home() / '.copilot/config.json'
+            if account.is_file():
+                shutil.copyfile(account, Path(directory) / 'config.json')
+            client = (self.client_factory or CopilotClient)(mode='empty', base_directory=directory,
+                working_directory=directory, use_logged_in_user=True, builtin_plugin_directories=[], log_level='error')
+            self._clients.add(client)
+            self._directories[client] = directory
+            try:
+                with self._measure('runtime_start'):
+                    await asyncio.wait_for(client.start(), startup_timeout)
+                    session = await asyncio.wait_for(client.create_session(model=model, reasoning_effort=reasoning_effort,
+                        available_tools=[tool.name], tools=[tool], tool_search={'enabled': False},
+                        system_message={'mode': 'replace', 'content': instructions}, on_permission_request=lambda *_: PermissionNoResult(),
+                        working_directory=directory, config_directory=directory, enable_config_discovery=False,
+                        enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
+                        enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
+                        mcp_servers={}, custom_agents=[], enable_host_git_operations=False,
+                        enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
+                        infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
+                        mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False), startup_timeout)
+                yield session
+            finally:
+                await self._stop_client(client)
+
     async def build(self, messages, previous=None):
         prior, previous_meta = _previous(previous)
         sources, index = prepare_messages(messages)
@@ -385,8 +415,6 @@ class OutcomeBuilder:
         reasoning_effort = self.reasoning_effort or profile.get('HINDSIGHT_API_LLM_REASONING_EFFORT')
         if not model:
             raise OutcomeError('outcome_model_missing')
-        from copilot import CopilotClient
-        from copilot.session import PermissionNoResult
         from copilot.tools import Tool, ToolResult
         captured = []
         def finish(call):
@@ -395,29 +423,11 @@ class OutcomeBuilder:
         tool = Tool(name='record_outcome', description='Return the current thread outcome with exact supporting evidence.',
                     parameters=Outcome.model_json_schema(), handler=finish, skip_permission=True, is_terminal=True)
         prompt = json.dumps({'previous_outcome': prior or None, 'messages': sources}, ensure_ascii=False)
-        with self._runtime_directory() as directory:
-            account = Path.home() / '.copilot/config.json'
-            if account.is_file():
-                shutil.copyfile(account, Path(directory) / 'config.json')
-            client = (self.client_factory or CopilotClient)(mode='empty', base_directory=directory,
-                working_directory=directory, use_logged_in_user=True, builtin_plugin_directories=[], log_level='error')
-            self._clients.add(client)
-            self._directories[client] = directory
-            try:
-                with self._measure('runtime_start'):
-                    await asyncio.wait_for(client.start(), 90)
-                    session = await client.create_session(model=model, reasoning_effort=reasoning_effort,
-                        available_tools=['record_outcome'], tools=[tool], tool_search={'enabled': False},
-                        system_message={'mode': 'replace', 'content': INSTRUCTIONS}, on_permission_request=lambda *_: PermissionNoResult(),
-                        working_directory=directory, config_directory=directory, enable_config_discovery=False,
-                        enable_skills=False, included_builtin_skills=[], skill_directories=[], plugin_directories=[], instruction_directories=[],
-                        enable_file_hooks=False, hooks={}, enable_on_demand_instruction_discovery=False, skip_custom_instructions=True,
-                        mcp_servers={}, custom_agents=[], enable_host_git_operations=False,
-                        enable_session_store=False, enable_session_telemetry=False, memory={'enabled': False},
-                        infinite_sessions={'enabled': False}, skip_embedding_retrieval=True, embedding_cache_storage='in-memory',
-                        mcp_oauth_token_storage='in-memory', enable_file_change_tracking=False, manage_schedule_enabled=False)
-                if len(prompt) > MAX_INPUT + 30_000:
-                    raise OutcomeError('outcome_thread_too_large')
+        if len(prompt) > MAX_INPUT + 30_000:
+            raise OutcomeError('outcome_thread_too_large')
+        try:
+            async with self._session(tool, INSTRUCTIONS, model=model, reasoning_effort=reasoning_effort,
+                                     startup_timeout=min(90, self.timeout)) as session:
                 for attempt in range(2):
                     captured.clear()
                     with self._measure('inference'):
@@ -433,9 +443,7 @@ class OutcomeBuilder:
                         if attempt or error.args[0] not in {'outcome_format_invalid', 'outcome_evidence_invalid', 'outcome_content_invalid', 'outcome_number_unsupported', 'outcome_content_label_invalid'}:
                             raise
                 raise OutcomeError('outcome_invalid')
-            except OutcomeError:
-                raise
-            except Exception:
-                raise OutcomeError('outcome_model_failed') from None
-            finally:
-                await self._stop_client(client)
+        except OutcomeError:
+            raise
+        except Exception:
+            raise OutcomeError('outcome_model_failed') from None

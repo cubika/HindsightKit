@@ -59,7 +59,7 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
                'HINDSIGHT_API_LLM_REASONING_EFFORT': 'xhigh'}
 
     def setUp(self):
-        copier = patch('hindsightkit.mail_filter.shutil.copyfile')
+        copier = patch('hindsightkit.mail_outcome.shutil.copyfile')
         copier.start()
         self.addCleanup(copier.stop)
         self.clients = []
@@ -234,6 +234,20 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['reason'], 'prefilter_model_failed')
         self.assertEqual(self.clients[0].cleanup, ['stop'])
         self.assertFalse(Path(self.clients[0].config['base_directory']).exists())
+
+    async def test_session_creation_timeout_falls_through_and_stops_runtime(self):
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                await asyncio.Event().wait()
+        builder = MailPrefilter(self.profile, timeout=0.02,
+                                client_factory=self.factory(client_type=WaitingClient))
+        result = await asyncio.wait_for(builder.classify([message()]), 2)
+        self.assertEqual(result['decision'], 'uncertain')
+        self.assertEqual(result['reason'], 'prefilter_model_failed')
+        self.assertFalse(builder._clients)
+        self.assertEqual(self.clients[0].cleanup, ['stop'])
+        self.assertFalse(Path(self.clients[0].config['base_directory']).exists())
+        self.assertEqual(builder.metrics['inference_count'], 0)
 
     async def test_cancellation_forces_cleanup_and_propagates(self):
         started = asyncio.Event()
