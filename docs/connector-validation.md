@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: CLI memory lifecycle
+
+The repository suite passed 439 tests in 630.7 seconds. After integrating the relay sign-in update and hardening API shutdown, 135 affected installation, lifecycle, relay, MCP, and integration tests passed in 286.0 seconds. MCP dispatch tests used synthetic SDK responses: `stop` blocked core tools and `recall_mail` before transport or SDK work; `start` restored access, and `unshare` required a new connection. Hook fixtures confirmed that sessions spanning a pause are not saved retroactively. The official API-key extension rejected revoked keys. No mailbox, model, or live memory server was accessed.
+
 ## September 18, 2026: relay sign-in regression
 
 The repository suite passed all 427 tests in 529.3 seconds after the relay login changed to device-code authentication. Connector fixtures passed without mailbox reads, model calls, or changes to imported memory. Relay checks covered terminal inheritance, login failure and timeout guidance, saved authentication, and background recovery. Microsoft's installed CLI help confirmed the device-code option; account sign-in and access from a second computer were not exercised.
