@@ -109,7 +109,13 @@ Application versions are separated from persistent settings and memory so upgrad
 
 ## Upgrades and existing configuration
 
-Run the newer release's installer to upgrade. It preserves the last successful installation mode: client-only stays client-only even without repeating `-ClientOnly`. It verifies package hashes, keeps version directories separate, and restarts managed server processes when server setup runs. Reload coding clients afterward. Old version directories are retained; automatic pruning and database downgrades are not implemented.
+Run the newer release's installer to upgrade. It preserves the last successful installation mode: client-only stays client-only even without repeating `-ClientOnly`. It verifies package hashes, keeps version directories separate, and restarts managed server processes when server setup runs. Reload coding clients afterward. Database downgrades are not supported.
+
+After successful setup and its runtime checks, the installer keeps the current release and the previous successful release. It removes older managed versions, including their Python environments, after checking file ownership, running processes, launchers, and configuration references. Referenced versions, modified files, unknown directories, and directories containing links are kept. If process or configuration inspection fails, version cleanup is deferred. Close older HindsightKit sessions and rerun the installer to retry. Cleanup failure does not fail installation.
+
+When upgrading from installers without success receipts, the newest legacy copy is kept until another successful version is available. Other legacy copies can be removed after the same checks. Failed setups recorded by the current installer are kept for diagnosis and retries. Keeping a previous program version does not provide database rollback.
+
+Cleanup also removes unreferenced release downloads older than seven days and installation logs older than 30 days. It preserves archives needed by retained versions and recent interrupted downloads. The installer reports the number of versions and cache/log files removed and their total file size; hard-linked files may share disk space. Persistent memory, database files, models, settings, the shared uv cache, managed Python, and portable runtime tools are outside this cleanup. Running the same release installer again reuses its version directory.
 
 To change roles, explicitly use `-ClientOnly`, `-ServerOnly`, or `-ClientOnly:$false` for full installation in the PowerShell script-block invocation. Installation and configuration are handled by the installer; the public command has no `setup` or `copilot` subcommand. Use the independent `copilot` command to launch Copilot.
 

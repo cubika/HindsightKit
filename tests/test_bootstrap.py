@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 import zipfile
 
@@ -35,6 +36,7 @@ class BootstrapTests(unittest.TestCase):
                         TEST_HASH_LOG=str(self.hash_log),
                         TEST_DOWNLOAD_LOG=str(self.download_log), TEST_INSTALL_DIR=str(self.destination),
                         LOCALAPPDATA=str(self.root / 'local app data'),
+                        APPDATA=str(self.root / 'roaming'),
                         USERPROFILE=str(self.root / 'profile'),
                         HINDSIGHTKIT_HOME=str(self.root / 'settings'),
                         HINDSIGHT_CONFIG=str(self.root / 'profile/.hindsight/coding-agent.json'),
@@ -118,6 +120,22 @@ exit 0
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility
 function hk { 'unrelated user function' }
+function Get-CimInstance {
+    param($ClassName, $Property, $OperationTimeoutSec, $ErrorAction)
+    if ($env:TEST_PROCESS_FAILURE) { throw 'Synthetic process inspection failure' }
+    if ($env:TEST_PROCESS_RECORDS) {
+        Get-Content -LiteralPath $env:TEST_PROCESS_RECORDS -Raw | ConvertFrom-Json
+    } else {
+        [pscustomobject]@{ Name='powershell.exe'; ExecutablePath='C:/Windows/powershell.exe'; CommandLine='installer fixture' }
+    }
+}
+function Remove-Item {
+    param($LiteralPath, [switch]$Force, [switch]$Recurse)
+    if ($env:TEST_DELETE_FAILURE -and $LiteralPath -eq $env:TEST_DELETE_FAILURE) {
+        throw 'Synthetic cleanup interruption'
+    }
+    Microsoft.PowerShell.Management\\Remove-Item -LiteralPath $LiteralPath -Force:$Force -Recurse:$Recurse
+}
 function Copy-TestAsset($Name, $Destination) {
     if ($Name -eq $env:TEST_FAIL_ASSET) {
         [IO.File]::WriteAllText($Destination, 'interrupted partial download')
@@ -295,6 +313,237 @@ try {
         self.assertIn('SHA256 mismatch', result.stdout)
         self.assertFalse(self.log.exists())
         self.assertFalse(list(self.destination.glob('.install-*')))
+
+    def install_version(self, version):
+        digest = self.package(version=version)
+        result = self.run_installer(digest)
+        self.assertTrue((self.app / '.install-success.json').is_file(), result.stdout)
+        return self.app, digest, result
+
+    def test_retention_keeps_two_successful_versions_and_reuses_retries(self):
+        first, _, _ = self.install_version('v0.1.0')
+        second, _, _ = self.install_version('v0.2.0')
+        # Large per-version environments, including hidden files, are removed too.
+        runtime = first / '.venv/Lib/site-packages/fixture.py'
+        runtime.parent.mkdir(parents=True)
+        runtime.write_text('old dependency')
+        third, digest, result = self.install_version('v0.3.0')
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertTrue(second.is_dir())
+        self.assertTrue(third.is_dir())
+        self.assertIn('removed 1 older version(s)', result.stdout)
+        self.run_installer(digest)
+        self.assertEqual(set((self.destination / 'versions').iterdir()), {second, third})
+
+    def test_failed_setup_never_prunes_or_records_success(self):
+        first, _, _ = self.install_version('v0.1.0')
+        second, _, _ = self.install_version('v0.2.0')
+        digest = self.package(version='v0.3.0', entries={'app/setup.ps1': 'exit 1'})
+        self.run_installer(digest, expected=1)
+        failed = self.app
+        self.assertTrue(first.is_dir())
+        self.assertTrue(second.is_dir())
+        self.assertFalse((failed / '.install-success.json').exists())
+        fourth, _, result = self.install_version('v0.4.0')
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertTrue(second.is_dir())
+        self.assertTrue(failed.is_dir())
+        self.assertTrue(fourth.is_dir())
+
+    def test_retention_uses_success_time_not_version_or_directory_time(self):
+        first, _, _ = self.install_version('v0.9.0')
+        second, _, _ = self.install_version('v0.2.0')
+        os.utime(first, (time.time() + 86400, time.time() + 86400))
+        _, _, result = self.install_version('v0.1.0')
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertTrue(second.is_dir())
+
+    def test_retention_preserves_config_launcher_and_process_references(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        digest = self.package(version='v0.3.0')
+        settings = Path(self.env['HINDSIGHTKIT_HOME'])
+        profile = Path(self.env['USERPROFILE'])
+        references = {
+            settings / 'bin/hk.exe': b'MZ\x00\xff#!' + str(first / '.venv/Scripts/python.exe').encode() + b'\nPK',
+            profile / '.copilot/hooks/hindsight-coding-agents.json': json.dumps({'exec': str(first / '.venv/Scripts/python.exe')}).encode(),
+            Path(self.env['APPDATA']) / 'Code - Insiders/User/profiles/work/mcp.json':
+                ('// retained client\n' + json.dumps({'command': str(first).upper().replace('\\', '/') + '/.venv/Scripts/python.exe'})).encode(),
+            profile / '.hindsight/profiles/hindsightkit.env': ('MODEL_PATH=' + str(first / 'model')).encode(),
+            settings / 'remote/clients/fixture/launch.json': json.dumps({'command': str(first / '.venv/Scripts/hindsightkit.exe')}, ensure_ascii=True).encode(),
+        }
+        for path, content in references.items():
+            with self.subTest(reference=path):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                result = self.run_installer(digest, '-ServerOnly')
+                self.assertTrue(first.is_dir(), result.stdout)
+                self.assertIn('still referenced', result.stdout)
+                path.unlink()
+        processes = self.root / 'processes.json'
+        self.env['TEST_PROCESS_RECORDS'] = str(processes)
+        processes.write_text(json.dumps([{'Name': 'pythonw.exe', 'ExecutablePath': 'C:/shared/python.exe',
+            'CommandLine': f'"{first}/.venv/Scripts/pythonw.exe" -m hindsight_api'}]))
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        del self.env['TEST_PROCESS_RECORDS']
+        self.run_installer(digest)
+        self.assertFalse(first.exists())
+
+    def test_retention_skips_unsafe_or_uninspectable_candidates(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        digest = self.package(version='v0.3.0')
+        unknown = first / 'user-notes.txt'
+        unknown.write_text('precious')
+        result = self.run_installer(digest)
+        self.assertEqual(unknown.read_text(), 'precious', result.stdout)
+        unknown.unlink()
+        unknown_directory = first / 'user-files'
+        unknown_directory.mkdir()
+        self.run_installer(digest)
+        self.assertTrue(unknown_directory.is_dir())
+        unknown_directory.rmdir()
+        self.env['TEST_PROCESS_FAILURE'] = '1'
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('Synthetic process inspection failure', result.stdout)
+        del self.env['TEST_PROCESS_FAILURE']
+        processes = self.root / 'processes.json'
+        processes.write_text(json.dumps([{'Name': 'python.exe', 'ExecutablePath': None, 'CommandLine': None}]))
+        self.env['TEST_PROCESS_RECORDS'] = str(processes)
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('Cannot inspect a process', result.stdout)
+        del self.env['TEST_PROCESS_RECORDS']
+        # A missing success receipt cannot be inferred from a newer directory timestamp.
+        (first / '.install-success.json').unlink()
+        self.run_installer(digest)
+        self.assertTrue(first.is_dir())
+
+    def test_retention_rejects_nested_junction_and_preserves_external_data(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        external = self.root / 'external-memory'
+        external.mkdir()
+        marker = external / 'memory.db'
+        marker.write_text('preserve')
+        junction = first / '.venv'
+        result = subprocess.run([self.shell, '-NoProfile', '-Command',
+            'New-Item -ItemType Junction -Path $env:TEST_LINK -Target $env:TEST_TARGET | Out-Null'],
+            env={**self.env, 'TEST_LINK': str(junction), 'TEST_TARGET': str(external)},
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        try:
+            _, _, result = self.install_version('v0.3.0')
+            self.assertTrue(first.is_dir(), result.stdout)
+            self.assertEqual(marker.read_text(), 'preserve')
+            self.assertIn('linked file or directory', result.stdout)
+        finally:
+            if junction.is_junction():
+                junction.rmdir()
+
+    def test_legacy_versions_are_pruned_after_verification_with_one_copy_kept(self):
+        first, _, _ = self.install_version('v0.1.0')
+        second, _, _ = self.install_version('v0.2.0')
+        for app in (first, second):
+            (app / '.install-success.json').unlink()
+            (app / '.install-started').unlink()
+        # A legacy directory has no trustworthy success timestamp.
+        # Keep the newest legacy copy; still validate ownership and live references.
+        _, _, result = self.install_version('v0.3.0')
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertTrue(second.is_dir())
+
+    def test_cleanup_retries_after_payload_and_metadata_deletion_failures(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        digest = self.package(version='v0.3.0')
+        self.env['TEST_DELETE_FAILURE'] = str(first / 'setup.ps1')
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('Synthetic cleanup interruption', result.stdout)
+        # Next retry finishes the payload but fails after the first ownership file is gone.
+        self.env['TEST_DELETE_FAILURE'] = str(first / '.package-files.json')
+        result = self.run_installer(digest)
+        self.assertFalse((first / '.package-sha256').exists(), result.stdout)
+        self.assertTrue((first / '.package-files.json').is_file())
+        del self.env['TEST_DELETE_FAILURE']
+        result = self.run_installer(digest)
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertFalse(list(self.destination.glob('.cleanup-*.json')))
+
+    def test_incomplete_cleanup_receipts_do_not_block_other_cleanup(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        temporary = self.destination / ('.cleanup-' + first.name + '.json.tmp')
+        temporary.write_text('{interrupted')
+        orphan = self.destination / '.cleanup-unknown.json'
+        orphan.write_text('{unrecognized')
+        expired_log = self.destination / 'logs/install-20200101-000000-12345678.log'
+        expired_log.write_text('expired')
+        old = time.time() - 40 * 86400
+        os.utime(expired_log, (old, old))
+        _, _, result = self.install_version('v0.3.0')
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertFalse(temporary.exists())
+        self.assertFalse(expired_log.exists())
+        self.assertEqual(orphan.read_text(), '{unrecognized')
+
+    def test_reinstalled_pending_release_becomes_the_previous_success(self):
+        self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        current, digest, _ = self.install_version('v0.3.0')
+        # A cleanup interruption before deleting payload leaves the package intact.
+        record = {'schema': 1, 'Digest': digest,
+                  'Files': json.loads((current / '.package-files.json').read_text(encoding='utf-8-sig')),
+                  'Archives': [digest + '.zip']}
+        current_pending = self.destination / ('.cleanup-' + current.name + '.json')
+        current_pending.write_text(json.dumps(record))
+        result = self.run_installer(digest)
+        self.assertFalse(current_pending.exists(), result.stdout)
+        self.install_version('v0.4.0')
+        self.assertTrue(current.is_dir())
+
+    def test_config_location_inside_release_prevents_cleanup(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        # The missing file is still a configured destination that must not be removed.
+        self.env['HINDSIGHT_CONFIG'] = str(first / '.venv/user-settings.json')
+        _, _, result = self.install_version('v0.3.0')
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('still referenced', result.stdout)
+
+    def test_cache_and_log_retention_preserves_reused_archives_and_user_data(self):
+        first, digest, _ = self.install_version('v0.1.0')
+        cache = self.destination / 'downloads'
+        old = time.time() - 40 * 86400
+        obsolete = cache / ('a' * 64 + '.zip')
+        partial = cache / ('b' * 64 + '.zip.partial')
+        recent = cache / ('c' * 64 + '.zip')
+        unknown = cache / 'my-archive.zip'
+        expired_log = self.destination / 'logs/install-20200101-000000-12345678.log'
+        for path in (obsolete, partial, recent, unknown, expired_log):
+            path.write_bytes(b'fixture')
+        for path in cache.iterdir():
+            if path != recent:
+                os.utime(path, (old, old))
+        os.utime(expired_log, (old, old))
+        settings = Path(self.env['HINDSIGHTKIT_HOME'])
+        data = [settings / 'postgresql/data/memory.db', settings / 'models/model.onnx', settings / 'clients.json']
+        for path in data:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('persistent data')
+        result = self.run_installer(digest)
+        self.assertFalse(obsolete.exists(), result.stdout)
+        self.assertFalse(partial.exists())
+        self.assertFalse(expired_log.exists())
+        self.assertTrue(recent.is_file())
+        self.assertTrue(unknown.is_file())
+        self.assertTrue((cache / (digest + '.zip')).is_file())
+        self.assertTrue(all((cache / (component['sha256'] + '.zip')).is_file() for component in self.components))
+        self.assertTrue(all(path.read_text() == 'persistent data' for path in data))
+        self.assertTrue(first.is_dir())
 
     def test_upgrade_downloads_only_changed_component_and_keeps_old_files(self):
         digest = self.package()
