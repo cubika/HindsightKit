@@ -10,13 +10,16 @@ import sys
 import time
 from unittest.mock import Mock, patch
 
-from hindsightkit.postgres import Postgres, require_postgresql, available_port, setup_database, DATABASE_KEY
+from hindsightkit.setup.postgres import Postgres, require_postgresql, available_port, setup_database, DATABASE_KEY
 
 
 def check_hindsight(server, root):
     """Run the unmodified official API against the disposable non-superuser DB."""
     import aiohttp
-    from hindsightkit import cli, installer, services, runtime as runtime_env
+    from hindsightkit import cli
+    from hindsightkit.setup import installer
+    from hindsightkit import services
+    from hindsightkit.platform import runtime as runtime_env
     from hindsight_embed.profile_manager import ProfileManager
     config = ProfileManager().load_profile_config('hindsightkit')
     port = available_port(0)

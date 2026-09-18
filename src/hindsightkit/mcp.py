@@ -12,9 +12,11 @@ from fastmcp.server.middleware import Middleware
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.runner import serve_loop
 from mcp.server.stdio import stdio_server
-from . import connection, lifecycle, memory_control
-from .memory import Memory, Scope, SHARED_BANK, scope_for
-from .routing import resolve
+from hindsightkit import connection
+from hindsightkit.platform import lifecycle
+from hindsightkit.memory import control as memory_control
+from hindsightkit.memory.api import Memory, Scope, SHARED_BANK, scope_for
+from hindsightkit.memory.routing import resolve
 
 
 async def _serve_stdio(server: FastMCP):
@@ -51,7 +53,7 @@ def scope_from_roots(roots) -> Scope:
 def serve(context: str, directory: str | None = None):
     config = connection.load()
     connection_epoch = lifecycle.state().get('connection_epoch', '')
-    from .remote import prepare_client
+    from hindsightkit.sharing.remote import prepare_client
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
                     'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
@@ -64,7 +66,7 @@ def serve(context: str, directory: str | None = None):
     if context == 'cli':
         session_id = os.environ.get('COPILOT_AGENT_SESSION_ID')
         if session_id:
-            from .hooks import session_config
+            from hindsightkit.hooks import session_config
             session_event = {'sessionId': session_id, 'cwd': directory or os.getcwd()}
             _, pinned = session_config(session_event, config, resolve_scope=False)
             repository = pinned['_memory_repository']
@@ -150,8 +152,8 @@ def serve(context: str, directory: str | None = None):
         """Ask Hindsight to reason over each accessible bank; results identify their source."""
         return await call(ctx, 'reflect', query=query, max_tokens=max_tokens)
 
-    from .connector_registry import register_tools
-    from .runtime import home
+    from hindsightkit.connectors.registry import register_tools
+    from hindsightkit.platform.runtime import home
     register_tools(server, config, home())
 
     run_stdio(server)

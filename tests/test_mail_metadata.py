@@ -1,6 +1,6 @@
 import json
 import unittest
-from hindsightkit.mail_metadata import source_metadata, content_labels, tags_for
+from hindsightkit.connectors.workiq.metadata import source_metadata, content_labels, tags_for
 
 class MetadataTests(unittest.TestCase):
     def test_content_labels_must_exist_in_outcome(self):

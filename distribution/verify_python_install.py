@@ -46,10 +46,21 @@ def verify(bundle: Path, uv: str, destination: Path | None = None):
             command = [uv, 'pip', 'sync', '--python', python, '--offline', '--no-index',
                        '--find-links', bundle / 'wheels', '--require-hashes', '--only-binary', ':all:', requirements]
             run(command, env)
-            probe = '''import importlib.metadata as m, json, pathlib, sys
+            probe = '''import importlib, importlib.metadata as m, json, pathlib, sys
 import hindsightkit.cli, hindsight_client, copilot
+from hindsightkit.platform.runtime import PACKAGE
+from hindsightkit.setup.node_bundle import package_directory
+from hindsightkit.connectors.registry import CONNECTORS
 assert m.version('hindsightkit') == sys.argv[1]
 assert pathlib.Path(hindsightkit.cli.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())
+for name in ('node/integrate.mjs', 'scripts/install_options.ps1', 'scripts/postgres_install.ps1',
+             'web/catalog.html', 'web/connectors.html', 'web/catalog.js', 'web/connectors.js', 'web/connectors.css'):
+    assert (PACKAGE / name).is_file(), name
+for role in ('client', 'server'):
+    for name in ('package.json', 'package-lock.json'):
+        json.loads((package_directory(PACKAGE, role) / name).read_text(encoding='utf-8'))
+for connector in CONNECTORS:
+    assert hasattr(importlib.import_module(connector.module), 'Adapter')
 if sys.argv[2] == 'server':
     import hindsight_api, hindsight_embed, onnxruntime, asyncpg
 else:
@@ -60,7 +71,9 @@ print(json.dumps({'role':sys.argv[2], 'installed':True, 'application_version':m.
 '''
             run([python, '-c', probe, manifest['project_version'], role], env)
             run([uv, 'pip', 'check', '--python', python, '--offline'], env)
-            run([python, '-m', 'hindsightkit.cli', '--help'], env)
+            for module in ('hindsightkit.cli', 'hindsightkit.setup.installer',
+                           'hindsightkit.sharing.relay', 'hindsightkit.connectors.host'):
+                run([python, '-m', module, '--help'], env)
             # A repeat must resolve from the same local bundle without downloads.
             run(command, env)
         print(json.dumps({'offline_installation':'passed', 'roles':list(roles),

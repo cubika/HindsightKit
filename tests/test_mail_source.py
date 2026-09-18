@@ -6,11 +6,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from hindsightkit.mail_source import (
-    METADATA_FIELDS, WorkIQError, WorkIQMailSource, _unpack, clean_text,
-    html_to_text, normalize_message, recommended_folders, source_key,
-    source_version, validate_next_link,
-)
+from hindsightkit.connectors.workiq.source import METADATA_FIELDS, WorkIQError, WorkIQMailSource, _unpack, clean_text, html_to_text, normalize_message, recommended_folders, source_key, source_version, validate_next_link
 
 
 def mail(**changes):
@@ -171,7 +167,7 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
                 async def account(session):
                     raise failure
                 source._session, source._read_account = session, account
-                with patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'):
+                with patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='workiq.exe'):
                     with self.assertRaises(WorkIQError) as raised:
                         await source.__aenter__()
                 self.assertEqual(str(raised.exception), code)
@@ -190,7 +186,7 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
         async def account(session):
             return {'id': 'mailbox', 'userPrincipalName': 'user@example.invalid'}
         source._session, source._read_account = session, account
-        with patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'):
+        with patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='workiq.exe'):
             async with source:
                 with self.assertRaisesRegex(WorkIQError, '^workiq_eula_required$'):
                     await source._fetch(['/me'])
@@ -252,7 +248,7 @@ class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
                 callers.append(asyncio.current_task())
                 return {"structuredContent": {"results": [{"statusCode": 200, "data": {"id": "account", "mail": "a@example.com", "userPrincipalName": "a@example.com"}}]}}
         self_test = self
-        with patch("hindsightkit.mail_source.find_workiq", return_value="workiq.exe"), patch("mcp.client.stdio.stdio_client", transport), patch("mcp.ClientSession", Session):
+        with patch("hindsightkit.connectors.workiq.source.find_workiq", return_value="workiq.exe"), patch("mcp.client.stdio.stdio_client", transport), patch("mcp.ClientSession", Session):
             source = WorkIQMailSource()
             await asyncio.create_task(source.__aenter__())
             await asyncio.create_task(source.account())

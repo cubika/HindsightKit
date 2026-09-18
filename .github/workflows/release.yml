@@ -41,7 +41,7 @@ jobs:
         run: |
           uv sync --frozen --python 3.12 --extra server
           if ($LASTEXITCODE) { throw 'Python dependency installation failed.' }
-          .venv/Scripts/python.exe -c "from hindsightkit.installer import install_node_packages; install_node_packages(); install_node_packages(client=True)"
+          .venv/Scripts/python.exe -c "from hindsightkit.setup.installer import install_node_packages; install_node_packages(); install_node_packages(client=True)"
           if ($LASTEXITCODE) { throw 'Node dependency installation failed.' }
       - name: Run tests
         shell: pwsh
@@ -53,7 +53,7 @@ jobs:
         run: |
           $distribution = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres/pgsql'
           $cache = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres-downloads'
-          ./src/hindsightkit/postgres_install.ps1 -Destination $distribution -CacheDirectory $cache
+          ./src/hindsightkit/scripts/postgres_install.ps1 -Destination $distribution -CacheDirectory $cache
           if ($LASTEXITCODE) { throw 'PostgreSQL packaging failed.' }
           .venv/Scripts/python.exe tests/live_postgres.py --distribution $distribution
           if ($LASTEXITCODE) { throw 'PostgreSQL runtime validation failed.' }

@@ -13,7 +13,12 @@ import unittest
 import zipfile
 from unittest.mock import AsyncMock, patch
 
-from hindsightkit import cli, installer, services, runtime as runtime_env, connection
+from hindsightkit.platform import config as profile_env
+from hindsightkit import cli
+from hindsightkit.setup import installer
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import connection
 
 
 def options(**values):
@@ -63,7 +68,7 @@ class RemoteSetupTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime_env, 'node', return_value='node'))
             stack.enter_context(patch.object(installer.socket, 'gethostname', return_value='Automatic-Hostname'))
             configure = stack.enter_context(patch.object(installer, 'configure_profile'))
-            profile = stack.enter_context(patch.object(services, 'profile_config'))
+            profile = stack.enter_context(patch.object(profile_env, 'profile_config'))
             start = stack.enter_context(patch.object(services, 'start'))
             stack.enter_context(patch.object(installer, 'remove_project_registration'))
 
@@ -100,7 +105,7 @@ class RemoteSetupTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, environment, clear=True))
             stack.enter_context(patch.object(runtime_env.Path, 'home', return_value=root))
             stack.enter_context(patch.object(runtime_env, 'home', return_value=root / 'runtime'))
-            stack.enter_context(patch.object(services, 'profile_config', return_value=(profile, paths)))
+            stack.enter_context(patch.object(profile_env, 'profile_config', return_value=(profile, paths)))
             configure = stack.enter_context(patch.object(installer, 'configure_profile'))
             sharing = stack.enter_context(patch.object(services, 'configure_sharing'))
             stopped = stack.enter_context(patch.object(services, 'stop_profile_services'))
@@ -111,11 +116,11 @@ class RemoteSetupTests(unittest.TestCase):
             stack.enter_context(patch.object(services, 'ensure_bank', new_callable=AsyncMock))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
             register = stack.enter_context(patch.object(connection, 'register', new_callable=AsyncMock))
-            stack.enter_context(patch('hindsightkit.postgres.setup_database'))
-            host = stack.enter_context(patch('hindsightkit.remote.resume_host'))
-            stack.enter_context(patch('hindsightkit.routing.seed_aliases'))
-            stack.enter_context(patch('hindsightkit.postgres.private_directory', side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)))
-            stack.enter_context(patch('hindsightkit.postgres.restrict_access'))
+            stack.enter_context(patch('hindsightkit.setup.postgres.setup_database'))
+            host = stack.enter_context(patch('hindsightkit.sharing.remote.resume_host'))
+            stack.enter_context(patch('hindsightkit.memory.routing.seed_aliases'))
+            stack.enter_context(patch('hindsightkit.setup.postgres.private_directory', side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)))
+            stack.enter_context(patch('hindsightkit.setup.postgres.restrict_access'))
             integrate = stack.enter_context(patch.object(installer, 'integrate'))
             hosts = stack.enter_context(patch.object(installer, 'vscode_user_directories'))
             cleanup = stack.enter_context(patch.object(installer, 'remove_project_registration'))
@@ -151,7 +156,7 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             with self.client_environment(root) as state, \
-                 patch('hindsightkit.command.install', return_value='hindsightkit.exe') as launcher, \
+                 patch('hindsightkit.setup.command.install', return_value='hindsightkit.exe') as launcher, \
                  patch.object(connection, 'has_server', return_value=False), \
                  patch.object(installer, 'setup_server') as server, patch.object(services, 'stop_profile_services') as stop:
                 installer.setup(options(client_only=True))
@@ -169,7 +174,7 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             with self.client_environment(root) as state, \
-                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch('hindsightkit.setup.command.install', return_value='hindsightkit.exe'), \
                  patch.object(connection, 'has_server', return_value=True), \
                  patch.object(installer, 'setup_server') as server, patch.object(services, 'stop_profile_services') as stop:
                 previous = {'apiUrl': 'http://127.0.0.1:41234', 'apiToken': 'saved-client-key',
@@ -215,7 +220,7 @@ class RemoteSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             with self.client_environment(root) as state, \
-                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch('hindsightkit.setup.command.install', return_value='hindsightkit.exe'), \
                  patch.object(installer, 'setup_server') as server:
                 installer.setup(options(client_only=True, server='https://memory.invalid', api_key_env='TEST_MEMORY_KEY'))
                 server.assert_not_called()
@@ -236,7 +241,7 @@ class RemoteSetupTests(unittest.TestCase):
                  patch.object(connection, 'has_server', return_value=False), \
                  patch.object(connection, 'server_load', side_effect=AssertionError('No server dependencies')), \
                  patch.object(connection, 'request', new_callable=AsyncMock) as request, \
-                 patch('hindsightkit.remote.status'), patch('hindsightkit.remote.resume') as resume, \
+                 patch('hindsightkit.sharing.remote.status'), patch('hindsightkit.sharing.remote.resume') as resume, \
                  patch.object(runtime_env, 'prepare_env'), contextlib.redirect_stdout(output), \
                  contextlib.redirect_stderr(output):
                 self.assertTrue(services.status())
@@ -259,7 +264,7 @@ class RemoteSetupTests(unittest.TestCase):
              patch.object(installer, 'setup_client') as client, patch.object(installer, 'require_client_prerequisites'), \
              patch.object(installer, 'setup_client_only') as refresh, \
                  patch.object(runtime_env, 'home', return_value=root), \
-                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch('hindsightkit.setup.command.install', return_value='hindsightkit.exe'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 installer.setup(options())
                 server.assert_called_once()
@@ -276,7 +281,7 @@ class RemoteSetupTests(unittest.TestCase):
                  patch.object(installer, 'setup_server', return_value=local) as server, \
                  patch.object(installer, 'setup_client') as client, patch.object(installer, 'require_client_prerequisites') as prereqs, \
                  patch.object(runtime_env, 'home', return_value=root), \
-                 patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
+                 patch('hindsightkit.setup.command.install', return_value='hindsightkit.exe'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 args = options(port=18077, model='chosen-model')
                 installer.setup(args)
@@ -315,9 +320,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-            (root / 'src/hindsightkit').mkdir(parents=True)
-            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                            root / 'src/hindsightkit/install_options.ps1')
+            (root / 'src/hindsightkit/scripts').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                            root / 'src/hindsightkit/scripts/install_options.ps1')
             environment = powershell_environment(root)
             for arguments in [['-Server', 'ftp://invalid.example'], ['-Server', 'http://host/path'],
                               ['-Server', 'http://host', '-Model', 'server-only'],
@@ -339,9 +344,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-            (root / 'src/hindsightkit').mkdir(parents=True)
-            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                            root / 'src/hindsightkit/install_options.ps1')
+            (root / 'src/hindsightkit/scripts').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                            root / 'src/hindsightkit/scripts/install_options.ps1')
             for changes, message in [({'PATH': '', 'COPILOT_HOME': ''}, 'Git must be installed'),
                                      ({'COPILOT_HOME': str(root / 'custom-copilot')}, 'Unset COPILOT_HOME')]:
                 with self.subTest(changes=changes):
@@ -372,9 +377,9 @@ class RemoteSetupTests(unittest.TestCase):
                         release.mkdir(parents=True)
                         script = release / 'setup.ps1'
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-                        (release / 'src/hindsightkit').mkdir(parents=True)
-                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                                        release / 'src/hindsightkit/install_options.ps1')
+                        (release / 'src/hindsightkit/scripts').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                                        release / 'src/hindsightkit/scripts/install_options.ps1')
                         if installed_server == 'profile':
                             profile = case / '.hindsight/profiles/hindsightkit.env'
                             profile.parent.mkdir(parents=True)
@@ -438,9 +443,9 @@ class RemoteSetupTests(unittest.TestCase):
                     release.mkdir(parents=True)
                     script = release / 'setup.ps1'
                     shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-                    (release / 'src/hindsightkit').mkdir(parents=True)
-                    shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                                    release / 'src/hindsightkit/install_options.ps1')
+                    (release / 'src/hindsightkit/scripts').mkdir(parents=True)
+                    shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                                    release / 'src/hindsightkit/scripts/install_options.ps1')
                     (release / 'python/wheels').mkdir(parents=True)
                     (release / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                     for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -499,9 +504,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(directory)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-            (root / 'src/hindsightkit').mkdir(parents=True)
-            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                            root / 'src/hindsightkit/install_options.ps1')
+            (root / 'src/hindsightkit/scripts').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                            root / 'src/hindsightkit/scripts/install_options.ps1')
             result = subprocess.run(offline_setup_command(shell, script, ['-ServerOnly']),
                 env=powershell_environment(root, HINDSIGHTKIT_RELEASE_MANIFEST=str(root / 'release.json')),
                 capture_output=True, text=True, encoding='utf-8', timeout=15)
@@ -542,9 +547,9 @@ class Runtime { static void Main(string[] args) {
                         app = case / 'app'
                         app.mkdir(parents=True)
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', app / 'setup.ps1')
-                        (app / 'src/hindsightkit').mkdir(parents=True)
-                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                                        app / 'src/hindsightkit/install_options.ps1')
+                        (app / 'src/hindsightkit/scripts').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                                        app / 'src/hindsightkit/scripts/install_options.ps1')
                         (app / 'python/wheels').mkdir(parents=True)
                         (app / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                         for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -723,7 +728,7 @@ $global:LASTEXITCODE = $LASTEXITCODE
             client = {'apiUrl': 'https://remote.invalid', 'apiToken': 'remote-key', 'hindsightkit': {'mode': 'client'}}
             path.write_text(json.dumps(client))
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path)}), \
-                 patch.object(services, 'profile_config', return_value=({'HINDSIGHT_API_TENANT_API_KEY': 'server-key'},
+                 patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_API_TENANT_API_KEY': 'server-key'},
                     SimpleNamespace(port=9077))), patch.object(connection, 'has_server', return_value=True):
                 self.assertEqual(connection.load(), client)
                 server = connection.server_load()

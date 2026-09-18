@@ -26,4 +26,8 @@ server = [
 hindsightkit = "hindsightkit.cli:main"
 
 [tool.setuptools.package-data]
-hindsightkit = ["*.mjs", "*.json", "*.ps1", "client/*.json", "web/*.html", "web/*.css", "web/*.js"]
+hindsightkit = ["node/*.mjs", "node/client/*.json", "node/server/*.json", "scripts/*.ps1", "web/*.html", "web/*.css", "web/*.js"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false

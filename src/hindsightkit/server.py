@@ -84,9 +84,9 @@ class ClientsExtension(HttpExtension):
         @router.get('/hindsightkit/connection')
         def connection(authorization: str | None = Header(default=None)):
             authorize(authorization)
-            from .connection import validate_bank
-            from .memory import SHARED_BANK
-            from .connector_registry import enabled_connectors
+            from hindsightkit.connection import validate_bank
+            from hindsightkit.memory.api import SHARED_BANK
+            from hindsightkit.connectors.registry import enabled_connectors
             return {'protocol': 1, 'routing': 'repository',
                     'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK)),
                     'connectors': enabled_connectors(inventory.path.parent)}
@@ -94,8 +94,8 @@ class ClientsExtension(HttpExtension):
         @router.post('/hindsightkit/scope')
         def scope(body: RepositoryScope, authorization: str | None = Header(default=None)):
             authorize(authorization)
-            from .connection import validate_bank
-            from .memory import SHARED_BANK
+            from hindsightkit.connection import validate_bank
+            from hindsightkit.memory.api import SHARED_BANK
             shared = validate_bank(self.config.get('memory_bank', SHARED_BANK))
             aliases = Inventory(self.config.get('aliases_file', str(inventory.path.with_name('repositories.json')))).read()
             bank = aliases.get(body.repository, 'hindsightkit-repo-' + body.repository) if body.repository else shared

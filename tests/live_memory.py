@@ -15,13 +15,17 @@ from hindsight_client import Hindsight
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
-from hindsightkit import services, runtime as runtime_env, hooks, connection
-from hindsightkit.memory import SHARED_BANK, scope_for
+from hindsightkit.platform import config as profile_env
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import hooks
+from hindsightkit import connection
+from hindsightkit.memory.api import SHARED_BANK, scope_for
 
 
 async def main():
     runtime_env.prepare_env()
-    _, paths = services.profile_config()
+    _, paths = profile_env.profile_config()
     url = f'http://127.0.0.1:{paths.port}'
     key = connection.load().get('apiToken')
     client = Hindsight(base_url=url, api_key=key)

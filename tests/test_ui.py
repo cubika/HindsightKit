@@ -13,7 +13,10 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-from hindsightkit import cli, connection, services, runtime as runtime_env
+from hindsightkit import cli
+from hindsightkit import connection
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
 
 
 class UiTests(unittest.TestCase):
@@ -122,7 +125,8 @@ HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()
             launcher = root / 'launch.py'
             launcher.write_text('''import argparse, sys
 from pathlib import Path
-from hindsightkit import connection, services, runtime as runtime_env
+from hindsightkit import connection, services
+from hindsightkit.platform import runtime as runtime_env
 root, port = Path(sys.argv[1]), int(sys.argv[2])
 runtime_env.home = lambda: root
 connection.server_load = lambda: {'apiUrl': 'http://127.0.0.1:9077'}

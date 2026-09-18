@@ -6,9 +6,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hindsightkit import runtime as runtime_env
+from hindsightkit.platform import runtime as runtime_env
 from hindsightkit.hooks import session_config
-from hindsightkit.memory import Memory, Scope, SHARED_BANK, scope_for
+from hindsightkit.memory.api import Memory, Scope, SHARED_BANK, scope_for
 from hindsightkit.mcp import scope_from_roots
 
 
@@ -93,6 +93,6 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(scope_from_roots([SimpleNamespace(uri=a.as_uri())]), scope_for(a))
 
     def test_git_failure_does_not_route_repo_memory_into_shared(self):
-        with patch('hindsightkit.memory.subprocess.run', return_value=SimpleNamespace(returncode=128, stdout='', stderr='fatal: dubious ownership')):
+        with patch('hindsightkit.memory.api.subprocess.run', return_value=SimpleNamespace(returncode=128, stdout='', stderr='fatal: dubious ownership')):
             with self.assertRaisesRegex(RuntimeError, 'Cannot determine'):
                 scope_for(Path.cwd())

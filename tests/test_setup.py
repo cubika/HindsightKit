@@ -9,12 +9,35 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit import connection, installer, services, runtime as runtime_env
-from hindsightkit.command import prepend_path
-from hindsightkit.memory import scope_for, SHARED_BANK
+from hindsightkit import connection
+from hindsightkit.setup import installer
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit.setup.command import prepend_path
+from hindsightkit.memory.api import scope_for, SHARED_BANK
 
 
 class SetupTests(unittest.TestCase):
+    def setUp(self):
+        if self._testMethodName not in {
+            'test_jsonc_preserves_other_servers_and_comments',
+            'test_conflicting_endpoint_is_not_overwritten',
+            'test_disabled_learning_and_jsonc_runtime_config_are_rejected',
+            'test_official_installer_merges_and_uses_stable_absolute_paths',
+        }:
+            return
+        source = runtime_env.home() / 'client-runtime'
+        if not (source / 'node_modules/jsonc-parser').is_dir():
+            self.skipTest('Install client runtime dependencies before integration tests.')
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        runtime = Path(temporary.name) / 'runtime'
+        shutil.copytree(source, runtime)
+        for fixture in (patch.object(runtime_env, 'runtime', return_value=runtime),
+                        patch.object(runtime_env, 'node', return_value=shutil.which('node'))):
+            fixture.start()
+            self.addCleanup(fixture.stop)
+
     @unittest.skipUnless(os.name == 'nt', 'Windows setup output handling')
     def test_setup_private_native_output_is_displayed_but_not_logged(self):
         compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
@@ -59,8 +82,8 @@ catch { Write-InstallStatus $_.Exception.Message; exit 19 }
 
     def test_release_upgrade_stops_hindsightkit_api_without_using_its_health_gate(self):
         with patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as manager, \
-             patch('hindsightkit.remote.stop'), \
-             patch('hindsightkit.connectors.stop') as stop_connectors, \
+             patch('hindsightkit.sharing.remote.stop'), \
+             patch('hindsightkit.connectors.host.stop') as stop_connectors, \
              patch.object(runtime_env, 'run') as run, patch.object(runtime_env, 'executable', return_value='new-release/hindsight-embed'):
             manager.return_value.is_ui_running.return_value = True
             manager.return_value.is_running.side_effect = AssertionError('Stopping must not depend on API health')
@@ -90,7 +113,7 @@ catch { Write-InstallStatus $_.Exception.Message; exit 19 }
         args = argparse.Namespace(port=0, model=None, model_dir=None, reasoning_effort=None)
         with patch.object(ProfileManager, 'load_profile_config', return_value={}), \
              patch.object(ProfileManager, 'create_profile') as create, \
-             patch('hindsightkit.installer.socket.socket'):
+             patch('hindsightkit.setup.installer.socket.socket'):
             installer.configure_profile(args)
             config = create.call_args.args[2]
             self.assertEqual(config['HINDSIGHT_API_LLM_MODEL'], 'gpt-6-astra')

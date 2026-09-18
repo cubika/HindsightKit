@@ -25,8 +25,8 @@ import webbrowser
 
 from filelock import FileLock, Timeout
 
-from .postgres import atomic_json, private_directory, reject_links
-from . import relay_log
+from hindsightkit.platform.files import atomic_json, private_directory, reject_links
+from hindsightkit.sharing import log as relay_log
 
 DOWNLOAD_URL = 'https://aka.ms/TunnelsCliDownload/win-x64'
 SERVICE = 'hindsightkit-relay-v1'
@@ -97,7 +97,7 @@ def _json(executable, *arguments):
 def ensure_cli(interactive=True):
     if os.name != 'nt':
         raise RuntimeError('Managed relay installation currently supports Windows only.')
-    from .runtime import home
+    from hindsightkit.platform.runtime import home
     managed = home() / 'tools/devtunnel.exe'
     existing = managed if managed.is_file() else shutil.which('devtunnel.exe')
     binary = Path(existing).resolve() if existing else managed
@@ -346,7 +346,7 @@ def _ensure_running(root, spec, interactive=False, *, provider=None):
             flags = (_flags() | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
             # Workers append structured events themselves; no persistent log handle
             # remains open to prevent rotation on Windows.
-            child = subprocess.Popen([sys.executable, '-m', 'hindsightkit.relay', '--worker', str(root)],
+            child = subprocess.Popen([sys.executable, '-m', 'hindsightkit.sharing.relay', '--worker', str(root)],
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                      creationflags=flags, close_fds=True, start_new_session=os.name != 'nt')
             spawned = child

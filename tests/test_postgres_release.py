@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import zipfile
 
-from hindsightkit import postgres
+from hindsightkit.setup import postgres
 
 
 class ReleaseManifestTests(unittest.TestCase):
@@ -77,7 +77,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_installed_app_manifest_is_used_after_bootstrap_environment_is_restored(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / 'app'
-            package = app / 'src/hindsightkit/postgres.py'
+            package = app / 'src/hindsightkit/setup/postgres.py'
             package.parent.mkdir(parents=True)
             manifest = self.manifest()
             (app / 'release.json').write_text(json.dumps(manifest), encoding='utf-8')
@@ -91,7 +91,7 @@ class ReleaseManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             app = root / 'app'
-            package = app / 'src/hindsightkit/postgres.py'
+            package = app / 'src/hindsightkit/setup/postgres.py'
             package.parent.mkdir(parents=True)
             explicit = root / 'release.json'
             manifest = self.manifest()
@@ -105,7 +105,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_wheel_installation_finds_its_own_release_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / 'app'
-            package = app / '.venv/Lib/site-packages/hindsightkit/postgres.py'
+            package = app / '.venv/Lib/site-packages/hindsightkit/setup/postgres.py'
             package.parent.mkdir(parents=True)
             manifest = self.manifest()
             (app / 'release.json').write_text(json.dumps(manifest), encoding='utf-8')
@@ -165,7 +165,7 @@ class PowerShellReleaseTests(unittest.TestCase):
         if not cls.shell:
             cls.workspace.cleanup()
             raise unittest.SkipTest('Windows PowerShell is unavailable')
-        cls.installer = Path(postgres.__file__).with_name('postgres_install.ps1')
+        cls.installer = Path(postgres.__file__).resolve().parents[1] / 'scripts/postgres_install.ps1'
         cls.environment = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
         cls.harness = cls.root / 'install-fixture.ps1'
         cls.harness.write_text('''param([string]$Installer, [string]$Destination, [string]$Cache,

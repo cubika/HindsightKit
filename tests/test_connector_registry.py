@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from hindsightkit.connector_registry import Connector, ConnectorHost, enabled_connectors, register_tools
-from hindsightkit.workiq_connector import Adapter, EULA_ERROR, _accept_workiq_eula, saved_status
-from hindsightkit.mail_source import WorkIQError
-from hindsightkit.mail_ledger import initialize, new_config, new_run, new_status
+from hindsightkit.connectors.registry import Connector, ConnectorHost, enabled_connectors, register_tools
+from hindsightkit.connectors.workiq.adapter import Adapter, EULA_ERROR, _accept_workiq_eula, saved_status
+from hindsightkit.connectors.workiq.source import WorkIQError
+from hindsightkit.connectors.workiq.ledger import initialize, new_config, new_run, new_status
 
 
 def settings(root, enabled=False):
@@ -27,8 +27,8 @@ def settings(root, enabled=False):
 class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_unused_catalog_and_boot_do_not_create_runtime_or_call_dependencies(self):
         with tempfile.TemporaryDirectory() as temp, \
-             patch('hindsightkit.mail_source.find_workiq', side_effect=WorkIQError('workiq_1_0_0_not_found')), \
-             patch('hindsightkit.mail_sync.MailSync') as runner, \
+             patch('hindsightkit.connectors.workiq.source.find_workiq', side_effect=WorkIQError('workiq_1_0_0_not_found')), \
+             patch('hindsightkit.connectors.workiq.sync.MailSync') as runner, \
              patch('hindsightkit.connection.sdk') as sdk:
             root = Path(temp)
             host = ConnectorHost(root, {'apiUrl':'http://127.0.0.1:9077'})
@@ -45,8 +45,8 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_workiq_prevents_actions_before_any_state_change(self):
         with tempfile.TemporaryDirectory() as temp, \
-             patch('hindsightkit.mail_source.find_workiq', side_effect=WorkIQError('workiq_1_0_0_not_found')), \
-             patch('hindsightkit.mail_sync.MailSync') as runner, patch('hindsightkit.connection.sdk') as sdk:
+             patch('hindsightkit.connectors.workiq.source.find_workiq', side_effect=WorkIQError('workiq_1_0_0_not_found')), \
+             patch('hindsightkit.connectors.workiq.sync.MailSync') as runner, patch('hindsightkit.connection.sdk') as sdk:
             adapter = Adapter(Path(temp) / 'mail', {'apiUrl':'http://127.0.0.1:9077'})
             for action in ['discover','preview','start','sync']:
                 with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'WorkIQ'):
@@ -62,8 +62,8 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temp)
                 directory = settings(root, enabled)
                 before = (directory / 'sync.sqlite3').read_bytes()
-                with patch('hindsightkit.mail_source.find_workiq', side_effect=WorkIQError('missing')) as probe, \
-                     patch('hindsightkit.mail_sync.MailSync') as runner:
+                with patch('hindsightkit.connectors.workiq.source.find_workiq', side_effect=WorkIQError('missing')) as probe, \
+                     patch('hindsightkit.connectors.workiq.sync.MailSync') as runner:
                     host = ConnectorHost(root, {'apiUrl':'http://127.0.0.1:9077'})
                     self.assertEqual(enabled_connectors(root), ['workiq'] if enabled else [])
                     await host.boot()
@@ -81,8 +81,8 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
         fake.discover = AsyncMock()
         fake.pause, fake.close, fake.boot = AsyncMock(), AsyncMock(), AsyncMock()
         config = {'apiUrl':'http://127.0.0.1:9077','apiToken':'test-private-token'}
-        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'), \
-             patch('hindsightkit.mail_sync.MailSync', return_value=fake) as make, \
+        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='workiq.exe'), \
+             patch('hindsightkit.connectors.workiq.sync.MailSync', return_value=fake) as make, \
              patch('hindsightkit.connection.sdk', return_value='authenticated-client') as sdk:
             adapter = Adapter(Path(temp)/'mail', config)
             adapter.status()
@@ -99,8 +99,8 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_enabled_saved_connector_restores_once_without_discovery(self):
         fake = Mock()
         fake.boot, fake.close, fake.discover = AsyncMock(), AsyncMock(), AsyncMock()
-        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.mail_source.find_workiq', return_value='workiq.exe'), \
-             patch('hindsightkit.mail_sync.MailSync', return_value=fake) as make, \
+        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='workiq.exe'), \
+             patch('hindsightkit.connectors.workiq.sync.MailSync', return_value=fake) as make, \
              patch('hindsightkit.connection.sdk', return_value='client'):
             directory = settings(Path(temp), enabled=True)
             adapter = Adapter(directory, {'apiUrl':'local'})
@@ -122,7 +122,7 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
                            ('thread', 'conversation', 'pending-private-data', 'prepared', 1, 'Pending thread'))
                 db.execute('INSERT INTO discovery_errors VALUES (?,?,?,?)', ('unavailable', 'inbox', 'protected', None))
             db.close()
-            with patch('hindsightkit.mail_sync.MailSync') as make:
+            with patch('hindsightkit.connectors.workiq.sync.MailSync') as make:
                 value = saved_status(directory)
             make.assert_not_called()
             self.assertEqual(value['run']['pending'],1)
@@ -131,12 +131,12 @@ class OptionalConnectorTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('pending-private-data',json.dumps(value))
 
     async def test_public_start_requires_installed_source_before_enabling(self):
-        from hindsightkit.mail_sync import MailSync
+        from hindsightkit.connectors.workiq.sync import MailSync
         with tempfile.TemporaryDirectory() as temp:
             runner = MailSync(Path(temp), 'unused')
             runner._put('config', {**new_config(), 'folder_ids':['inbox']})
             try:
-                with patch('hindsightkit.mail_source.find_workiq', side_effect=WorkIQError('missing')):
+                with patch('hindsightkit.connectors.workiq.source.find_workiq', side_effect=WorkIQError('missing')):
                     for method in [runner.start, runner.sync]:
                         with self.assertRaises(WorkIQError):
                             await method()
@@ -161,7 +161,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                 adapter = Adapter(directory, {'apiUrl': 'unused'})
                 with patch.object(adapter, 'availability', return_value={'ready': True}), \
                      patch.object(adapter, '_load') as load, \
-                     patch('hindsightkit.workiq_connector._accept_workiq_eula') as accept:
+                     patch('hindsightkit.connectors.workiq.adapter._accept_workiq_eula') as accept:
                     self.assertTrue(adapter.status()['consent']['required'])
                     load.assert_not_called()
                     accept.assert_not_called()
@@ -171,7 +171,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
             adapter = Adapter(Path(temp), {'apiUrl': 'unused'})
             with patch.object(adapter, 'availability', return_value={'ready': True}), \
                  patch.object(adapter, '_load') as load, \
-                 patch('hindsightkit.workiq_connector._accept_workiq_eula') as accept:
+                 patch('hindsightkit.connectors.workiq.adapter._accept_workiq_eula') as accept:
                 for data in [None, [], {}, {'accepted': False}, {'accepted': 1}, {'accepted': 'true'},
                              {'accepted': True, 'path': 'arbitrary'}, {'accepted': True}]:
                     with self.subTest(data=data), self.assertRaises(ValueError):
@@ -181,7 +181,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                 accept.assert_not_called()
 
     async def test_discovery_failure_persists_and_blocks_sync_until_connection_refresh(self):
-        from hindsightkit.mail_sync import MailSync
+        from hindsightkit.connectors.workiq.sync import MailSync
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / 'mail'
             runner = MailSync(directory, 'unused')
@@ -203,7 +203,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(adapter.status()['consent']['required'])
 
     async def test_accept_and_manual_recovery_reopen_source_and_keep_schedule_paused(self):
-        from hindsightkit.mail_sync import MailSync
+        from hindsightkit.connectors.workiq.sync import MailSync
         for action in ['accept-eula', 'discover']:
             with self.subTest(action=action), tempfile.TemporaryDirectory() as temp:
                 directory = Path(temp) / 'mail'
@@ -222,8 +222,8 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                     return runner
                 with patch.object(adapter, 'availability', return_value={'ready': True}), \
                      patch('hindsightkit.connection.sdk', return_value=None), \
-                     patch('hindsightkit.mail_sync.MailSync', side_effect=reopen), \
-                     patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock) as accept:
+                     patch('hindsightkit.connectors.workiq.sync.MailSync', side_effect=reopen), \
+                     patch('hindsightkit.connectors.workiq.adapter._accept_workiq_eula', new_callable=AsyncMock) as accept:
                     try:
                         result = await adapter.action(action, {'accepted': True} if action == 'accept-eula' else None)
                         self.assertFalse(result['consent']['required'])
@@ -243,8 +243,8 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
         import os
         import subprocess
         process = Mock(returncode=0, wait=AsyncMock(return_value=0))
-        with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
-             patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process) as spawn:
+        with patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='verified-workiq.exe'), \
+             patch('hindsightkit.connectors.workiq.adapter.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process) as spawn:
             await _accept_workiq_eula()
         self.assertEqual(spawn.call_args.args, ('verified-workiq.exe', 'accept-eula', '--log-level', 'None'))
         self.assertNotIn('shell', spawn.call_args.kwargs)
@@ -255,7 +255,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
         process.kill.assert_not_called()
 
     async def test_failed_accept_keeps_consent_required_and_does_not_discover(self):
-        from hindsightkit.mail_sync import MailSync
+        from hindsightkit.connectors.workiq.sync import MailSync
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / 'mail'
             runner = MailSync(directory, 'unused')
@@ -264,7 +264,7 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
             adapter = Adapter(directory, {'apiUrl': 'unused'})
             adapter.sync = runner
             with patch.object(adapter, 'availability', return_value={'ready': True}), \
-                 patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock, side_effect=ValueError('Acceptance failed')):
+                 patch('hindsightkit.connectors.workiq.adapter._accept_workiq_eula', new_callable=AsyncMock, side_effect=ValueError('Acceptance failed')):
                 try:
                     with self.assertRaisesRegex(ValueError, 'Acceptance failed'):
                         await adapter.action('accept-eula', {'accepted': True})
@@ -278,8 +278,8 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
         for failure in [TimeoutError(), asyncio.CancelledError(), OSError('private upstream detail')]:
             with self.subTest(failure=type(failure).__name__):
                 process = Mock(returncode=None, wait=AsyncMock(side_effect=[failure, 0]))
-                with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
-                     patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
+                with patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='verified-workiq.exe'), \
+                     patch('hindsightkit.connectors.workiq.adapter.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
                     expected = asyncio.CancelledError if isinstance(failure, asyncio.CancelledError) else ValueError
                     with self.assertRaises(expected) as caught:
                         await _accept_workiq_eula()
@@ -287,8 +287,8 @@ class WorkIQConsentTests(unittest.IsolatedAsyncioTestCase):
                 process.kill.assert_called_once()
                 self.assertEqual(process.wait.await_count, 2)
         process = Mock(returncode=1, wait=AsyncMock(return_value=1))
-        with patch('hindsightkit.mail_source.find_workiq', return_value='verified-workiq.exe'), \
-             patch('hindsightkit.workiq_connector.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
+        with patch('hindsightkit.connectors.workiq.source.find_workiq', return_value='verified-workiq.exe'), \
+             patch('hindsightkit.connectors.workiq.adapter.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=process):
             with self.assertRaisesRegex(ValueError, 'could not accept'):
                 await _accept_workiq_eula()
 
@@ -307,7 +307,7 @@ class IndependentAdapterTests(unittest.IsolatedAsyncioTestCase):
                 calls.append((self.directory.name,'boot'))
                 if self.directory.name == 'first': raise RuntimeError('isolated failure')
             async def close(self): calls.append((self.directory.name,'close'))
-        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connector_registry.import_module', return_value=SimpleNamespace(Adapter=Fake)) as importer:
+        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.registry.import_module', return_value=SimpleNamespace(Adapter=Fake)) as importer:
             root=Path(temp)
             for spec in specs: (root/spec.directory).mkdir()
             host=ConnectorHost(root, {}, registry=specs)
@@ -325,7 +325,7 @@ class IndependentAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(('second','close'),calls)
 
     def test_unused_optional_tools_do_not_import_adapters(self):
-        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connector_registry.import_module') as importer:
+        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.registry.import_module') as importer:
             register_tools(Mock(), {}, Path(temp))
             importer.assert_not_called()
 

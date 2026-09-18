@@ -8,7 +8,7 @@ import re
 import subprocess
 from urllib.parse import urlsplit
 
-from .memory import Scope, SHARED_BANK, scope_for
+from hindsightkit.memory.api import Scope, SHARED_BANK, scope_for
 
 
 def repository_identity(scope):
@@ -45,7 +45,7 @@ def repository_identity(scope):
 
 
 async def resolve(config, scope):
-    from . import connection
+    from hindsightkit import connection
     if config.get('hindsightkit', {}).get('routing') != 'repository':
         return scope
     identity = await asyncio.to_thread(repository_identity, scope)

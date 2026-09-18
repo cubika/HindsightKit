@@ -11,8 +11,16 @@ from unittest.mock import AsyncMock, patch
 
 from fastmcp.exceptions import ToolError
 
-from hindsightkit import cli, services, runtime as runtime_env, connection, hooks, lifecycle, mcp, remote
-from hindsightkit.memory import Scope
+from hindsightkit.platform import config as profile_env
+from hindsightkit import cli
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import connection
+from hindsightkit import hooks
+from hindsightkit.platform import lifecycle
+from hindsightkit import mcp
+from hindsightkit.sharing import remote
+from hindsightkit.memory.api import Scope
 
 
 class LifecycleTests(unittest.TestCase):
@@ -70,8 +78,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_stop_direct_client_blocks_memory_and_relay_recovery_until_start(self):
         with patch.object(connection, 'has_server', return_value=False), \
-             patch('hindsightkit.relay.stop') as stop, patch('hindsightkit.relay.ensure_running') as ensure, \
-             patch('hindsightkit.relay.load_spec', return_value=None):
+             patch('hindsightkit.sharing.relay.stop') as stop, patch('hindsightkit.sharing.relay.ensure_running') as ensure, \
+             patch('hindsightkit.sharing.relay.load_spec', return_value=None):
             self.assertEqual(cli.main(['stop']), 0)
             self.assertTrue(lifecycle.state()['stopped'])
             with self.assertRaisesRegex(RuntimeError, 'stopped'):
@@ -85,8 +93,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_client_unshare_forgets_credentials_and_does_not_resume_on_start(self):
         with patch.object(connection, 'has_server', return_value=False), \
-             patch('hindsightkit.relay.stop'), patch('hindsightkit.relay.ensure_running') as ensure, \
-             patch('hindsightkit.relay.load_spec', return_value=None), contextlib.redirect_stdout(io.StringIO()):
+             patch('hindsightkit.sharing.relay.stop'), patch('hindsightkit.sharing.relay.ensure_running') as ensure, \
+             patch('hindsightkit.sharing.relay.load_spec', return_value=None), contextlib.redirect_stdout(io.StringIO()):
             remote.unshare()
             self.assertNotIn('apiToken', json.loads(self.config_path.read_text()))
             self.assertTrue(lifecycle.state()['disconnected'])
@@ -129,9 +137,9 @@ class LifecycleTests(unittest.TestCase):
              patch.object(connection, 'server_load', return_value=local), \
              patch.object(services, 'server_status', return_value=True) as server_status, \
              patch.object(connection, 'request', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}) as request, \
-             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
-             patch('hindsightkit.postgres.Postgres') as database, \
-             patch('hindsightkit.postgres.check_external', new_callable=AsyncMock), \
+             patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch('hindsightkit.setup.postgres.Postgres') as database, \
+             patch('hindsightkit.setup.postgres.check_external', new_callable=AsyncMock), \
              patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
              contextlib.redirect_stdout(io.StringIO()) as output:
             database.return_value.state_path.is_file.return_value = False
@@ -166,7 +174,7 @@ class LifecycleTests(unittest.TestCase):
             with self.subTest(has_server=has_server), \
                  patch.object(connection, 'has_server', return_value=has_server), \
                  patch.object(connection, 'discover', new_callable=AsyncMock), \
-                 patch('hindsightkit.remote.status') as relay_status, \
+                 patch('hindsightkit.sharing.remote.status') as relay_status, \
                  patch.object(services, 'server_status', return_value=True) as local_status, \
                  patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
                  contextlib.redirect_stdout(io.StringIO()):
@@ -178,7 +186,7 @@ class LifecycleTests(unittest.TestCase):
     def test_stopped_status_keeps_service_output_but_skips_memory_test(self):
         lifecycle.stop()
         with patch.object(connection, 'has_server', return_value=True), \
-             patch('hindsightkit.remote.status') as relay_status, \
+             patch('hindsightkit.sharing.remote.status') as relay_status, \
              patch.object(services, 'server_status', return_value=False) as local_status, \
              patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
              contextlib.redirect_stdout(io.StringIO()) as output:
@@ -193,9 +201,9 @@ class LifecycleTests(unittest.TestCase):
              patch.object(connection, 'discover', new_callable=AsyncMock), \
              patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
              patch.object(services, 'server_status', return_value=True) as local_status, \
-             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
-             patch('hindsightkit.postgres.Postgres') as database, \
-             patch('hindsightkit.postgres.check_external', new_callable=AsyncMock), \
+             patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch('hindsightkit.setup.postgres.Postgres') as database, \
+             patch('hindsightkit.setup.postgres.check_external', new_callable=AsyncMock), \
              patch.object(services, 'check_memory', new_callable=AsyncMock, side_effect=RuntimeError('memory fixture failed')), \
              contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as error:
             database.return_value.state_path.is_file.return_value = False
@@ -228,9 +236,9 @@ class LifecycleTests(unittest.TestCase):
         shared.parent.mkdir(parents=True)
         shared.write_text('{}')
         with patch.object(connection, 'has_server', return_value=True), \
-             patch.object(services, 'profile_config', side_effect=profile), \
+             patch.object(profile_env, 'profile_config', side_effect=profile), \
              patch.object(services, 'stop_profile_services') as stop, patch.object(services, 'start_local') as start, \
-             patch('hindsightkit.remote.stop'), \
+             patch('hindsightkit.sharing.remote.stop'), \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
              contextlib.redirect_stdout(io.StringIO()):
             daemon.return_value.is_running.return_value = True
@@ -257,10 +265,10 @@ class LifecycleTests(unittest.TestCase):
 
     def test_stop_attempts_api_shutdown_even_when_dashboard_stop_fails(self):
         with patch.object(connection, 'has_server', return_value=True), patch.object(remote, 'stop'), \
-             patch('hindsightkit.connectors.stop'), patch.object(runtime_env, 'run') as run, \
+             patch('hindsightkit.connectors.host.stop'), patch.object(runtime_env, 'run') as run, \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
-             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
-             patch('hindsightkit.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()):
+             patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch('hindsightkit.setup.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()):
             run.side_effect = [RuntimeError('dashboard failure'), None]
             database.return_value.state_path.is_file.return_value = False
             self.assertEqual(cli.main(['stop']), 1)
@@ -269,7 +277,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(lifecycle.state()['stopped'])
 
     def test_busy_api_is_stopped_without_health_gate_and_failure_is_reported(self):
-        with patch('hindsightkit.remote.stop'), patch('hindsightkit.connectors.stop'), \
+        with patch('hindsightkit.sharing.remote.stop'), patch('hindsightkit.connectors.host.stop'), \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon:
             daemon.return_value.is_ui_running.return_value = False
             daemon.return_value.is_running.return_value = False

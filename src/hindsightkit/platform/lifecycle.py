@@ -7,7 +7,7 @@ from filelock import FileLock
 
 
 def path():
-    from .runtime import home
+    from hindsightkit.platform.runtime import home
     return home() / 'service-state.json'
 
 

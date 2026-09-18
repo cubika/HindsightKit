@@ -10,7 +10,7 @@ import time
 
 from filelock import FileLock
 
-from .postgres import private_directory, reject_links
+from hindsightkit.platform.files import private_directory, reject_links
 
 MAX_BYTES = 1024 * 1024
 _current = ContextVar('relay_log_root', default=None)

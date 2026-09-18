@@ -107,7 +107,7 @@ function Expand-InstallFiles([IO.Stream]$Stream, [string]$Destination, $Expected
 
 function Expand-InstallPackage([IO.Stream]$Archive, [string]$Destination) {
     $hashes = Expand-InstallFiles $Archive $Destination
-    foreach ($required in @('setup.ps1', 'pyproject.toml', 'uv.lock', 'release.json', 'src/hindsightkit/cli.py', 'src/hindsightkit/installer.py', 'src/hindsightkit/install_options.ps1')) {
+    foreach ($required in @('setup.ps1', 'pyproject.toml', 'uv.lock', 'release.json', 'src/hindsightkit/cli.py', 'src/hindsightkit/setup/installer.py', 'src/hindsightkit/scripts/install_options.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Destination $required) -PathType Leaf)) { throw "Release package is missing $required" }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $Destination 'release.json') -Raw | ConvertFrom-Json

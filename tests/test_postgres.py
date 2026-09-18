@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
-from hindsightkit import postgres
+from hindsightkit.setup import postgres
 
 
 class PostgresTests(unittest.TestCase):

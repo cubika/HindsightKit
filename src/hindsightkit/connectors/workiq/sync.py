@@ -13,7 +13,7 @@ import uuid
 
 from filelock import FileLock
 
-from . import mail_ledger
+from hindsightkit.connectors.workiq import ledger as mail_ledger
 
 MAIL_BANK = 'hindsightkit-mail'
 PAGE_SIZE = 25
@@ -124,14 +124,14 @@ class MailSync:
     async def _open_source(self):
         if not self._source_open:
             if self.source is None:
-                from .mail_source import WorkIQMailSource
+                from hindsightkit.connectors.workiq.source import WorkIQMailSource
                 self.source = WorkIQMailSource(page_size=PAGE_SIZE, concurrency=3)
             await self.source.__aenter__()
             self._source_open = True
 
     def _require_source(self):
         if self.source is None:
-            from .mail_source import find_workiq
+            from hindsightkit.connectors.workiq.source import find_workiq
             find_workiq()
 
     def _bind(self, account):
@@ -330,7 +330,7 @@ class MailSync:
         return 'workiq-thread-' + _hash([self._get('identity'), conversation])
 
     def _record_sources(self, metadata):
-        from .mail_source import WorkIQError, source_key, source_version
+        from hindsightkit.connectors.workiq.source import WorkIQError, source_key, source_version
         for item in metadata:
             # A Graph locator identifies a retry record, never an imported source.
             locator = 'workiq-discovery-' + _hash([self._get('identity'), item['id']])
@@ -381,7 +381,7 @@ class MailSync:
     def _require_complete_discovery(self, identity):
         selected = set(self._get('config')['folder_ids'])
         if any(row['folder'] in selected for row in self.db.execute('SELECT folder FROM discovery_errors WHERE thread=?', (identity,))):
-            from .mail_source import WorkIQError
+            from hindsightkit.connectors.workiq.source import WorkIQError
             raise WorkIQError('workiq_thread_identity_incomplete')
 
     async def _scan(self):
@@ -422,7 +422,7 @@ class MailSync:
 
     @staticmethod
     def _systemic_error(exc):
-        from .mail_source import WorkIQError
+        from hindsightkit.connectors.workiq.source import WorkIQError
         return getattr(exc, 'status', None) in {401, 403} or (isinstance(exc, WorkIQError) and exc.code in {
             'workiq_eula_required', 'workiq_tool_failed', 'workiq_transport_failed', 'workiq_not_connected'})
 
@@ -581,7 +581,7 @@ class MailSync:
         config = self._get('config')
         if previous is None and config['prefilter_enabled']:
             if self.prefilter is None:
-                from .mail_filter import MailPrefilter
+                from hindsightkit.connectors.workiq.filter import MailPrefilter
                 self.prefilter = MailPrefilter(model=config['prefilter_model'], reasoning_effort=config['prefilter_reasoning_effort'])
             try:
                 screening = await self._measure('prefilter', self.prefilter.classify(messages))
@@ -595,7 +595,7 @@ class MailSync:
             if not isinstance(screening, dict) or screening.get('decision') != 'keep':
                 self._count(prefilter_uncertain=1)
         if self.builder is None:
-            from .mail_outcome import OutcomeBuilder
+            from hindsightkit.connectors.workiq.outcome import OutcomeBuilder
             config = self._get('config')
             self.builder = OutcomeBuilder(model=config['model'] or None, reasoning_effort=config['reasoning_effort'] or None)
         decision = await self._measure('composition', self.builder.build(messages, previous=previous))
@@ -671,7 +671,7 @@ class MailSync:
                 self.db.execute("UPDATE threads SET operation_id=?,state='prepared' WHERE id=?", (operation, identity))
             result = {'status': 'not_found'}
         if result['status'] == 'not_found':
-            from .mail_metadata import tags_for
+            from hindsightkit.connectors.workiq.metadata import tags_for
             meta = {**target['metadata'], 'source': 'workiq-thread', 'thread_id': row['conversation'], 'revision': str(row['target_revision'])}
             if 'tags' not in target:
                 previous = await self._document(identity) or {}

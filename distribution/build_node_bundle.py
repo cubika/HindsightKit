@@ -83,7 +83,7 @@ def build_bundle(*, source_root: Path, output: Path, node: str = "node") -> dict
         raise ValueError("Cannot find npm beside the selected Node.js")
     package_directory = source_root / "src/hindsightkit"
     sys.path.insert(0, str(source_root / "src"))
-    from hindsightkit.node_bundle import validate_bundle
+    from hindsightkit.setup.node_bundle import package_directory as role_directory, validate_bundle
 
     with tempfile.TemporaryDirectory(prefix="hindsightkit-node-build-") as temporary:
         work = Path(temporary)
@@ -97,7 +97,7 @@ def build_bundle(*, source_root: Path, output: Path, node: str = "node") -> dict
         manifest = {"schema": 1, "platform": "windows-x64", "bundles": {}}
         for role in ROLES:
             print(f"Building {role} npm components...", flush=True)
-            source = package_directory if role == "server" else package_directory / role
+            source = role_directory(package_directory, role)
             target = work / role
             target.mkdir()
             for name in ("package.json", "package-lock.json"):

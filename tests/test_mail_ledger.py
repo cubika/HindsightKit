@@ -5,8 +5,8 @@ import sqlite3
 import tempfile
 import unittest
 
-from hindsightkit import mail_ledger
-from hindsightkit.mail_sync import MailSync
+from hindsightkit.connectors.workiq import ledger as mail_ledger
+from hindsightkit.connectors.workiq.sync import MailSync
 
 
 class LedgerTests(unittest.TestCase):

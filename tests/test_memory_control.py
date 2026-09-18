@@ -11,8 +11,12 @@ from unittest.mock import AsyncMock, patch
 
 from fastmcp.exceptions import ToolError
 
-from hindsightkit import cli, runtime as runtime_env, hooks, mcp, memory_control as control
-from hindsightkit.memory import Scope
+from hindsightkit import cli
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import hooks
+from hindsightkit import mcp
+from hindsightkit.memory import control
+from hindsightkit.memory.api import Scope
 
 
 class RepositoryMemoryTests(unittest.TestCase):
@@ -54,7 +58,7 @@ class RepositoryMemoryTests(unittest.TestCase):
         runtime_env.run(["git", "-C", self.repo, "worktree", "add", "-b", "fixture", worktree], capture=True)
         subdirectory = worktree / "sub"
         subdirectory.mkdir()
-        with patch("hindsightkit.runtime.prepare_env"), patch("hindsightkit.memory_control.Path.cwd", return_value=subdirectory), \
+        with patch("hindsightkit.platform.runtime.prepare_env"), patch("hindsightkit.memory.control.Path.cwd", return_value=subdirectory), \
              patch.dict(os.environ, {"GIT_DIR": str(self.other / ".git"), "GIT_CONFIG_COUNT": "1",
                                      "GIT_CONFIG_KEY_0": control.ENABLED, "GIT_CONFIG_VALUE_0": "true"}), \
              contextlib.redirect_stdout(io.StringIO()) as output:
@@ -92,7 +96,7 @@ class RepositoryMemoryTests(unittest.TestCase):
     def test_disabled_hooks_never_prepare_transport_resolve_or_save_and_pin_original_repo(self):
         self.configure_hooks()
         self.command("off")
-        with patch("hindsightkit.remote.prepare_client") as prepare, \
+        with patch("hindsightkit.sharing.remote.prepare_client") as prepare, \
              patch("hindsightkit.hooks.resolve", new_callable=AsyncMock) as resolve, \
              patch("hindsightkit.hooks.prompt_memory", new_callable=AsyncMock) as recall, \
              patch("hindsightkit.hooks.runtime") as runtime:
@@ -107,7 +111,7 @@ class RepositoryMemoryTests(unittest.TestCase):
 
     def test_off_on_never_backfills_old_transcript_but_new_session_can_use_official_hook(self):
         self.configure_hooks()
-        with patch("hindsightkit.remote.prepare_client"), \
+        with patch("hindsightkit.sharing.remote.prepare_client"), \
              patch("hindsightkit.hooks.resolve", new_callable=AsyncMock, return_value=Scope("resolved", str(self.repo))), \
              patch("hindsightkit.hooks.prompt_memory", new_callable=AsyncMock, return_value={"memories": []}) as recall, \
              patch("hindsightkit.hooks.runtime", return_value=self.root / "runtime") as runtime, \
@@ -142,7 +146,7 @@ class RepositoryMemoryTests(unittest.TestCase):
         self.command("off")
         self.hook("sessionStart")
         self.command("on")
-        with patch("hindsightkit.remote.prepare_client"), \
+        with patch("hindsightkit.sharing.remote.prepare_client"), \
              patch("hindsightkit.hooks.resolve", new_callable=AsyncMock, return_value=Scope("resolved", str(self.repo))) as resolve, \
              patch("hindsightkit.hooks.prompt_memory", new_callable=AsyncMock, return_value={"memories": []}) as recall, \
              patch("hindsightkit.hooks.runtime") as runtime:
@@ -181,7 +185,7 @@ class RepositoryMemoryTests(unittest.TestCase):
             with patch.object(mcp.connection, "load", return_value=config), \
                  patch.object(mcp.connection, "sdk", return_value=client) as sdk, \
                  patch.object(mcp, "resolve", new_callable=AsyncMock, return_value=Scope("resolved", str(self.repo))) as resolve, \
-                 patch("hindsightkit.remote.prepare_client") as prepare, \
+                 patch("hindsightkit.sharing.remote.prepare_client") as prepare, \
                  patch.object(mcp, "FastMCP", return_value=server), patch.object(mcp, "run_stdio"):
                 mcp.serve("cli", str(self.repo))
                 calls = {"retain": {"content": "Fixture fact"}, "recall": {"query": "Fixture query"},

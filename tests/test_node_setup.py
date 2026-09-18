@@ -8,7 +8,8 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
-from hindsightkit import cli, runtime as runtime_env
+from hindsightkit import cli
+from hindsightkit.platform import runtime as runtime_env
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows Node.js selection')
@@ -83,9 +84,9 @@ class Fixture { static void Main(string[] args) {
                         app.mkdir(parents=True)
                         script = app / 'setup.ps1'
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
-                        (app / 'src/hindsightkit').mkdir(parents=True)
-                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
-                                        app / 'src/hindsightkit/install_options.ps1')
+                        (app / 'src/hindsightkit/scripts').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/scripts/install_options.ps1',
+                                        app / 'src/hindsightkit/scripts/install_options.ps1')
                         (app / 'python/wheels').mkdir(parents=True)
                         (app / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                         for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -190,7 +191,7 @@ exit $LASTEXITCODE
                         self.assertIn('Reusing Node.js' if reused else 'Installed Node.js', result.stdout)
                         self.assertTrue(Path(trace.read_text().split(os.pathsep)[0]).samefile(expected.parent))
                         self.assertEqual(arguments_trace.read_text().splitlines(),
-                                         ['-m', 'hindsightkit.installer', '--server-only', '--no-open'])
+                                         ['-m', 'hindsightkit.setup.installer', '--server-only', '--no-open'])
                         if case_name == 'shared-cache':
                             self.assertEqual(Path(Path(str(trace) + '.cache').read_text()), case / 'shared-cache/uv')
                             next_app = case / 'next-release'

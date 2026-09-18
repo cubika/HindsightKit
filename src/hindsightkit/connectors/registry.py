@@ -16,7 +16,7 @@ class Connector:
 
 
 CONNECTORS = (Connector('workiq', 'WorkIQ email', 'Save useful email findings with links to their sources.',
-                        'hindsightkit.workiq_connector', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
+                        'hindsightkit.connectors.workiq.adapter', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
 
 
 class ConnectorHost:

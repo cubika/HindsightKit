@@ -3,7 +3,7 @@ import asyncio
 import json
 import uuid
 from hindsightkit.connection import sdk, server_load
-from hindsightkit.mail_metadata import tags_for
+from hindsightkit.connectors.workiq.metadata import tags_for
 
 async def main():
     client=sdk(server_load(),timeout=30)

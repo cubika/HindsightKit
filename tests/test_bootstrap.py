@@ -13,7 +13,7 @@ import zipfile
 
 
 TEMPLATE = Path(__file__).resolve().parents[1] / 'distribution/install.ps1'
-INSTALL_OPTIONS = TEMPLATE.parent.parent / 'src/hindsightkit/install_options.ps1'
+INSTALL_OPTIONS = TEMPLATE.parent.parent / 'src/hindsightkit/scripts/install_options.ps1'
 RELEASE_URL = 'https://github.com/example/HindsightKit/releases/download/v0.1.0'
 
 
@@ -84,8 +84,8 @@ exit 0
             'app/pyproject.toml': '[project]\nname="fixture"\n',
             'app/uv.lock': 'version = 1\n',
             'app/src/hindsightkit/cli.py': '# harmless test fixture\n',
-            'app/src/hindsightkit/installer.py': '# harmless installer fixture\n',
-            'app/src/hindsightkit/install_options.ps1': INSTALL_OPTIONS.read_text(encoding='utf-8'),
+            'app/src/hindsightkit/setup/installer.py': '# harmless installer fixture\n',
+            'app/src/hindsightkit/scripts/install_options.ps1': INSTALL_OPTIONS.read_text(encoding='utf-8'),
             'app/release.json': json.dumps(manifest),
         }
         payload.update(entries or {})

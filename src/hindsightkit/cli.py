@@ -1,8 +1,8 @@
 """Public command-line interface."""
 import argparse
 import sys
-from . import services
-from . import runtime as runtime_env
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
 
 
 def main(argv=None):
@@ -49,19 +49,19 @@ def main(argv=None):
     try:
         runtime_env.prepare_env()
         if args.command == 'memory':
-            from .memory_control import command
+            from hindsightkit.memory.control import command
             command(args.action)
         elif args.command in {'share', 'connect'}:
-            from . import remote
+            from hindsightkit.sharing import remote
             getattr(remote, args.command)(args)
         elif args.command == 'unshare':
-            from .remote import unshare
+            from hindsightkit.sharing.remote import unshare
             unshare()
         elif args.command == 'mcp':
-            from .mcp import serve
+            from hindsightkit.mcp import serve
             serve(args.context)
         elif args.command == 'hook':
-            from .hooks import run as run_hook
+            from hindsightkit.hooks import run as run_hook
             run_hook(args.event)
         elif args.command == 'status':
             return 0 if services.status(test_memory=args.test_memory) else 1

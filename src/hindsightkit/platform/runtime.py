@@ -5,12 +5,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from . import connection
+from hindsightkit.platform import config
+from hindsightkit.platform.config import PROFILE
 VERSION = '0.10.0'
 DEFAULT_MODEL = 'gpt-6-astra'
 DEFAULT_REASONING_EFFORT = 'xhigh'
-PROFILE = 'hindsightkit'
-PACKAGE = Path(__file__).parent
+PACKAGE = Path(__file__).resolve().parents[1]
 
 
 def run(command, *, cwd=None, capture=False, env=None):
@@ -72,8 +72,8 @@ def npm() -> list[str]:
 
 
 def runtime() -> Path:
-    path = connection.config_path()
-    if path.is_file() and connection.client_mode(json.loads(path.read_text(encoding='utf-8'))):
+    path = config.config_path()
+    if path.is_file() and config.client_mode(json.loads(path.read_text(encoding='utf-8'))):
         return home() / 'client-runtime'
     return home() / 'runtime'
 

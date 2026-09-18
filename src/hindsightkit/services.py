@@ -8,23 +8,16 @@ import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from . import connection, lifecycle
-from . import runtime as runtime_env
-
-
-def profile_config():
-    from hindsight_embed.profile_manager import ProfileManager
-    manager = ProfileManager()
-    config = manager.load_profile_config(runtime_env.PROFILE)
-    if not config:
-        raise RuntimeError('HindsightKit is not configured. Run the release installer first.')
-    return config, manager.resolve_profile_paths(runtime_env.PROFILE)
+from hindsightkit.platform import config as profile_env
+from hindsightkit import connection
+from hindsightkit.platform import lifecycle
+from hindsightkit.platform import runtime as runtime_env
 
 
 def start_local(*, message='Starting Hindsight (first start downloads the embedding model)...'):
     require_local()
-    from .postgres import Postgres, require_postgresql, check_external
-    config, paths = profile_config()
+    from hindsightkit.setup.postgres import Postgres, require_postgresql, check_external
+    config, paths = profile_env.profile_config()
     database_url = require_postgresql(config)
     database = Postgres(runtime_env.home() / 'postgresql')
     if database.state_path.is_file() and database_url == database.url:
@@ -35,9 +28,9 @@ def start_local(*, message='Starting Hindsight (first start downloads the embedd
     print(message, flush=True)
     runtime_env.run([runtime_env.executable('hindsight-embed'), '--profile', runtime_env.PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
-    from .connector_registry import enabled_connectors
+    from hindsightkit.connectors.registry import enabled_connectors
     if enabled_connectors(runtime_env.home()):
-        from .connectors import ensure_running
+        from hindsightkit.connectors.host import ensure_running
         try:
             ensure_running(runtime_env.home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
         except RuntimeError as exc:
@@ -63,7 +56,7 @@ def startup():
 
 
 def start():
-    from .remote import resume
+    from hindsightkit.sharing.remote import resume
     has_server = connection.has_server()
     if not has_server:
         if not connection.config_path().is_file() or lifecycle.state().get('disconnected'):
@@ -218,7 +211,7 @@ def client_status():
 
 
 def status(*, test_memory=False):
-    from .remote import status as remote_status
+    from hindsightkit.sharing.remote import status as remote_status
     remote_status()
     healthy = client_status()
     path = connection.config_path()
@@ -241,8 +234,8 @@ def status(*, test_memory=False):
             return False
         config = connection.server_load()
         print(f'Testing local memory at {config["apiUrl"]} (uses Copilot allowance)...')
-        from .postgres import Postgres, require_postgresql, check_external
-        profile, _ = profile_config()
+        from hindsightkit.setup.postgres import Postgres, require_postgresql, check_external
+        profile, _ = profile_env.profile_config()
         url = require_postgresql(profile)
         database = Postgres(runtime_env.home() / 'postgresql')
         if database.state_path.is_file() and url == database.url:
@@ -255,8 +248,8 @@ def status(*, test_memory=False):
 
 def server_status():
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-    from .postgres import Postgres, configured_url
-    config, paths = profile_config()
+    from hindsightkit.setup.postgres import Postgres, configured_url
+    config, paths = profile_env.profile_config()
     database = Postgres(runtime_env.home() / 'postgresql')
     url = configured_url(config)
     managed = database.state_path.is_file() and url == database.url
@@ -278,7 +271,7 @@ def require_local():
 
 def configure_sharing(key, bank, *, enabled=True):
     """Configure the official authentication and HTTP extension without replacing the engine."""
-    config, paths = profile_config()
+    config, paths = profile_env.profile_config()
     updates = {
         'HINDSIGHT_API_HOST': ('0.0.0.0' if enabled else '127.0.0.1') if enabled is not None else config.get('HINDSIGHT_API_HOST', '0.0.0.0'),
         'HINDSIGHT_API_TENANT_EXTENSION': 'hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension',
@@ -310,9 +303,9 @@ def configure_sharing(key, bank, *, enabled=True):
 
 def stop_profile_services(*, remote_connections=True, database=False):
     """Stop only this installation's official services before replacing their runtime."""
-    from .connectors import stop
+    from hindsightkit.connectors.host import stop
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-    from .remote import stop as stop_remote
+    from hindsightkit.sharing.remote import stop as stop_remote
     errors = []
     def attempt(operation):
         try:
@@ -332,9 +325,9 @@ def stop_profile_services(*, remote_connections=True, database=False):
             raise RuntimeError('The local API could not be stopped safely.')
     attempt(stop_api)
     if database:
-        from .postgres import Postgres, configured_url
+        from hindsightkit.setup.postgres import Postgres, configured_url
         def stop_database():
-            config, _ = profile_config()
+            config, _ = profile_env.profile_config()
             local = Postgres(runtime_env.home() / 'postgresql')
             if local.state_path.is_file() and configured_url(config) == local.url:
                 local.stop()
@@ -348,7 +341,7 @@ def stop():
     if connection.has_server():
         stop_profile_services(database=True)
     else:
-        from .remote import stop as stop_remote
+        from hindsightkit.sharing.remote import stop as stop_remote
         stop_remote()
 
 
@@ -361,9 +354,9 @@ def ui():
 
 def connectors():
     import webbrowser
-    from .connectors import ensure_running
+    from hindsightkit.connectors.host import ensure_running
     require_local()
-    _, paths = profile_config()
+    _, paths = profile_env.profile_config()
     api_url, ui_url = f'http://127.0.0.1:{paths.port}', f'http://localhost:{paths.ui_port}'
     try:
         asyncio.run(connection.request(connection.server_load(), 'GET', '/health'))

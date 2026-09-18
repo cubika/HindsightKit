@@ -14,8 +14,13 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from . import connection, lifecycle, installer, services, relay_log
-from . import runtime as runtime_env
+from hindsightkit.platform import config as profile_env
+from hindsightkit import connection
+from hindsightkit.platform import lifecycle
+from hindsightkit.setup import installer
+from hindsightkit import services
+from hindsightkit.sharing import log as relay_log
+from hindsightkit.platform import runtime as runtime_env
 
 
 PREFIX = 'hk1.'
@@ -66,7 +71,7 @@ def prepare_client(config, *, interactive=False):
     lifecycle.require_memory()
     transport = config.get('hindsightkit', {}).get('transport')
     if transport:
-        from . import relay
+        from hindsightkit.sharing import relay
         if (transport.get('mode') != 'connect' or
                 config.get('apiUrl') != f'http://127.0.0.1:{transport.get("local_port")}'):
             raise ValueError('Saved remote transport does not match the configured connection.')
@@ -74,7 +79,7 @@ def prepare_client(config, *, interactive=False):
 
 
 def resume_host():
-    from . import relay
+    from hindsightkit.sharing import relay
     host = runtime_env.home() / 'remote/host'
     spec = relay.load_spec(host)
     if spec:
@@ -92,7 +97,7 @@ def resume():
 
 
 def stop():
-    from . import relay
+    from hindsightkit.sharing import relay
     root = runtime_env.home() / 'remote'
     errors = []
     directories = [root / 'host'] + [item for item in (root / 'clients').glob('*') if item.is_dir()]
@@ -106,7 +111,7 @@ def stop():
 
 
 def status():
-    from . import relay
+    from hindsightkit.sharing import relay
     host_root = runtime_env.home() / 'remote/host'
     host = relay.status(host_root) if (host_root / 'spec.json').is_file() else None
     if host:
@@ -121,7 +126,7 @@ def status():
 
 
 def unshare():
-    from .postgres import private_directory, restrict_access
+    from hindsightkit.platform.files import private_directory, restrict_access
     root = runtime_env.home() / 'remote/host'
     # Remove saved recovery before stopping processes.
     (root / 'spec.json').unlink(missing_ok=True)
@@ -142,12 +147,12 @@ def unshare():
         errors.append(str(exc))
     if local:
         from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-        from .memory import SHARED_BANK
+        from hindsightkit.memory.api import SHARED_BANK
         running = DaemonEmbedManager().is_running(runtime_env.PROFILE)
         # Revoke old codes even if a relay process failed to stop. The official
         # API-key extension reads the replacement key on restart.
         key = secrets.token_urlsafe(32)
-        profile, paths = services.profile_config()
+        profile, paths = profile_env.profile_config()
         services.configure_sharing(key, profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=False)
         key_path = runtime_env.home() / 'server/connection-key.txt'
         private_directory(key_path.parent)
@@ -174,7 +179,7 @@ def is_local(client, local):
 
 
 def save_client(path, config):
-    from .postgres import restrict_access
+    from hindsightkit.platform.files import restrict_access
     temporary = path.with_name(path.name + '.update')
     temporary.write_text(json.dumps(config), encoding='utf-8')
     restrict_access(temporary)
@@ -197,16 +202,16 @@ def copy_connection_code(code):
 
 
 def share(args):
-    from . import relay
+    from hindsightkit.sharing import relay
     if args.relay_provider and not args.relay:
         raise ValueError('--relay-provider requires share --relay.')
     services.require_local()
     config = connection.server_load()
     port = urlsplit(config['apiUrl']).port
     url = connection.validate_url(args.address or f'http://{socket.gethostname()}:{port}')
-    profile, _ = services.profile_config()
+    profile, _ = profile_env.profile_config()
     if profile.get('HINDSIGHT_API_HOST') == '127.0.0.1':
-        from .memory import SHARED_BANK
+        from hindsightkit.memory.api import SHARED_BANK
         services.configure_sharing(profile['HINDSIGHT_API_TENANT_API_KEY'],
                               profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=True)
     services.start_local()
@@ -232,7 +237,7 @@ def share(args):
 
 
 def connect(args):
-    from . import relay
+    from hindsightkit.sharing import relay
     if args.relay_provider and (args.local or args.server):
         raise ValueError('--relay-provider requires a connection code; omit --local and --server.')
     if args.api_key_env and not args.server:
@@ -312,7 +317,7 @@ def configure_client(candidate, *, transport=None, discovered=None):
 
 
 def stop_clients(*, except_transport=None):
-    from . import relay
+    from hindsightkit.sharing import relay
     keep = client_root(except_transport) if except_transport else None
     for directory in (runtime_env.home() / 'remote/clients').glob('*'):
         if directory.is_dir() and directory != keep:

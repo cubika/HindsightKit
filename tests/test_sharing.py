@@ -15,7 +15,9 @@ from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.models import RequestContext
 from hindsight_embed.profile_manager import ProfileManager
 
-from hindsightkit import services, runtime as runtime_env
+from hindsightkit.platform import config as profile_env
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
 from hindsightkit.server import ClientsExtension
 
 
@@ -34,7 +36,7 @@ class SharingConfigurationTests(unittest.TestCase):
         self.path.write_text("# Keep this comment.\nHINDSIGHT_API_PORT=9077\n"
                              "HINDSIGHT_API_HOST=127.0.0.1\nHINDSIGHT_API_LLM_MODEL=existing-model\n"
                              "CUSTOM_SETTING=keep=this-value\n", encoding="utf-8")
-        for patcher in [patch.object(services, "profile_config", side_effect=self.profile),
+        for patcher in [patch.object(profile_env, "profile_config", side_effect=self.profile),
                         patch.object(runtime_env, "home", return_value=self.root),
                         patch.object(runtime_env, "executable", return_value="fixture-hindsight-embed")]:
             patcher.start()

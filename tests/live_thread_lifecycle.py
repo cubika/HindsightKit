@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 
-from hindsightkit.mail_source import source_key, source_version
-from hindsightkit.mail_sync import MailSync
+from hindsightkit.connectors.workiq.source import source_key, source_version
+from hindsightkit.connectors.workiq.sync import MailSync
 
 from hindsightkit.connection import sdk, server_load
 

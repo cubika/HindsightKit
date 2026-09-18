@@ -15,8 +15,11 @@ import tempfile
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlsplit
-from . import connection, lifecycle, services
-from . import runtime as runtime_env
+from hindsightkit.platform import config as profile_env
+from hindsightkit import connection
+from hindsightkit.platform import lifecycle
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
 
 
 def install_node_packages(client=False):
@@ -25,8 +28,8 @@ def install_node_packages(client=False):
 
 def install_node_role(role):
     from filelock import FileLock
-    from .install_progress import run_install
-    from .node_bundle import bundle_session, install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
+    from hindsightkit.setup.progress import run_install
+    from hindsightkit.setup.node_bundle import bundle_session, install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
     directory = runtime_env.home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
     directory.mkdir(parents=True, exist_ok=True)
     source_root = package_directory(runtime_env.PACKAGE, role)
@@ -83,7 +86,7 @@ def ensure_copilot():
     command = copilot_command()
     installed = command is None
     if command is None:
-        from .install_progress import run_install
+        from hindsightkit.setup.progress import run_install
         # Copilot is an independent global tool, not a HindsightKit release component.
         with tempfile.TemporaryDirectory(prefix='hindsightkit-copilot-install-') as directory:
             run_install(runtime_env.npm() + ['install', '--global', '@github/copilot@1.0.85', '--no-audit',
@@ -132,7 +135,7 @@ def copilot_command():
 
 
 def integrate(action, *args, runtime_path=None, data=None):
-    command = [runtime_env.node(), runtime_env.PACKAGE / 'integrate.mjs', runtime_path or runtime_env.runtime(), action, *args]
+    command = [runtime_env.node(), runtime_env.PACKAGE / 'node/integrate.mjs', runtime_path or runtime_env.runtime(), action, *args]
     if action == 'config' and data is None:
         data = {}
     if data is None:
@@ -258,7 +261,7 @@ def can_connect_local_client(api_url):
 
 def setup(args):
     validate_setup_options(args)
-    from .node_bundle import bundle_session, release_bundle
+    from hindsightkit.setup.node_bundle import bundle_session, release_bundle
     bundled = release_bundle()
     roles = ('client',) if args.server or getattr(args, 'client_only', False) else ('client', 'server')
     with bundle_session(bundled, runtime_env.PACKAGE, roles=roles):
@@ -276,7 +279,7 @@ def setup(args):
                 else:
                     setup_client_only()
             lifecycle.start()
-    from .command import install
+    from hindsightkit.setup.command import install
     launcher = install(runtime_env.home() / 'bin')
     print(f'Command installed: {launcher}. Open a new terminal to use hindsightkit.')
     return launcher
@@ -297,12 +300,13 @@ def api_key(args, previous=None, *, generate=False):
 def setup_server(args):
     # Server setup owns the official profile, never the editor connection settings.
     validate_setup_options(args)
-    from .memory import SHARED_BANK
-    from .postgres import setup_database, private_directory, restrict_access
+    from hindsightkit.memory.api import SHARED_BANK
+    from hindsightkit.setup.postgres import setup_database
+    from hindsightkit.platform.files import private_directory, restrict_access
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
     existing_profile = connection.has_server()
     configure_profile(args)
-    profile, paths = services.profile_config()
+    profile, paths = profile_env.profile_config()
     key = api_key(args, profile.get('HINDSIGHT_API_TENANT_API_KEY'), generate=True)
     bank = profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK)
     # Preserve a previous explicit destination when upgrading the combined installer.
@@ -312,7 +316,7 @@ def setup_server(args):
         if old.get('hindsightkit', {}).get('mode') == 'local':
             bank = connection.fixed_bank(old) or bank
     connection.validate_bank(bank)
-    from .routing import seed_aliases
+    from hindsightkit.memory.routing import seed_aliases
     old_config = json.loads(old_path.read_text(encoding='utf-8')) if old_path.is_file() else {}
     device = connection.device_id(old_config.get('hindsightkit', {}).get('deviceId'))
     seed_aliases(runtime_env.home() / 'repositories.json', runtime_env.home() / 'sessions', old_config, device,
@@ -331,14 +335,14 @@ def setup_server(args):
     def stop_api():
         if not DaemonEmbedManager().stop(runtime_env.PROFILE):
             raise RuntimeError('Cannot stop Hindsight safely before database migration.')
-    profile, paths = services.profile_config()
+    profile, paths = profile_env.profile_config()
     setup_database(runtime_env.home() / 'postgresql', profile, paths.config, stop_api=stop_api)
     # Installing the local server must not depend on an unrelated client relay.
     api_url, ui_url = services.start_local()
     asyncio.run(services.check_memory(api_url, key))
     asyncio.run(services.ensure_bank(api_url, bank, key))
     asyncio.run(connection.request(connection.server_load(), 'GET', '/ext/hindsightkit/connection'))
-    from .remote import resume_host
+    from hindsightkit.sharing.remote import resume_host
     resume_host()
     print(f'\nServer ready. API: http://{socket.gethostname()}:{paths.port}\nDashboard: {ui_url}')
     print(f'Client connection key: {key_path}')
@@ -375,7 +379,7 @@ def setup_client(args, *, local_server=None, transport=None, discovered=None):
         info['transport'] = transport
     candidate['hindsightkit'] = info
     install_node_packages(client=True)
-    from .postgres import restrict_access
+    from hindsightkit.platform.files import restrict_access
     original = coding_config.read_bytes() if coding_config.is_file() else None
     try:
         install_client_integrations(candidate, previous, authenticate=local_server is None)

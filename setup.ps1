@@ -26,7 +26,7 @@ function Write-InstallStatus([string]$Message) {
     Add-InstallLog $Message
 }
 
-. (Join-Path $PSScriptRoot 'src/hindsightkit/install_options.ps1')
+. (Join-Path $PSScriptRoot 'src/hindsightkit/scripts/install_options.ps1')
 
 # Validate before installing dependencies or touching an existing connection.
 $installationMode = Resolve-InstallMode $PSBoundParameters
@@ -257,7 +257,7 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $commandRoot 'node-path.txt'), $selectedNode.Binary, (New-Object Text.UTF8Encoding($false)))
     $stage = if ($clientOnly) { 'Configure client integrations' } else { 'Configure HindsightKit and verify memory' }
     Write-InstallStatus "Starting: $stage"
-    $setupArgs = @('-m', 'hindsightkit.installer')
+    $setupArgs = @('-m', 'hindsightkit.setup.installer')
     if ($Model) { $setupArgs += @('--model', $Model) }
     if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }

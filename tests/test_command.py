@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit.command import install_short_command
+from hindsightkit.setup.command import install_short_command
 
 
 class ShortCommandTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class ShortCommandTests(unittest.TestCase):
         self.bin.mkdir()
         self.output = io.StringIO()
         self.addCleanup(patch.stopall)
-        patch('hindsightkit.command.Path.cwd', return_value=self.root).start()
+        patch('hindsightkit.setup.command.Path.cwd', return_value=self.root).start()
         patch.dict(os.environ, {'HINDSIGHTKIT_HK_CONFLICT': ''}).start()
         patch('sys.stdout', self.output).start()
 

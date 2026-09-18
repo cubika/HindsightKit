@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from .mail_ledger import saved_status
+from hindsightkit.connectors.workiq.ledger import saved_status
 
 EULA_ERROR = ('workiq_eula_required. WorkIQ requires license acceptance before mail access. '
               'Review the WorkIQ terms before resuming.')
@@ -16,7 +16,7 @@ def _eula_required(error):
 
 
 async def _accept_workiq_eula():
-    from .mail_source import find_workiq
+    from hindsightkit.connectors.workiq.source import find_workiq
     binary = find_workiq()
     flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
     try:
@@ -53,7 +53,7 @@ class Adapter:
 
     def availability(self, refresh=False):
         if self._check is None or refresh:
-            from .mail_source import find_workiq, WorkIQError
+            from hindsightkit.connectors.workiq.source import find_workiq, WorkIQError
             try:
                 find_workiq()
                 self._check = {'ready': True, 'message': 'WorkIQ is installed'}
@@ -70,14 +70,14 @@ class Adapter:
 
     async def _load(self):
         if self.sync is None:
-            from . import connection
-            from .mail_sync import MailSync
+            from hindsightkit import connection
+            from hindsightkit.connectors.workiq.sync import MailSync
             self.sync = MailSync(self.directory, self.config['apiUrl'],
                                  client=connection.sdk(self.config, timeout=120))
         return self.sync
 
     async def action(self, action, data=None):
-        from .mail_source import WorkIQError
+        from hindsightkit.connectors.workiq.source import WorkIQError
         async with self._lock:
             try:
                 return await self._action(action, data)
@@ -149,7 +149,7 @@ class Adapter:
 
 
 def register_tools(server, config, directory):
-    from . import connection
+    from hindsightkit import connection
     advertised = 'workiq' in config.get('hindsightkit', {}).get('connectors', [])
     if connection.fixed_bank(config) or (not advertised and
             (connection.client_mode(config) or not (Path(directory) / 'sync.sqlite3').is_file())):

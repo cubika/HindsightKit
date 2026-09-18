@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
-from hindsightkit import connection, connectors
-from hindsightkit.connector_registry import ConnectorHost
-from hindsightkit.workiq_connector import Adapter, EULA_ERROR
+from hindsightkit.platform import config as profile_env
+from hindsightkit import connection
+from hindsightkit.connectors import host as connectors
+from hindsightkit.connectors.registry import ConnectorHost
+from hindsightkit.connectors.workiq.adapter import Adapter, EULA_ERROR
 
 
 class FakeSync:
@@ -128,7 +130,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_license_acceptance_requires_local_explicit_confirmation(self):
         adapter = self.host.adapters['workiq']
         adapter.error = EULA_ERROR
-        with patch('hindsightkit.workiq_connector._accept_workiq_eula', new_callable=AsyncMock) as accept:
+        with patch('hindsightkit.connectors.workiq.adapter._accept_workiq_eula', new_callable=AsyncMock) as accept:
             for headers in [self.headers, {**self.write_headers, 'Origin': 'https://attacker.example'},
                             {**self.write_headers, 'Sec-Fetch-Site': 'cross-site'}]:
                 response = await self.client.post('/api/connectors/workiq/accept-eula', headers=headers, json={'accepted': True})
@@ -155,7 +157,7 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await response.json())['consent']['required'])
 
     async def test_first_discovery_license_error_is_visible_in_following_status(self):
-        from hindsightkit.mail_source import WorkIQError
+        from hindsightkit.connectors.workiq.source import WorkIQError
         self.sync.discover = AsyncMock(side_effect=WorkIQError('workiq_eula_required'))
         self.sync.pause = AsyncMock()
         self.sync._run_update = Mock()
@@ -176,10 +178,12 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
 class ConnectorLifecycleTests(unittest.TestCase):
     def test_open_reuses_healthy_api_without_triggering_database_setup(self):
-        from hindsightkit import cli, services, runtime as runtime_env
+        from hindsightkit import cli
+        from hindsightkit import services
+        from hindsightkit.platform import runtime as runtime_env
         from types import SimpleNamespace
         with patch.object(runtime_env, 'prepare_env'), patch.object(services, 'require_local'), \
-             patch.object(services, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
+             patch.object(profile_env, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
              patch.object(connection, 'server_load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
              patch.object(connection, 'request', new_callable=AsyncMock) as request, \
              patch.object(services, 'start') as start, \
@@ -269,7 +273,7 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(connection, "sdk", wraps=connection.sdk) as sdk, \
                  patch.object(connection, "Hindsight", return_value=sdk_client) as hindsight, \
                  patch.object(Adapter, "availability", return_value={"ready": True, "message": "Installed fixture"}), \
-                 patch("hindsightkit.mail_sync.MailSync", return_value=sync) as make_sync:
+                 patch("hindsightkit.connectors.workiq.sync.MailSync", return_value=sync) as make_sync:
                 service = asyncio.create_task(connectors.serve(directory, config["apiUrl"], "http://localhost:19077", port))
                 try:
                     for _ in range(200):
@@ -317,7 +321,7 @@ class ConnectorAuthenticatedServeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp, \
              patch.object(connection, "server_load", side_effect=RuntimeError('No local Hindsight server')), \
              patch.object(connection, "sdk") as sdk, \
-             patch("hindsightkit.mail_sync.MailSync") as runner:
+             patch("hindsightkit.connectors.workiq.sync.MailSync") as runner:
             with self.assertRaisesRegex(RuntimeError, "local Hindsight server"):
                 await connectors.serve(Path(temp), config["apiUrl"], "http://localhost:19077", 19078)
             sdk.assert_not_called()

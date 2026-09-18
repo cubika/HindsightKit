@@ -31,7 +31,7 @@ ENTRYPOINTS['server'] = ENTRYPOINTS['client'] + (
 def package_directory(package: Path, role: str) -> Path:
     if role not in ENTRYPOINTS:
         raise ValueError('Unknown npm bundle role')
-    return package if role == 'server' else package / role
+    return package / 'node' / role
 
 
 def sha256(path: Path) -> str:
@@ -288,7 +288,7 @@ def verify_installed(directory: Path, package: Path, role: str, node: str):
                             text=True, encoding='utf-8', timeout=60,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     if result.returncode:
-        from .install_progress import redact
+        from hindsightkit.setup.progress import redact
         raise ValueError(f'Npm {role} entry point failed: ' + redact((result.stderr or result.stdout)[-2000:]))
 
 

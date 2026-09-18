@@ -10,8 +10,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from hindsightkit import hooks, lifecycle
-from hindsightkit.memory import Scope, scope_for
+from hindsightkit import hooks
+from hindsightkit.platform import lifecycle
+from hindsightkit.memory.api import Scope, scope_for
 
 
 class SessionCaptureTests(unittest.TestCase):
@@ -31,7 +32,7 @@ class SessionCaptureTests(unittest.TestCase):
         patch.dict(os.environ, {"HINDSIGHTKIT_HOME": str(self.root / "state"),
                                 "HINDSIGHT_CONFIG": str(self.config_path),
                                 "HINDSIGHT_DISABLE_HOOKS": ""}).start()
-        patch("hindsightkit.remote.prepare_client").start()
+        patch("hindsightkit.sharing.remote.prepare_client").start()
         self.resolve = patch.object(hooks, "resolve", new_callable=AsyncMock).start()
         self.resolve.side_effect = lambda config, scope: Scope(
             "second" if "second" in config["apiUrl"] else "first", scope.repository)

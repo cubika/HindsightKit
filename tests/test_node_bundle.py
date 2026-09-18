@@ -12,19 +12,21 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from hindsightkit import installer, runtime as runtime_env, node_bundle
+from hindsightkit.setup import installer
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit.setup import node_bundle
 
 
 class NodeBundleTests(unittest.TestCase):
     def fixture(self, root, extra=None):
         package, bundle = root / 'package', root / 'node'
-        (package / 'client').mkdir(parents=True)
+        (package / 'node/client').mkdir(parents=True)
         bundle.mkdir()
         package_json = {'name': 'fixture', 'version': '1.0.0'}
         lock = {'lockfileVersion': 3, 'packages': {'': package_json,
                 'node_modules/required': {'version': '1.0.0'}}}
-        (package / 'client/package.json').write_text(json.dumps(package_json))
-        lock_path = package / 'client/package-lock.json'
+        (package / 'node/client/package.json').write_text(json.dumps(package_json))
+        lock_path = package / 'node/client/package-lock.json'
         lock_path.write_text(json.dumps(lock))
         files = {name: '// fixture' for name in node_bundle.ENTRYPOINTS['client']}
         files['node_modules/required/package.json'] = json.dumps(package_json)
@@ -54,7 +56,7 @@ class NodeBundleTests(unittest.TestCase):
             with patch.object(runtime_env, 'home', return_value=state), patch.object(runtime_env, 'PACKAGE', package), \
                  patch.object(runtime_env, 'node', return_value='node'), \
                  patch.object(node_bundle, 'release_bundle', return_value=bundle), \
-                 patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('npm network')), \
+                 patch('hindsightkit.setup.progress.run_install', side_effect=AssertionError('npm network')), \
                  patch.object(node_bundle, 'verify_installed') as verify, contextlib.redirect_stdout(io.StringIO()):
                 installer.install_node_packages(client=True)
                 installer.install_node_packages(client=True)
@@ -77,7 +79,7 @@ class NodeBundleTests(unittest.TestCase):
             (bundle / 'client.zip').write_bytes(b'corrupted')
             with patch.object(runtime_env, 'home', return_value=root / 'state'), patch.object(runtime_env, 'PACKAGE', package), \
                  patch.object(runtime_env, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
-                 patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('no fallback')), \
+                 patch('hindsightkit.setup.progress.run_install', side_effect=AssertionError('no fallback')), \
                  contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, 'SHA256'):
                 installer.install_node_packages(client=True)
             self.assertEqual(marker.read_text(), 'previous runtime')
@@ -184,7 +186,7 @@ class NodeBundleTests(unittest.TestCase):
             package, bundle = self.fixture(Path(temp), {'node_modules/required/package.json': '{"version":"2.0.0"}'})
             with self.assertRaisesRegex(ValueError, 'missing locked package'):
                 node_bundle.validate_bundle(bundle, package, roles=('client',))
-            (package / 'client/package-lock.json').write_text('{}')
+            (package / 'node/client/package-lock.json').write_text('{}')
             with self.assertRaisesRegex(ValueError, 'lockfile'):
                 node_bundle.validate_bundle(bundle, package, roles=('client',))
 
@@ -244,11 +246,11 @@ class NodeBundleTests(unittest.TestCase):
                  patch.object(node_bundle, 'release_bundle', return_value=bundle), \
                  patch.object(node_bundle, 'verify_installed'), \
                  patch.object(node_bundle.shutil, 'rmtree', side_effect=keep_locked_previous), \
-                 patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('npm network')), \
+                 patch('hindsightkit.setup.progress.run_install', side_effect=AssertionError('npm network')), \
                  contextlib.redirect_stdout(output):
                 installer.install_node_role('client')
                 node_bundle.verify_bundle_files(bundle, package, 'client', directory)
-                expected = hashlib.sha256((package / 'client/package-lock.json').read_bytes()).hexdigest()
+                expected = hashlib.sha256((package / 'node/client/package-lock.json').read_bytes()).hexdigest()
                 self.assertEqual((directory / '.installed-lock').read_text(), expected)
                 self.assertEqual((previous / 'old').read_text(), 'locked previous runtime')
                 with patch.object(node_bundle, 'install_bundle', side_effect=AssertionError('Already installed')):
@@ -303,7 +305,7 @@ class NodeBundleTests(unittest.TestCase):
                          patch.object(node_bundle, '_members', wraps=node_bundle._members) as members, \
                          patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
                          patch.object(installer, 'setup_client_only', side_effect=lambda: installer.install_node_packages(client=True)), \
-                         patch('hindsightkit.command.install', return_value=state / 'bin/hindsightkit'):
+                         patch('hindsightkit.setup.command.install', return_value=state / 'bin/hindsightkit'):
                         installer.setup(args)
                     self.assertEqual(len(opened), 1)
                     self.assertEqual(digested, opened)
@@ -318,7 +320,7 @@ class NodeBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             package, bundle = self.fixture(root)
-            paths = (bundle / 'client.zip', bundle / node_bundle.MANIFEST, package / 'client/package-lock.json')
+            paths = (bundle / 'client.zip', bundle / node_bundle.MANIFEST, package / 'node/client/package-lock.json')
             with node_bundle.bundle_session(bundle, package, roles=('client',)) as verified:
                 for index, path in enumerate(paths):
                     with self.subTest(path=path.name):
@@ -345,7 +347,7 @@ class NodeBundleTests(unittest.TestCase):
             self.assertIsNone(node_bundle._active_bundle.get())
             manifest = bundle / node_bundle.MANIFEST
             manifest.write_bytes(manifest.read_bytes())
-            lock = package / 'client/package-lock.json'
+            lock = package / 'node/client/package-lock.json'
             lock.write_bytes(lock.read_bytes())
             node_bundle.validate_bundle(bundle, package, roles=('client',))
 
@@ -398,14 +400,15 @@ class NodeBundleTests(unittest.TestCase):
             root = Path(temp)
             package, bundle = self.fixture(root)
             for name in ('package.json', 'package-lock.json'):
-                shutil.copyfile(package / 'client' / name, package / name)
+                (package / 'node/server').mkdir(exist_ok=True)
+                shutil.copyfile(package / 'node/client' / name, package / 'node/server' / name)
             shutil.copyfile(bundle / 'client.zip', bundle / 'server.zip')
             with zipfile.ZipFile(bundle / 'server.zip', 'a') as archive:
                 archive.writestr(node_bundle.ENTRYPOINTS['server'][-1], '// server fixture')
             manifest = json.loads((bundle / node_bundle.MANIFEST).read_text())
             manifest['bundles']['server'] = {'archive': 'server.zip',
                 'sha256': node_bundle.sha256(bundle / 'server.zip'),
-                'lock_sha256': node_bundle.sha256(package / 'package-lock.json')}
+                'lock_sha256': node_bundle.sha256(package / 'node/server/package-lock.json')}
             (bundle / node_bundle.MANIFEST).write_text(json.dumps(manifest))
             args = argparse.Namespace(server=None, client_only=False, server_only=False)
             opened = {}
@@ -434,7 +437,7 @@ class NodeBundleTests(unittest.TestCase):
                  patch.object(installer, 'require_client_prerequisites'), patch.object(installer, 'can_connect_local_client', return_value=True), \
                  patch.object(installer, 'setup_server', side_effect=server_setup), \
                  patch.object(installer, 'setup_client', side_effect=lambda *a, **k: installer.install_node_packages(client=True)), \
-                 patch('hindsightkit.command.install', return_value=root / 'bin/hindsightkit'), \
+                 patch('hindsightkit.setup.command.install', return_value=root / 'bin/hindsightkit'), \
                  patch.object(node_bundle, '_open_bundle_file', side_effect=record_open) as opener, \
                  patch.object(hashlib, 'file_digest', side_effect=record_digest), contextlib.redirect_stdout(io.StringIO()):
                 installer.setup(args)

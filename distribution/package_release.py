@@ -210,7 +210,7 @@ def python_bundle_module():
 
 def validate_node_bundle(bundle_directory: Path, package_directory: Path, *, roles=("client", "server")) -> dict:
     spec = importlib.util.spec_from_file_location(
-        "hindsightkit_node_bundle", Path(__file__).resolve().parents[1] / "src/hindsightkit/node_bundle.py")
+        "hindsightkit_node_bundle", Path(__file__).resolve().parents[1] / "src/hindsightkit/setup/node_bundle.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.validate_bundle(bundle_directory, package_directory, roles=roles)
@@ -517,8 +517,8 @@ def package_release(*, version: str, repository: str, server_url: str,
     template_path = ordinary_path(source_root / "distribution/install.ps1")
     inspect_file(template_path, needles)
     template = template_path.read_text(encoding="utf-8-sig")
-    options_path = source_root / "src/hindsightkit/install_options.ps1"
-    if "app/src/hindsightkit/install_options.ps1" not in application:
+    options_path = source_root / "src/hindsightkit/scripts/install_options.ps1"
+    if "app/src/hindsightkit/scripts/install_options.ps1" not in application:
         raise ValueError("Shared installation options are missing")
     substitutions = {"@@VERSION@@": version, "@@RELEASE_URL@@": release_url,
                      "@@PACKAGE_NAME@@": APP_NAME, "@@PACKAGE_SHA256@@": "",

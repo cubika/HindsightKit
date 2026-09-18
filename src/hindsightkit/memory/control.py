@@ -7,7 +7,7 @@ import uuid
 
 from filelock import FileLock
 
-from .memory import scope_for
+from hindsightkit.memory.api import scope_for
 
 
 ENABLED = "hindsightkit.memory.enabled"
@@ -78,7 +78,7 @@ def command(action: str, directory=None):
                     git(repository, "config", "--local", "--replace-all", ENABLED, "true")
     current = state(repository)
     print(f"Repository memory: {'on' if current.enabled else 'off'} ({repository})")
-    from . import lifecycle
+    from hindsightkit.platform import lifecycle
     service = lifecycle.state()
     if service.get('stopped'):
         print('HindsightKit is stopped. Run hindsightkit start to use memory.')

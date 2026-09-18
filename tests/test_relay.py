@@ -14,7 +14,8 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
-from hindsightkit import relay, relay_log
+from hindsightkit.sharing import relay
+from hindsightkit.sharing import log as relay_log
 
 
 def port():
@@ -225,7 +226,7 @@ class RelayConfigurationTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows signed CLI installation')
     def test_background_missing_cli_never_downloads(self):
         with tempfile.TemporaryDirectory() as directory, \
-                patch('hindsightkit.runtime.home', return_value=Path(directory)), \
+                patch('hindsightkit.platform.runtime.home', return_value=Path(directory)), \
                 patch.object(relay.shutil, 'which', return_value=None), \
                 patch.object(relay.subprocess, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, 'CLI is missing'):
@@ -239,7 +240,7 @@ class RelayConfigurationTests(unittest.TestCase):
             binary = root / 'tools/devtunnel.exe'
             binary.parent.mkdir()
             binary.write_bytes(b'fixture')
-            with patch('hindsightkit.runtime.home', return_value=root), \
+            with patch('hindsightkit.platform.runtime.home', return_value=root), \
                     patch.object(relay.shutil, 'which', return_value='powershell.exe'), \
                     patch.object(relay.subprocess, 'run', return_value=Mock(returncode=1)) as run:
                 with self.assertRaisesRegex(RuntimeError, 'verify'):
@@ -521,12 +522,12 @@ from pathlib import Path
 root = Path(sys.argv[1])
 role = sys.argv[2]
 if role != "child":
-    from hindsightkit import relay
+    from hindsightkit.sharing import relay
 configuration = json.loads((root / "fixture-spec.json").read_text())
 if role == "launcher":
     native_popen = relay.subprocess.Popen
     def spawn(command, *args, **kwargs):
-        if command[1:3] == ["-m", "hindsightkit.relay"]:
+        if command[1:3] == ["-m", "hindsightkit.sharing.relay"]:
             command = [command[0], __file__, str(root), "worker"]
         return native_popen(command, *args, **kwargs)
     relay.subprocess.Popen = spawn
@@ -550,7 +551,7 @@ else:
             print(f"SSH: Forwarding from 127.0.0.1:{port} to host port {remote}.", flush=True)
             server.serve_forever()
 ''', encoding='utf-8')
-            environment = {**os.environ, 'PYTHONPATH': str(Path(relay.__file__).resolve().parents[1])}
+            environment = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(Path(relay.__file__).resolve().parents[2]), os.environ.get('PYTHONPATH', '')])}
             try:
                 result = subprocess.run([sys.executable, str(script), str(root), 'launcher'],
                     env=environment, capture_output=True, text=True, timeout=75,

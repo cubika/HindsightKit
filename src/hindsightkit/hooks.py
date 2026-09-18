@@ -9,11 +9,12 @@ import sys
 
 from filelock import FileLock
 
-from . import connection, lifecycle
-from .runtime import home, node, runtime
-from .memory import Memory, Scope, SHARED_BANK, scope_for
-from .routing import resolve
-from . import memory_control
+from hindsightkit import connection
+from hindsightkit.platform import lifecycle
+from hindsightkit.platform.runtime import home, node, runtime
+from hindsightkit.memory.api import Memory, Scope, SHARED_BANK, scope_for
+from hindsightkit.memory.routing import resolve
+from hindsightkit.memory import control as memory_control
 
 
 def destination(config):
@@ -123,7 +124,7 @@ def run(event_name: str):
         if not can_capture(pinned, current, service):
             print('HindsightKit: automatic saving is unavailable for this session. Start a new Copilot session to resume saving.', file=sys.stderr)
             return
-    from .remote import prepare_client
+    from hindsightkit.sharing.remote import prepare_client
     prepare_client(config)
     path, pinned = session_config(event, config)
     current = memory_control.state(pinned['_memory_repository'])

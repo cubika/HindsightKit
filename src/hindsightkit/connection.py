@@ -1,6 +1,5 @@
 """One configured API destination for MCP, hooks, and command-line checks."""
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -8,15 +7,13 @@ from urllib.parse import urlsplit
 
 import aiohttp
 from hindsight_client import Hindsight
-from . import relay_log
-
-
-def config_path() -> Path:
-    return Path(os.environ.get('HINDSIGHT_CONFIG', Path.home() / '.hindsight/coding-agent.json'))
+from hindsightkit.sharing import log as relay_log
+from hindsightkit.platform import config
+from hindsightkit.platform.config import config_path, client_mode
 
 
 def device_id(previous=None):
-    from .runtime import home
+    from hindsightkit.platform.runtime import home
     from filelock import FileLock
     path = home() / 'device-id'
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,8 +36,7 @@ def load() -> dict:
 
 def server_load() -> dict:
     """Server processes never inherit a coding client's remote destination or key."""
-    from .services import profile_config
-    profile, paths = profile_config()
+    profile, paths = config.profile_config()
     return {'apiUrl': f'http://127.0.0.1:{paths.port}',
             'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY'), 'hindsightkit': {'mode': 'server'}}
 
@@ -69,10 +65,6 @@ def validate_bank(value: str) -> str:
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', value):
         raise ValueError('Bank must contain 1-128 letters, digits, dots, underscores, colons, or hyphens.')
     return value
-
-
-def client_mode(config: dict) -> bool:
-    return config.get('hindsightkit', {}).get('mode') == 'client'
 
 
 def fixed_bank(config: dict) -> str | None:

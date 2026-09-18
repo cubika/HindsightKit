@@ -18,7 +18,9 @@ from urllib.request import Request, urlopen
 
 from aiohttp import web
 
-WEB = Path(__file__).parent / 'web'
+from hindsightkit.platform.runtime import PACKAGE
+
+WEB = PACKAGE / 'web'
 
 
 def read_service(directory):
@@ -73,7 +75,7 @@ def ensure_running(directory, api_url, hindsight_url, port):
                      if os.name == 'nt' else {'start_new_session': True})
             with (directory / 'service.log').open('ab') as log:
                 process = subprocess.Popen(
-                    [sys.executable, '-m', 'hindsightkit.connectors', '--directory', str(directory),
+                    [sys.executable, '-m', 'hindsightkit.connectors.host', '--directory', str(directory),
                      '--port', str(port), '--api-url', api_url, '--hindsight-url', hindsight_url],
                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, close_fds=True, **flags,
                 )
@@ -194,8 +196,8 @@ def make_app(host, *, port, token, instance, hindsight_url, shutdown=None):
 
 
 async def serve(directory, api_url, hindsight_url, port):
-    from .connector_registry import ConnectorHost
-    from . import connection
+    from hindsightkit.connectors.registry import ConnectorHost
+    from hindsightkit import connection
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     token, instance = secrets.token_urlsafe(32), secrets.token_hex(16)

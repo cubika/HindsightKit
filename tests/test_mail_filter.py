@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from hindsightkit.mail_filter import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, MailPrefilter
-from hindsightkit.mail_outcome import OutcomeBuilder, QUOTE_MARKER
+from hindsightkit.connectors.workiq.filter import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, MailPrefilter
+from hindsightkit.connectors.workiq.outcome import OutcomeBuilder, QUOTE_MARKER
 
 
 def message(text='Your monthly receipt is available in the account portal.', key='private-mail-id', **metadata):
@@ -59,7 +59,7 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
                'HINDSIGHT_API_LLM_REASONING_EFFORT': 'xhigh'}
 
     def setUp(self):
-        copier = patch('hindsightkit.mail_outcome.shutil.copyfile')
+        copier = patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile')
         copier.start()
         self.addCleanup(copier.stop)
         self.clients = []

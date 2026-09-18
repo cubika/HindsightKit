@@ -14,7 +14,7 @@ from time import monotonic
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
 
-from .mail_source import _date
+from hindsightkit.connectors.workiq.source import _date
 
 MAX_INPUT = 100_000
 MAX_OUTCOME = 6000
@@ -166,7 +166,6 @@ def _excluded_repository_thread(messages):
     return bool(subjects) and all(re.match(r'^(?:PR\s*(?:-|Review\b)|Pull request\b|Code review\b)', subject, re.I) for subject in subjects)
 
 
-
 _NUMBER = re.compile(r'(?<!\d)\d+(?:,\d{3})*(?:\.\d+)*(?!\d)')
 _UNITS = {'ms':'ms','millisecond':'ms','milliseconds':'ms','s':'s','sec':'s','secs':'s','second':'s','seconds':'s',
           'min':'min','mins':'min','minute':'min','minutes':'min','h':'h','hour':'h','hours':'h','%':'%','percent':'%'}
@@ -286,7 +285,7 @@ def _validate(result, index, previous):
         metadata['source_url'] = latest['metadata']['source_url']
     if supported_times:
         metadata['last_supported_utc'] = max(_date(value) for value in supported_times).astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
-    from .mail_metadata import source_metadata
+    from hindsightkit.connectors.workiq.metadata import source_metadata
     try:
         metadata = source_metadata(content, metadata, list(source_messages.values()), content_tags=outcome.content_tags)
     except ValueError:
@@ -407,7 +406,7 @@ class OutcomeBuilder:
             return {'action': 'unchanged', 'content': prior, 'metadata': previous_meta, 'reason': 'No substantive thread content.'}
         profile = self.profile
         if profile is None:
-            from .services import profile_config
+            from hindsightkit.platform.config import profile_config
             profile, _ = profile_config()
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise OutcomeError('outcome_copilot_profile_required')

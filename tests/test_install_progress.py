@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit import install_progress
+from hindsightkit.setup import progress as install_progress
 
 
 class InstallProgressTests(unittest.TestCase):

@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit.mail_sync import MailSync
-from hindsightkit.mail_source import WorkIQError, source_key, source_version
+from hindsightkit.connectors.workiq.sync import MailSync
+from hindsightkit.connectors.workiq.source import WorkIQError, source_key, source_version
 
 
 class Missing(Exception):
@@ -525,7 +525,7 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
             await gate.wait()
             return await build(messages, previous)
         self.builder.build = blocked
-        with patch('hindsightkit.mail_sync.MAX_PREPARED', 1):
+        with patch('hindsightkit.connectors.workiq.sync.MAX_PREPARED', 1):
             await self.sync.sync()
             await asyncio.wait_for(overlap.wait(), 2)
             gate.set()
@@ -900,7 +900,7 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_source_capacity_failure_preserves_page_checkpoint(self):
         self.append('two', 'Other', thread='another')
-        with patch('hindsightkit.mail_sync.MAX_SOURCES', 1):
+        with patch('hindsightkit.connectors.workiq.sync.MAX_SOURCES', 1):
             result = await self.run_sync()
         self.assertEqual(result['run']['state'], 'error')
         self.assertEqual(self.sync.db.execute('SELECT COUNT(*) FROM sources').fetchone()[0], 0)

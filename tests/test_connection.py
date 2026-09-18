@@ -18,7 +18,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hindsight_client_api.exceptions import ApiException
 
-from hindsightkit import connection, relay_log
+from hindsightkit import connection
+from hindsightkit.sharing import log as relay_log
 from hindsightkit.server import Activity, ClientsExtension, Inventory, MAX_DEVICES
 
 

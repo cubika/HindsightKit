@@ -14,7 +14,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import hindsightkit
-from hindsightkit import cli, installer, services, runtime as runtime_env, connection, remote, relay_log
+from hindsightkit.platform import config as profile_env
+from hindsightkit import cli
+from hindsightkit.setup import installer
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import connection
+from hindsightkit.sharing import remote
+from hindsightkit.sharing import log as relay_log
 
 
 def options(**values):
@@ -81,15 +88,15 @@ class RemoteTests(unittest.TestCase):
             saved = path.read_bytes()
             invitation = invitation or {'version': 1, 'url': 'http://new-host:9077', 'key': 'new-key',
                                        'relay': {'tunnel_id': 'new-tunnel', 'remote_port': 9077}}
-            relay = ModuleType('hindsightkit.relay')
+            relay = ModuleType('hindsightkit.sharing.relay')
             relay.ensure_running = Mock()
             relay.create_host = Mock(return_value={'mode': 'host', 'tunnel_id': 'test-tunnel', 'remote_port': 9077})
             relay.stop = Mock()
             relay.load_spec = Mock(return_value=None)
-            stack.enter_context(patch.dict('sys.modules', {'hindsightkit.relay': relay}))
-            stack.enter_context(patch.object(hindsightkit, 'relay', relay, create=True))
+            stack.enter_context(patch.dict('sys.modules', {'hindsightkit.sharing.relay': relay}))
+            stack.enter_context(patch.object(hindsightkit.sharing, 'relay', relay, create=True))
             stack.enter_context(patch.object(runtime_env, 'home', return_value=root))
-            stack.enter_context(patch.object(services, 'profile_config', return_value=({}, None)))
+            stack.enter_context(patch.object(profile_env, 'profile_config', return_value=({}, None)))
             stack.enter_context(patch.object(connection, 'config_path', return_value=path))
             prompt = stack.enter_context(patch.object(remote.getpass, 'getpass', return_value=remote.encode_invitation(invitation)))
             setup = stack.enter_context(patch.object(installer, 'setup_client'))
@@ -225,7 +232,7 @@ class RemoteTests(unittest.TestCase):
             self.assertEqual(state.path.read_bytes(), state.saved)
 
     def test_relay_api_timeout_identifies_the_stage_and_preserves_stopped_client(self):
-        from hindsightkit import lifecycle
+        from hindsightkit.platform import lifecycle
         for reused in (False, True):
             transport = {'mode': 'connect', 'tunnel_id': 'new-tunnel', 'remote_port': 9077, 'local_port': 43210}
             previous = {'apiUrl': 'http://127.0.0.1:43210', 'apiToken': 'old-key',
@@ -297,10 +304,10 @@ class RemoteTests(unittest.TestCase):
             with self.subTest(command=command), self.environment(previous=previous) as state, \
                  patch.object(services, 'require_local'), patch.object(runtime_env, 'run'), \
                  patch.object(services, 'start_ui', return_value='http://localhost:19077'), \
-                 patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'},
+                 patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'},
                               SimpleNamespace(port=9077, ui_port=19077))), \
-                 patch('hindsightkit.postgres.Postgres') as database, \
-                 patch('hindsightkit.connector_registry.enabled_connectors', return_value=[]), \
+                 patch('hindsightkit.setup.postgres.Postgres') as database, \
+                 patch('hindsightkit.connectors.registry.enabled_connectors', return_value=[]), \
                  patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}):
                 database.return_value.url = 'postgresql://local'
                 database.return_value.state_path.is_file.return_value = True
@@ -366,12 +373,12 @@ class RemoteTests(unittest.TestCase):
     def test_stop_completes_local_shutdown_when_a_relay_cannot_stop(self):
         with self.environment() as state, patch.object(runtime_env, 'prepare_env'), \
              patch.object(services, 'require_local'), patch.object(runtime_env, 'run') as run, \
-             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'}, None)), \
+             patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'}, None)), \
              patch.object(connection, 'has_server', return_value=True), \
              patch.object(remote, 'stop', side_effect=RuntimeError('remote stop failed')), \
-             patch('hindsightkit.connectors.stop') as stop_connectors, \
+             patch('hindsightkit.connectors.host.stop') as stop_connectors, \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
-             patch('hindsightkit.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()) as error:
+             patch('hindsightkit.setup.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()) as error:
             database.return_value.url = 'postgresql://local'
             database.return_value.state_path.is_file.return_value = True
             self.assertEqual(cli.main(['stop']), 1)

@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hindsightkit.mail_outcome import OutcomeBuilder, OutcomeError, prepare_messages, _validate
+from hindsightkit.connectors.workiq.outcome import OutcomeBuilder, OutcomeError, prepare_messages, _validate
 
 
 def message(text='Runtime check is blocked until the owner verifies the deployment.', key='mail-one', **metadata):
@@ -150,7 +150,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         clients=[]
         def factory(**kwargs):
             client=FakeClient([answer()],**kwargs);clients.append(client);return client
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             output=await OutcomeBuilder(self.profile,client_factory=factory).build([message()])
         self.assertEqual(output['action'],'publish')
         client=clients[0]
@@ -176,7 +176,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         clients=[]
         def factory(**kwargs):
             client=FakeClient([{'invalid':True},answer()],**kwargs);clients.append(client);return client
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             result=await OutcomeBuilder(self.profile,client_factory=factory).build([message()])
         self.assertEqual(result['action'],'publish')
         self.assertEqual(len(clients),1)
@@ -187,7 +187,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         profile=dict(self.profile)
         def factory(**kwargs):
             client=FakeClient([answer()],**kwargs);clients.append(client);return client
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             result=await OutcomeBuilder(profile,client_factory=factory,model='gpt-5.6-luna',reasoning_effort='none').build([message()])
         self.assertEqual(result['action'],'publish')
         self.assertEqual(clients[0].session_config['model'],'gpt-5.6-luna')
@@ -203,7 +203,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
             clients.append(client)
             return client
         builder = OutcomeBuilder(self.profile, client_factory=factory)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             await asyncio.gather(builder.build([message()]), builder.build([message()]))
         self.assertEqual(len(clients), 2)
         self.assertNotEqual(clients[0].config['base_directory'], clients[1].config['base_directory'])
@@ -231,7 +231,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
             client.config = kwargs
             return client
         builder = OutcomeBuilder(self.profile, client_factory=factory)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             task = asyncio.create_task(builder.build([message()]))
             await asyncio.wait_for(started.wait(), 2)
             task.cancel()
@@ -258,7 +258,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()
         client = WaitingClient([answer()])
         builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             task = asyncio.create_task(builder.build([message()]))
             await asyncio.wait_for(stopping.wait(), 2)
             task.cancel()
@@ -275,7 +275,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()
         client = WaitingClient([answer()])
         builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'), patch('hindsightkit.mail_outcome.RUNTIME_STOP_TIMEOUT', 0.01):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'), patch('hindsightkit.connectors.workiq.outcome.RUNTIME_STOP_TIMEOUT', 0.01):
             result = await asyncio.wait_for(builder.build([message()]), 2)
         self.assertEqual(result['action'], 'publish')
         self.assertEqual(client.cleanup, ['stop', 'force_stop'])
@@ -293,7 +293,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
                 await super().force_stop()
         client = BrokenClient([answer()])
         builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             with self.assertRaisesRegex(OutcomeError, 'runtime_cleanup_failed'):
                 await builder.build([message()])
         self.assertIn(client, builder._clients)
@@ -313,7 +313,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()
         client = WaitingClient([])
         builder = OutcomeBuilder(self.profile, client_factory=lambda **kwargs: client)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             task = asyncio.create_task(builder.build([message()]))
             await asyncio.wait_for(starting.wait(), 2)
             task.cancel()
@@ -328,7 +328,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_two_invalid_results_raise(self):
         def factory(**kwargs):
             return FakeClient([{},{}],**kwargs)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'format_invalid'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'format_invalid'):
             await OutcomeBuilder(self.profile,client_factory=factory).build([message()])
 
     async def test_session_creation_timeout_stops_runtime_before_inference(self):
@@ -340,7 +340,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
             client.config = kwargs
             return client
         builder = OutcomeBuilder(self.profile, timeout=0.02, client_factory=factory)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             with self.assertRaisesRegex(OutcomeError, 'outcome_model_failed'):
                 await asyncio.wait_for(builder.build([message()]), 2)
         self.assertEqual(client.cleanup, ['stop'])
@@ -359,7 +359,7 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
             client.config = kwargs
             return client
         builder = OutcomeBuilder(self.profile, client_factory=factory)
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             task = asyncio.create_task(builder.build([message()]))
             await asyncio.wait_for(creating.wait(), 2)
             task.cancel()
@@ -425,7 +425,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         clients=[]
         def factory(**kwargs):
             client=BrokenClient([],**kwargs);clients.append(client);return client
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'model_failed'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'model_failed'):
             await OutcomeBuilder(BuilderTests.profile,client_factory=factory).build([message()],{'original_text':'Old result'})
         self.assertTrue(clients[0].stopped)
 
@@ -513,7 +513,7 @@ class NumericRepairTests(unittest.IsolatedAsyncioTestCase):
         clients=[]
         def factory(**kwargs):
             client=FakeClient([invalid,answer()],**kwargs);clients.append(client);return client
-        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+        with patch('hindsightkit.connectors.workiq.outcome.shutil.copyfile'):
             result=await OutcomeBuilder(BuilderTests.profile,client_factory=factory).build([message()])
         self.assertEqual(result['action'],'publish')
         self.assertEqual(len(clients[0].prompts),2)

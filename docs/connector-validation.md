@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: package layout
+
+The full unit suite passed 533 tests in 926.5 seconds after moving the WorkIQ adapter into its own package and separating Node and PowerShell resources. Earlier runs exposed stale fixture paths, a relay mock attached to the old parent package, and integration tests writing runtime state outside their temporary directories; these were corrected before the final run. Connector and MCP tests used synthetic responses, with no mailbox or model calls. A built wheel matched all 50 package files byte-for-byte, and an isolated wheel installation passed resource, adapter-import, command-entry, and Node JSONC checks.
+
 ## September 18, 2026: status and memory test consolidation
 
 The integrated status, lifecycle, connection, packaging, and installer run passed 121 tests in 377.7 seconds. After integrating the relay worker update, 82 affected tests passed in 15.1 seconds. Default status checks made no model calls. The optional local-memory test preserved service and connection failure results, skipped stopped or client-only installations, and never wrote a remote test bank. Connector services and memory responses used isolated fixtures; no mailbox or live memory server was accessed.

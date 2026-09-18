@@ -79,7 +79,9 @@ def dashboard(directory, node, env):
 
 
 def verify(bundle: Path, package: Path):
-    from hindsightkit import installer, runtime as runtime_env, node_bundle
+    from hindsightkit.setup import installer
+    from hindsightkit.platform import runtime as runtime_env
+    from hindsightkit.setup import node_bundle
     bundle, package = bundle.resolve(strict=True), package.resolve(strict=True)
     manifest = json.loads((bundle / node_bundle.MANIFEST).read_text())
     roles = tuple(manifest['bundles'])
@@ -112,7 +114,7 @@ net.Socket.prototype.connect = function(...args) {
         with patch.dict(os.environ, env, clear=True), patch.object(runtime_env, 'PACKAGE', package), \
              patch.object(runtime_env, 'home', return_value=root / 'kit'), patch.object(runtime_env, 'node', return_value=node), \
              patch.object(node_bundle, 'release_bundle', return_value=bundle), \
-             patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('Release invoked npm')):
+             patch('hindsightkit.setup.progress.run_install', side_effect=AssertionError('Release invoked npm')):
             for role in roles:
                 installer.install_node_role(role)
                 installer.install_node_role(role)

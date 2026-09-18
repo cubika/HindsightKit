@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit import relay_log
+from hindsightkit.sharing import log as relay_log
 
 
 class RelayLogTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class RelayLogTests(unittest.TestCase):
     def test_processes_share_bounded_rotation_with_complete_records(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            code = ('from hindsightkit import relay_log; import sys; '
+            code = ('from hindsightkit.sharing import log as relay_log; import sys; '
                     'relay_log.MAX_BYTES = 2048; '
                     '[relay_log.event(sys.argv[1], "fixture.event", sequence=i) for i in range(60)]')
             processes = [subprocess.Popen([sys.executable, '-c', code, str(root)],

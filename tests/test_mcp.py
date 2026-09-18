@@ -12,9 +12,11 @@ from mcp.client.stdio import stdio_client
 from mcp.shared.message import SessionMessage
 from mcp import types
 
-from hindsightkit import runtime as runtime_env, connection, mcp as memory_mcp
-from hindsightkit import memory_control
-from hindsightkit.memory import scope_for
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit import connection
+from hindsightkit import mcp as memory_mcp
+from hindsightkit.memory import control as memory_control
+from hindsightkit.memory.api import scope_for
 
 
 class McpTests(unittest.TestCase):

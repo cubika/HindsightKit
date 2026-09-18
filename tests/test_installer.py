@@ -9,7 +9,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit import cli, installer, runtime as runtime_env
+from hindsightkit import cli
+from hindsightkit.setup import installer
+from hindsightkit.platform import runtime as runtime_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,11 +24,11 @@ class InstallerTests(unittest.TestCase):
             record = root / 'installation.json'
             with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
                  patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
-                 patch('hindsightkit.node_bundle.release_bundle', return_value=None), \
+                 patch('hindsightkit.setup.node_bundle.release_bundle', return_value=None), \
                  patch.object(installer, 'setup_client_only'), patch.object(installer, 'setup_client'), \
                  patch.object(installer, 'setup_server', return_value={'apiUrl': 'http://localhost:9077'}), \
                  patch.object(installer, 'can_connect_local_client', return_value=True), \
-                 patch('hindsightkit.command.install', return_value=root / 'bin/hk.cmd') as command, \
+                 patch('hindsightkit.setup.command.install', return_value=root / 'bin/hk.cmd') as command, \
                  patch.object(runtime_env, 'run') as run, \
                  contextlib.redirect_stdout(io.StringIO()):
                 for arguments, mode in [(['--client-only'], 'client-only'),
@@ -59,9 +61,9 @@ class InstallerTests(unittest.TestCase):
             original = b'{"schema": 1, "mode": "client-only"}\n'
             with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
                  patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
-                 patch('hindsightkit.node_bundle.release_bundle', return_value=None), \
+                 patch('hindsightkit.setup.node_bundle.release_bundle', return_value=None), \
                  patch.object(installer, 'setup_client_only'), \
-                 patch('hindsightkit.command.install', side_effect=RuntimeError('fixture launcher failure')), \
+                 patch('hindsightkit.setup.command.install', side_effect=RuntimeError('fixture launcher failure')), \
                  contextlib.redirect_stderr(io.StringIO()):
                 for existing in [False, True]:
                     with self.subTest(existing=existing):
@@ -145,7 +147,7 @@ class InstallerTests(unittest.TestCase):
             case_file = root / 'cases.json'
             case_file.write_text(json.dumps(cases))
             published = root / 'install.ps1'
-            shared_options = ROOT / 'src/hindsightkit/install_options.ps1'
+            shared_options = ROOT / 'src/hindsightkit/scripts/install_options.ps1'
             published.write_text((ROOT / 'distribution/install.ps1').read_text(encoding='utf-8')
                 .replace('@@INSTALL_OPTIONS@@', shared_options.read_text(encoding='utf-8'))
                 .replace('@@REQUIRES_AUTH@@', '$false'), encoding='utf-8')
@@ -222,9 +224,9 @@ class Fixture { static void Main(string[] args) {
                         for path in [app, state, binary]:
                             path.mkdir(parents=True)
                         shutil.copyfile(ROOT / 'setup.ps1', app / 'setup.ps1')
-                        (app / 'src/hindsightkit').mkdir(parents=True)
-                        shutil.copyfile(ROOT / 'src/hindsightkit/install_options.ps1',
-                                        app / 'src/hindsightkit/install_options.ps1')
+                        (app / 'src/hindsightkit/scripts').mkdir(parents=True)
+                        shutil.copyfile(ROOT / 'src/hindsightkit/scripts/install_options.ps1',
+                                        app / 'src/hindsightkit/scripts/install_options.ps1')
                         if name == 'legacy-client':
                             stamp = state / 'client-runtime/.installed-lock'
                             stamp.parent.mkdir()
@@ -267,7 +269,7 @@ $global:LASTEXITCODE = 0
                                                 env=environment, capture_output=True, text=True, timeout=30)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         python_args = (case / 'python-args.txt').read_text().splitlines()
-                        self.assertEqual(python_args[:2], ['-m', 'hindsightkit.installer'])
+                        self.assertEqual(python_args[:2], ['-m', 'hindsightkit.setup.installer'])
                         self.assertEqual('--client-only' in python_args, role == 'client-only')
                         self.assertEqual('--server-only' in python_args, role == 'server-only')
                         uv_args = json.loads((case / 'uv-args.json').read_text(encoding='utf-8-sig'))
@@ -277,7 +279,6 @@ $global:LASTEXITCODE = 0
                                 'requirements-server.txt' if needs_server else 'requirements-client.txt')
                         else:
                             self.assertEqual('--extra' in uv_args, needs_server)
-
 
 
 if __name__ == '__main__':

@@ -13,7 +13,7 @@ uv sync --frozen --python 3.12 --extra server
 Install the locked Node integration packages before running the suite so those checks are available:
 
 ```powershell
-.venv/Scripts/python.exe -c "from hindsightkit.installer import install_node_packages; install_node_packages(); install_node_packages(client=True)"
+.venv/Scripts/python.exe -c "from hindsightkit.setup.installer import install_node_packages; install_node_packages(); install_node_packages(client=True)"
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
 
@@ -22,6 +22,10 @@ Running `.\setup.ps1` performs real setup against the current user's Hindsight p
 Source server setup compiles official pgvector sources using Microsoft's C++ toolchain and the pinned PostgreSQL headers. If the toolchain is missing, setup can install signed Build Tools and Windows may request administrator approval. Release packages include precompiled database components.
 
 ## Boundaries
+
+Python code lives in `src/hindsightkit`: `setup/` installs components, `sharing/` manages remote connections, `memory/` handles routing and controls, and `connectors/workiq/` contains the email adapter. `platform/` provides local configuration and operating-system helpers. CLI, MCP, hook, and HTTP-extension entry points stay at the package root.
+
+Node integration code lives in `node/`, with separate `client/` and `server/` dependency manifests and locks. `web/` contains browser assets; `scripts/` contains PowerShell helpers. These resources ship inside the Python wheel. When moving them, update their callers and package-data rules, then verify the built wheel with `distribution/build_python_bundle.py`'s source comparison.
 
 HindsightKit wraps pinned official Hindsight components. Hindsight owns the memory database and retrieval engine. Client routing and optional [connector adapters](connectors.md) remain small and explicit; do not fork the engine or create a second memory store.
 

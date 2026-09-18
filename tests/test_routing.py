@@ -8,9 +8,9 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hindsightkit import runtime as runtime_env
-from hindsightkit.memory import scope_for, Scope, SHARED_BANK
-from hindsightkit.routing import repository_identity, seed_aliases, resolve
+from hindsightkit.platform import runtime as runtime_env
+from hindsightkit.memory.api import scope_for, Scope, SHARED_BANK
+from hindsightkit.memory.routing import repository_identity, seed_aliases, resolve
 from hindsightkit.server import ClientsExtension
 
 

@@ -11,7 +11,7 @@ import time
 import uuid
 
 from hindsightkit.connection import server_load, sdk
-from hindsightkit.mail_outcome import OutcomeBuilder
+from hindsightkit.connectors.workiq.outcome import OutcomeBuilder
 
 
 async def main(args):

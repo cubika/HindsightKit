@@ -45,8 +45,8 @@ class ReleasePackageTests(unittest.TestCase):
               '[[package]]\nname = "hindsightkit"\nversion = "0.1.1"\nsource = { editable = "." }\n'
               'dependencies = []\n[package.optional-dependencies]\nserver = []\n')
         write(source, "src/hindsightkit/__init__.py")
-        write(source, "src/hindsightkit/install_options.ps1",
-              (ROOT / "src/hindsightkit/install_options.ps1").read_text(encoding="utf-8"))
+        write(source, "src/hindsightkit/scripts/install_options.ps1",
+              (ROOT / "src/hindsightkit/scripts/install_options.ps1").read_text(encoding="utf-8"))
         write(source, "docs/install.md")
         write(source, "distribution/install.ps1",
               (ROOT / "distribution/install.ps1").read_text(encoding="utf-8"))
@@ -66,9 +66,7 @@ class ReleasePackageTests(unittest.TestCase):
         directory.mkdir(parents=True)
         manifest = {"schema": 1, "platform": "windows-x64", "bundles": {}}
         for role in ("client", "server"):
-            root = source / "src/hindsightkit"
-            if role != "server":
-                root /= role
+            root = source / "src/hindsightkit/node" / role
             dependencies = {"@vectorize-io/hindsight-coding-agents": "0.6.1", "jsonc-parser": "3.3.1"}
             if role == "server":
                 dependencies["@vectorize-io/hindsight-control-plane"] = "0.10.0"
@@ -197,8 +195,8 @@ class ReleasePackageTests(unittest.TestCase):
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
                     "app/src/hindsightkit/__init__.py",
-                    "app/src/hindsightkit/install_options.ps1",
-                    *("app/src/hindsightkit/" + prefix + name for prefix in ("", "client/")
+                    "app/src/hindsightkit/scripts/install_options.ps1",
+                    *("app/src/hindsightkit/" + prefix + name for prefix in ("node/server/", "node/client/")
                       for name in ("package.json", "package-lock.json")),
                     "app/docs/install.md", "app/release.json", "app/python/python-bundle.json",
                     "app/python/requirements-client.txt", "app/python/requirements-server.txt",
@@ -254,7 +252,7 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(release["postgres"]["sha256"], package.inspect_file(output / package.POSTGRES_NAME))
             installer = (output / "install.ps1").read_text()
             self.assertIsNone(re.search(r"@@[A-Z0-9_]+@@", installer))
-            shared_options = (source / "src/hindsightkit/install_options.ps1").read_text().rstrip()
+            shared_options = (source / "src/hindsightkit/scripts/install_options.ps1").read_text().rstrip()
             self.assertIn(shared_options, installer)
             self.assertEqual(installer.count('function Resolve-InstallMode('), 1)
             self.assertIn("$requiresAuth = $false", installer)
@@ -605,7 +603,7 @@ class ReleasePackageTests(unittest.TestCase):
             builder = importlib.util.module_from_spec(spec)
             with patch.dict(sys.modules, {"package_release": package}):
                 spec.loader.exec_module(builder)
-            from hindsightkit import node_bundle
+            from hindsightkit.setup import node_bundle
             binary = write(Path(directory), "tools/node.exe")
             write(binary.parent, "node_modules/npm/bin/npm-cli.js")
             output = Path(directory) / "built-node"
@@ -675,7 +673,7 @@ class ReleasePackageTests(unittest.TestCase):
             builder = importlib.util.module_from_spec(spec)
             with patch.dict(sys.modules, {"package_release": package}):
                 spec.loader.exec_module(builder)
-            from hindsightkit import node_bundle
+            from hindsightkit.setup import node_bundle
             binary = write(Path(directory), "tools/node.exe")
             write(binary.parent, "node_modules/npm/bin/npm-cli.js")
             output = Path(directory) / "failed-build"
@@ -847,7 +845,7 @@ class ReleasePackageTests(unittest.TestCase):
     def test_shared_installation_options_are_required_before_output(self):
         with tempfile.TemporaryDirectory() as directory:
             args = self.fixture(Path(directory))
-            (args["source_root"] / "src/hindsightkit/install_options.ps1").unlink()
+            (args["source_root"] / "src/hindsightkit/scripts/install_options.ps1").unlink()
             self.python_bundle(args["python_directory"], args["source_root"])
             with self.assertRaisesRegex(ValueError, "Shared installation options"):
                 package.package_release(**args)

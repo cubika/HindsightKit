@@ -6,8 +6,14 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from hindsightkit import cli, connection, installer, lifecycle, remote, services
-from hindsightkit import runtime as runtime_env
+from hindsightkit.platform import config as profile_env
+from hindsightkit import cli
+from hindsightkit import connection
+from hindsightkit.setup import installer
+from hindsightkit.platform import lifecycle
+from hindsightkit.sharing import remote
+from hindsightkit import services
+from hindsightkit.platform import runtime as runtime_env
 from test_remote import options as remote_options
 import test_remote_setup as setup_fixture
 
@@ -28,7 +34,7 @@ class CliBehaviorTests(unittest.TestCase):
     def test_full_upgrade_refreshes_client_without_changing_remote_connection(self):
         original = self.state.path.read_bytes()
         with patch.object(installer, 'setup_server', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
-             patch('hindsightkit.command.install', return_value=self.root / 'hk.exe'), \
+             patch('hindsightkit.setup.command.install', return_value=self.root / 'hk.exe'), \
              patch.object(installer, 'install_client_integrations') as integrate:
             installer.setup(setup_fixture.options())
         self.state.packages.assert_called_once_with(client=True)
@@ -79,7 +85,7 @@ class CliBehaviorTests(unittest.TestCase):
         lifecycle.stop()
         with patch.object(services, 'require_local'), patch.object(services, 'start_local'), \
              patch.object(remote, 'copy_connection_code', return_value=True), \
-             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_API_HOST': '0.0.0.0'}, None)), \
+             patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_API_HOST': '0.0.0.0'}, None)), \
              patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'fixture'}):
             remote.share(remote_options())
         self.assertFalse(lifecycle.state()['stopped'])
