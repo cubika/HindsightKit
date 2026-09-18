@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock, patch
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.message import SessionMessage
 from mcp import types
 
 from hindsightkit import runtime as runtime_env, connection, mcp as memory_mcp
 from hindsightkit import memory_control
+from hindsightkit.memory import scope_for
 
 
 class McpTests(unittest.TestCase):
@@ -22,6 +24,49 @@ class McpTests(unittest.TestCase):
         environment = patch.dict(os.environ, {'HINDSIGHTKIT_HOME': self.home.name})
         environment.start()
         self.addCleanup(environment.stop)
+
+    def test_modern_discovery_can_fall_back_to_handshake_and_repository_tools(self):
+        async def check(context):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                runtime_env.run(['git', 'init', root], capture=True)
+                async def list_roots(_):
+                    return types.ListRootsResult(roots=[types.Root(uri=root.as_uri())])
+                params = StdioServerParameters(command=sys.executable,
+                    args=['-u', str(Path(__file__).with_name('mcp_fixture.py')), context],
+                    cwd=str(root), env={**os.environ, 'COPILOT_AGENT_SESSION_ID': '',
+                        'FASTMCP_LOG_LEVEL': 'CRITICAL',
+                        'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
+                async with stdio_client(params) as (reader, writer):
+                    await writer.send(SessionMessage(types.JSONRPCRequest(
+                        jsonrpc='2.0', id='discovery', method='server/discover', params={
+                            '_meta': {
+                                'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+                                'io.modelcontextprotocol/clientCapabilities': {},
+                                'io.modelcontextprotocol/clientInfo': {
+                                    'name': 'compatibility-test', 'version': '1.0'},
+                            }})))
+                    response = (await reader.receive()).message
+                    self.assertIsInstance(response, types.JSONRPCError, response)
+                    self.assertEqual(response.id, 'discovery')
+                    self.assertEqual(response.error.code, -32601)
+                    async with ClientSession(reader, writer,
+                            list_roots_callback=list_roots if context == 'vscode' else None) as client:
+                        initialized = await client.initialize()
+                        self.assertEqual(initialized.protocol_version, '2025-11-25')
+                        tools = await client.list_tools()
+                        self.assertEqual({tool.name for tool in tools.tools}, {'retain', 'recall', 'reflect'})
+                        result = await client.call_tool('recall', {'query': 'Fixture query'})
+                        self.assertFalse(result.is_error, result)
+                        self.assertEqual(result.structured_content['memories'][0]['bank'], scope_for(root).bank)
+                        with patch('builtins.print'):
+                            memory_control.command('off', root)
+                        result = await client.call_tool('recall', {'query': 'Fixture query'})
+                        self.assertTrue(result.is_error, result)
+                        self.assertIn('disabled for this repository', str(result.content))
+        for context in ('cli', 'vscode'):
+            with self.subTest(context=context):
+                asyncio.run(asyncio.wait_for(check(context), timeout=45))
 
     def test_explicit_bank_requires_vscode_roots_to_honor_repository_switch(self):
         async def check():
@@ -127,7 +172,7 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(connection, "Hindsight", return_value=sdk_client) as constructor, \
              patch.object(connection, "report", new=AsyncMock()), \
              patch.object(memory_mcp, "FastMCP", return_value=server), \
-             patch.object(server, "run"):
+             patch.object(memory_mcp, "run_stdio"):
             if saved_mail:
                 directory = Path(temp) / 'mail'
                 directory.mkdir()

@@ -155,3 +155,13 @@ The repository suite passed all 503 tests with `PYTHONPATH` set to the checkout'
 Regression cases verified index creation after migration of an older ledger, preservation of discovery errors, folder filtering and thread deduplication, matching active and saved status, the ten-item failure limit, and read-only snapshots. Existing publication recovery and cancellation tests passed. New session-creation timeout and cancellation tests verified runtime cleanup and the prefilter's uncertain result on timeout.
 
 An in-memory SQLite benchmark used 100,000 synthetic sources across 10,000 threads and 200 thread lookups per round. The median of three rounds was 1.86 ms with the production indexes and 1,140.86 ms after dropping the thread index. The query plan changed from an indexed search to a table scan. These measurements cover the local lookup only; they do not measure mailbox or model throughput.
+
+## September 18, 2026: MCP initialization fallback
+
+The stdio adapter now uses the pinned MCP SDK's handshake-only runner. A modern `server/discover` probe returns method-not-found, so a client can then initialize with `2025-11-25` on the same connection. This keeps the client callbacks used for VS Code workspace roots. Clients that require only the modern protocol are not supported by this endpoint.
+
+The new regression failed before the change and passed afterward for CLI and VS Code contexts. It checks discovery fallback, tool listing, repository selection, and the live memory switch. All eight MCP tests and 22 lifecycle and repository-switch tests passed. A real Copilot 1.0.86-2 runtime connected through the fallback and called the fixture recall tool without a model prompt. That runtime also connected to the original server using the modern protocol, so it did not reproduce the reported client failure.
+
+Live checks against the local Hindsight service passed discovery fallback, tool listing, retain, and recall for both contexts, including VS Code roots and separate disposable banks. They passed again after applying the adapter to the local installation. The checks used chunk extraction without model prompts or mailbox reads and deleted their test banks.
+
+The full suite ran 532 tests: 525 passed, while seven installation tests encountered the installed interpreter's adjacent release manifest or sandbox access to user runtime files. Those seven passed on targeted reruns with an isolated virtual environment, temporary settings, and a copied client runtime. The 26 PostgreSQL tests also passed in that environment. No test assertions were changed for these environment issues. The wheel built successfully with the cached build backend, its adapter and SDK pin were checked, and `uv lock --check --offline` passed.

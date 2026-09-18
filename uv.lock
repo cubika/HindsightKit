@@ -2102,6 +2102,7 @@ dependencies = [
     { name = "github-copilot-sdk" },
     { name = "hindsight-client" },
     { name = "hindsight-copilot" },
+    { name = "mcp" },
 ]
 
 [package.optional-dependencies]
@@ -2119,6 +2120,7 @@ requires-dist = [
     { name = "hindsight-client", specifier = "==0.10.0" },
     { name = "hindsight-copilot", specifier = "==0.1.0" },
     { name = "hindsight-embed", marker = "extra == 'server'", specifier = "==0.10.0" },
+    { name = "mcp", specifier = "==2.2.0" },
 ]
 provides-extras = ["server"]
 

@@ -7,10 +7,33 @@ from urllib.request import url2pathname
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.context import reset_transport, set_transport
 from fastmcp.server.middleware import Middleware
+from mcp.server.lowlevel.server import NotificationOptions
+from mcp.server.runner import serve_loop
+from mcp.server.stdio import stdio_server
 from . import connection, lifecycle, memory_control
 from .memory import Memory, Scope, SHARED_BANK, scope_for
 from .routing import resolve
+
+
+async def _serve_stdio(server: FastMCP):
+    # Workspace roots need the handshake protocol's client back-channel.
+    # Decline modern discovery without locking the connection into that era.
+    low_level = server._mcp_server
+    token = set_transport('stdio')
+    try:
+        async with low_level.lifespan(low_level) as state:
+            async with stdio_server() as (reader, writer):
+                await serve_loop(low_level, reader, writer, lifespan_state=state,
+                    init_options=low_level.create_initialization_options(
+                        notification_options=NotificationOptions(tools_changed=True)))
+    finally:
+        reset_transport(token)
+
+
+def run_stdio(server: FastMCP):
+    asyncio.run(_serve_stdio(server))
 
 
 def scope_from_roots(roots) -> Scope:
@@ -131,4 +154,4 @@ def serve(context: str, directory: str | None = None):
     from .runtime import home
     register_tools(server, config, home())
 
-    server.run(transport='stdio', show_banner=False)
+    run_stdio(server)

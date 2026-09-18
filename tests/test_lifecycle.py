@@ -38,7 +38,7 @@ class LifecycleTests(unittest.TestCase):
             client = SimpleNamespace(aretain=AsyncMock(return_value=result),
                                      arecall=AsyncMock(return_value=result),
                                      areflect=AsyncMock(return_value=result), aclose=AsyncMock())
-            with patch.object(mcp, 'FastMCP', return_value=server), patch.object(server, 'run'), \
+            with patch.object(mcp, 'FastMCP', return_value=server), patch.object(mcp, 'run_stdio'), \
                  patch.object(mcp, 'resolve', new_callable=AsyncMock, return_value=Scope('fixture')) as resolve, \
                  patch.object(connection, 'sdk', return_value=client) as sdk, \
                  patch.object(remote, 'prepare_client') as prepare:

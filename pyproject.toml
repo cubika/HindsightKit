@@ -11,6 +11,7 @@ dependencies = [
     "hindsight-client==0.10.0",
     "hindsight-copilot==0.1.0",
     "fastmcp==4.0.4",
+    "mcp==2.2.0",
     "filelock==3.32.7",
     "github-copilot-sdk==1.0.14",
 ]

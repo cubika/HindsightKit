@@ -162,7 +162,7 @@ class RepositoryMemoryTests(unittest.TestCase):
             server = mcp.FastMCP("Pinned session toggle fixture")
             with patch.dict(os.environ, {"COPILOT_AGENT_SESSION_ID": "session"}), \
                  patch.object(mcp.connection, "sdk") as sdk, \
-                 patch.object(mcp, "FastMCP", return_value=server), patch.object(server, "run"):
+                 patch.object(mcp, "FastMCP", return_value=server), patch.object(mcp, "run_stdio"):
                 mcp.serve("cli", str(self.other))
                 with self.assertRaisesRegex(ToolError, "disabled for this repository"):
                     await server.call_tool("recall", {"query": "Fixture query"})
@@ -182,7 +182,7 @@ class RepositoryMemoryTests(unittest.TestCase):
                  patch.object(mcp.connection, "sdk", return_value=client) as sdk, \
                  patch.object(mcp, "resolve", new_callable=AsyncMock, return_value=Scope("resolved", str(self.repo))) as resolve, \
                  patch("hindsightkit.remote.prepare_client") as prepare, \
-                 patch.object(mcp, "FastMCP", return_value=server), patch.object(server, "run"):
+                 patch.object(mcp, "FastMCP", return_value=server), patch.object(mcp, "run_stdio"):
                 mcp.serve("cli", str(self.repo))
                 calls = {"retain": {"content": "Fixture fact"}, "recall": {"query": "Fixture query"},
                          "reflect": {"query": "Fixture query"}, "recall_mail": {"query": "Fixture mail"}}
@@ -213,7 +213,7 @@ class RepositoryMemoryTests(unittest.TestCase):
             self.command("off")
             with patch.object(mcp.connection, "load", return_value=config), \
                  patch.object(mcp.connection, "sdk") as sdk, \
-                 patch.object(mcp, "FastMCP", return_value=server), patch.object(server, "run"):
+                 patch.object(mcp, "FastMCP", return_value=server), patch.object(mcp, "run_stdio"):
                 mcp.serve("cli", str(self.repo))
                 with self.assertRaisesRegex(ToolError, "disabled for this repository"):
                     await server.call_tool("retain", {"content": "Fixture fact"})
