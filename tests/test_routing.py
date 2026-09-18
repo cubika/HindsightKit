@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hindsightkit import cli
+from hindsightkit import runtime as runtime_env
 from hindsightkit.memory import scope_for, Scope, SHARED_BANK
 from hindsightkit.routing import repository_identity, seed_aliases, resolve
 from hindsightkit.server import ClientsExtension
@@ -18,7 +18,7 @@ class RoutingTests(unittest.TestCase):
     def test_pending_session_does_not_seed_a_bank_that_was_never_resolved(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            cli.run(['git', 'init', root], capture=True)
+            runtime_env.run(['git', 'init', root], capture=True)
             sessions = root / 'sessions'
             sessions.mkdir()
             (sessions / 'pending.json').write_text(json.dumps({'_repository': str(root),
@@ -30,12 +30,12 @@ class RoutingTests(unittest.TestCase):
     def test_nondefault_origin_ports_remain_separate(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            cli.run(['git', 'init', root], capture=True)
+            runtime_env.run(['git', 'init', root], capture=True)
             identities = []
             for origin in ['https://git.example:3000/team/repo', 'https://git.example:4000/team/repo',
                            'https://git.example:443/team/repo', 'git@git.example:team/repo.git',
                            'https://dev.azure.com/org/project/_git/repo', 'git@ssh.dev.azure.com:v3/org/project/repo']:
-                cli.run(['git', '-C', root, 'config', 'remote.origin.url', origin], capture=True)
+                runtime_env.run(['git', '-C', root, 'config', 'remote.origin.url', origin], capture=True)
                 identities.append(repository_identity(scope_for(root)))
             self.assertNotEqual(identities[0], identities[1])
             self.assertEqual(identities[2], identities[3])
@@ -44,7 +44,7 @@ class RoutingTests(unittest.TestCase):
     def test_new_session_records_do_not_hide_legacy_alias_and_unpublished_bank_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            cli.run(['git', 'init', root], capture=True)
+            runtime_env.run(['git', 'init', root], capture=True)
             selected = scope_for(root)
             sessions = root / 'sessions'
             sessions.mkdir()
@@ -60,8 +60,8 @@ class RoutingTests(unittest.TestCase):
             a, b = root / 'original', root / 'another-machine'
             for path, origin in [(a, 'https://git.example/team/repo.git'), (b, 'git@git.example:team/repo.git')]:
                 path.mkdir()
-                cli.run(['git', 'init', path], capture=True)
-                cli.run(['git', '-C', path, 'remote', 'add', 'origin', origin], capture=True)
+                runtime_env.run(['git', 'init', path], capture=True)
+                runtime_env.run(['git', '-C', path, 'remote', 'add', 'origin', origin], capture=True)
             first, second = scope_for(a), scope_for(b)
             self.assertNotEqual(first.bank, second.bank)
             self.assertEqual(repository_identity(first), repository_identity(second))
@@ -88,7 +88,7 @@ class RoutingTests(unittest.TestCase):
     def test_no_origin_repositories_stay_device_scoped_and_nonrepo_uses_shared(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            cli.run(['git', 'init', root], capture=True)
+            runtime_env.run(['git', 'init', root], capture=True)
             requests = []
             async def request(config, method, path, body):
                 requests.append(body)
@@ -104,8 +104,8 @@ class RoutingTests(unittest.TestCase):
     def test_alias_seeding_never_replaces_an_existing_mapping(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            cli.run(['git', 'init', root], capture=True)
-            cli.run(['git', '-C', root, 'remote', 'add', 'origin', 'https://git.example/repo'], capture=True)
+            runtime_env.run(['git', 'init', root], capture=True)
+            runtime_env.run(['git', '-C', root, 'remote', 'add', 'origin', 'https://git.example/repo'], capture=True)
             selected = scope_for(root)
             path = root / 'repositories.json'
             path.write_text(json.dumps({repository_identity(selected): 'existing-bank'}))

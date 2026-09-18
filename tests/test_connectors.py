@@ -176,16 +176,17 @@ class ConnectorHttpTests(unittest.IsolatedAsyncioTestCase):
 
 class ConnectorLifecycleTests(unittest.TestCase):
     def test_open_reuses_healthy_api_without_triggering_database_setup(self):
-        from hindsightkit import cli
+        from hindsightkit import cli, services, runtime as runtime_env
         from types import SimpleNamespace
-        with patch.object(cli, 'prepare_env'), patch.object(cli, 'require_local'), \
-             patch.object(cli, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
-             patch.object(cli.connection, 'server_load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
-             patch.object(cli.connection, 'request', new_callable=AsyncMock), \
-             patch.object(cli, 'start') as start, \
+        with patch.object(runtime_env, 'prepare_env'), patch.object(services, 'require_local'), \
+             patch.object(services, 'profile_config', return_value=({}, SimpleNamespace(port=9077,ui_port=19077))), \
+             patch.object(connection, 'server_load', return_value={'apiUrl':'http://127.0.0.1:9077'}), \
+             patch.object(connection, 'request', new_callable=AsyncMock) as request, \
+             patch.object(services, 'start') as start, \
              patch.object(connectors, 'ensure_running', return_value='http://127.0.0.1:19078'), \
-             patch.object(cli.webbrowser, 'open') as browser:
+             patch('webbrowser.open') as browser:
             self.assertEqual(cli.main(['connectors']), 0)
+        request.assert_awaited_once_with({'apiUrl': 'http://127.0.0.1:9077'}, 'GET', '/health')
         start.assert_not_called()
         browser.assert_called_once_with('http://127.0.0.1:19078')
 

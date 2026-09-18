@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hindsightkit import cli, installer
+from hindsightkit import cli, installer, runtime as runtime_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,14 +20,14 @@ class InstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             record = root / 'installation.json'
-            with patch.object(cli, 'home', return_value=root), patch.object(cli, 'prepare_env'), \
-                 patch.object(cli, 'validate_setup_options'), patch.object(cli, 'require_client_prerequisites'), \
+            with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
                  patch('hindsightkit.node_bundle.release_bundle', return_value=None), \
-                 patch.object(cli, 'setup_client_only'), patch.object(cli, 'setup_client'), \
-                 patch.object(cli, 'setup_server', return_value={'apiUrl': 'http://localhost:9077'}), \
-                 patch.object(cli, 'can_connect_local_client', return_value=True), \
+                 patch.object(installer, 'setup_client_only'), patch.object(installer, 'setup_client'), \
+                 patch.object(installer, 'setup_server', return_value={'apiUrl': 'http://localhost:9077'}), \
+                 patch.object(installer, 'can_connect_local_client', return_value=True), \
                  patch('hindsightkit.command.install', return_value=root / 'bin/hk.cmd') as command, \
-                 patch.object(cli, 'run') as run, \
+                 patch.object(runtime_env, 'run') as run, \
                  contextlib.redirect_stdout(io.StringIO()):
                 for arguments, mode in [(['--client-only'], 'client-only'),
                                         (['--server', 'https://example.invalid'], 'client-only'),
@@ -57,10 +57,10 @@ class InstallerTests(unittest.TestCase):
             root = Path(directory)
             record = root / 'installation.json'
             original = b'{"schema": 1, "mode": "client-only"}\n'
-            with patch.object(cli, 'home', return_value=root), patch.object(cli, 'prepare_env'), \
-                 patch.object(cli, 'validate_setup_options'), patch.object(cli, 'require_client_prerequisites'), \
+            with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
                  patch('hindsightkit.node_bundle.release_bundle', return_value=None), \
-                 patch.object(cli, 'setup_client_only'), \
+                 patch.object(installer, 'setup_client_only'), \
                  patch('hindsightkit.command.install', side_effect=RuntimeError('fixture launcher failure')), \
                  contextlib.redirect_stderr(io.StringIO()):
                 for existing in [False, True]:
@@ -76,9 +76,9 @@ class InstallerTests(unittest.TestCase):
             record = root / 'installation.json'
             original = b'{"schema": 1, "mode": "client-only"}\n'
             record.write_bytes(original)
-            with patch.object(cli, 'home', return_value=root), patch.object(cli, 'prepare_env'), \
-                 patch.object(cli, 'setup', return_value=root / 'bin/hindsightkit.exe'), \
-                 patch.object(cli, 'run', side_effect=subprocess.CalledProcessError(1, 'launcher --help')), \
+            with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(installer, 'setup', return_value=root / 'bin/hindsightkit.exe'), \
+                 patch.object(runtime_env, 'run', side_effect=subprocess.CalledProcessError(1, 'launcher --help')), \
                  contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(installer.main(['--server-only']), 1)
             self.assertEqual(record.read_bytes(), original)
@@ -129,19 +129,39 @@ class InstallerTests(unittest.TestCase):
             case('bootstrap-full', 'full', mode='client-only', inherited='full')
             case('invalid-record', 'error', invalid=True)
             case('repair-role', 'client-only', invalid=True, options={'ClientOnly': True})
+            case('conflicting-roles', 'error', options={'ClientOnly': True, 'ServerOnly': True})
+            case('conflicting-server', 'error', options={'Server': 'https://example.invalid', 'ServerOnly': True})
+            case('client-port', 'error', mode='client-only', options={'Port': 9077})
+            case('client-model', 'error', mode='client-only', options={'Model': 'model'})
+            case('unconnected-key', 'error', mode='client-only', options={'ApiKeyEnv': 'TEST_KEY'})
+            case('invalid-effort', 'error', options={'ReasoningEffort': 'invalid'})
+            for port in (0, 1024, 55534):
+                case(f'valid-port-{port}', 'full', options={'Port': port})
+            for port in (-1, 1, 1023, 55535, 65535):
+                case(f'invalid-port-{port}', 'error', options={'Port': port})
+            for server in ('ftp://example.invalid', 'https://example.invalid/path',
+                           'https://user@example.invalid', 'https://example.invalid?key=secret'):
+                case(f'invalid-server-{len(cases)}', 'error', options={'Server': server})
             case_file = root / 'cases.json'
             case_file.write_text(json.dumps(cases))
+            published = root / 'install.ps1'
+            shared_options = ROOT / 'src/hindsightkit/install_options.ps1'
+            published.write_text((ROOT / 'distribution/install.ps1').read_text(encoding='utf-8')
+                .replace('@@INSTALL_OPTIONS@@', shared_options.read_text(encoding='utf-8'))
+                .replace('@@REQUIRES_AUTH@@', '$false'), encoding='utf-8')
             harness = root / 'resolve.ps1'
             harness.write_text('''$ErrorActionPreference = 'Stop'
 $cases = Get-Content -LiteralPath $env:TEST_CASES -Raw | ConvertFrom-Json
 $results = @()
-foreach ($source in @($env:TEST_SOURCE_SETUP, $env:TEST_PUBLISHED_SETUP)) {
+foreach ($source in @($env:TEST_SOURCE_OPTIONS, $env:TEST_PUBLISHED_SETUP)) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$errors)
-    $function = $ast.Find({ param($node)
-        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Resolve-InstallMode'
+    if ($errors) { throw $errors[0] }
+    $functions = $ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Resolve-InstallMode', 'Assert-InstallOptions')
     }, $true)
-    Invoke-Expression $function.Extent.Text
+    foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
     foreach ($case in $cases) {
         $env:HINDSIGHTKIT_HOME = $case.state
         $env:USERPROFILE = $case.profile
@@ -149,7 +169,10 @@ foreach ($source in @($env:TEST_SOURCE_SETUP, $env:TEST_PUBLISHED_SETUP)) {
         $env:HINDSIGHTKIT_INSTALL_MODE = $case.inherited
         $options = @{}
         foreach ($property in $case.options.PSObject.Properties) { $options[$property.Name] = $property.Value }
-        try { $mode = Resolve-InstallMode $options } catch { $mode = 'error' }
+        try {
+            $mode = Resolve-InstallMode $options
+            Assert-InstallOptions $options $mode
+        } catch { $mode = 'error' }
         $results += @{source=$source; name=$case.name; mode=$mode; expected=$case.expected}
     }
 }
@@ -158,8 +181,8 @@ ConvertTo-Json -InputObject $results -Compress
             for shell in shells:
                 with self.subTest(shell=shell):
                     environment = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
-                    environment.update(TEST_CASES=str(case_file), TEST_SOURCE_SETUP=str(ROOT / 'setup.ps1'),
-                                       TEST_PUBLISHED_SETUP=str(ROOT / 'distribution/install.ps1'))
+                    environment.update(TEST_CASES=str(case_file), TEST_SOURCE_OPTIONS=str(shared_options),
+                                       TEST_PUBLISHED_SETUP=str(published))
                     result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(harness)],
                                             env=environment, text=True, capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -199,6 +222,9 @@ class Fixture { static void Main(string[] args) {
                         for path in [app, state, binary]:
                             path.mkdir(parents=True)
                         shutil.copyfile(ROOT / 'setup.ps1', app / 'setup.ps1')
+                        (app / 'src/hindsightkit').mkdir(parents=True)
+                        shutil.copyfile(ROOT / 'src/hindsightkit/install_options.ps1',
+                                        app / 'src/hindsightkit/install_options.ps1')
                         if name == 'legacy-client':
                             stamp = state / 'client-runtime/.installed-lock'
                             stamp.parent.mkdir()

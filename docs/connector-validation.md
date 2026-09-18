@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: command and installation cleanup
+
+The repository suite passed 492 tests in 492.9 seconds after separating the CLI, installer, runtime helpers, and service operations. A final 63-test regression passed after startup rollback and server relay recovery were tightened. Fixtures covered failed connection rollback, remote-client refresh during full upgrades, discovery validation, shared PowerShell rules, and sessions switching A to B and back without uploading old transcripts. MCP tests included optional mail tools; no mailbox or model was accessed. One early test lacked an integration mock and changed managed editor paths; those paths were restored to the installed launcher and checked for temporary-path remnants, and the fixture was corrected.
+
 ## September 18, 2026: relay account selection
 
 The focused relay, remote command, lifecycle, and native launcher run passed 71 tests in 24.1 seconds. Checks covered Microsoft and GitHub selection, cached login reuse, failed login preservation, worker restart after login, and repeated attempts to access an unavailable saved tunnel. Lifecycle fixtures included connector shutdown and memory pause/resume; no mailbox or model was accessed. An initial test fixture intercepted Windows directory-permission setup; isolating that setup corrected the fixture, and the focused run passed. Both command help pages listed the account choices. Real account login and cross-machine connectivity were not exercised.

@@ -90,7 +90,7 @@ After reboot, run `hindsightkit start` on the memory server. Client MCP and hook
 
 On a server, `unshare` rotates the server key and restricts the API to loopback. Previously issued codes no longer authenticate, including after a later `share`. The local client keeps access with the new key. A remote client on the same computer is disconnected too. The cloud tunnel remains in its owner's account but its local forwarding is disabled.
 
-On a client, `unshare` forgets the connection key and disables relay recovery. `start` does not reconnect it; use `connect` to choose a server again. After a connection change, restart the Hindsight MCP server. Sessions spanning a stop or disconnect are not saved retroactively; start a new Copilot CLI session for automatic capture.
+On a client, `unshare` forgets the connection key and disables relay recovery. `start` does not reconnect it; use `connect` to choose a server again. After changing servers, restart the Hindsight MCP server. Reconnecting to the same destination preserves its running MCP sessions. Sessions spanning a stop, disconnect, or server change are not saved retroactively; start a new Copilot CLI session for automatic capture.
 
 To switch a coding computer back to its own installed memory server:
 

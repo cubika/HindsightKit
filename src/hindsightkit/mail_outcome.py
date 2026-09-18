@@ -377,7 +377,7 @@ class OutcomeBuilder:
             return {'action': 'unchanged', 'content': prior, 'metadata': previous_meta, 'reason': 'No substantive thread content.'}
         profile = self.profile
         if profile is None:
-            from .cli import profile_config
+            from .services import profile_config
             profile, _ = profile_config()
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise OutcomeError('outcome_copilot_profile_required')

@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from hindsightkit import cli, node_bundle
+from hindsightkit import installer, runtime as runtime_env, node_bundle
 
 
 class NodeBundleTests(unittest.TestCase):
@@ -51,17 +51,17 @@ class NodeBundleTests(unittest.TestCase):
             state = root / 'state'
             state.mkdir()
             (state / 'settings.json').write_text('saved settings')
-            with patch.object(cli, 'home', return_value=state), patch.object(cli, 'PACKAGE', package), \
-                 patch.object(cli, 'node', return_value='node'), \
+            with patch.object(runtime_env, 'home', return_value=state), patch.object(runtime_env, 'PACKAGE', package), \
+                 patch.object(runtime_env, 'node', return_value='node'), \
                  patch.object(node_bundle, 'release_bundle', return_value=bundle), \
                  patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('npm network')), \
                  patch.object(node_bundle, 'verify_installed') as verify, contextlib.redirect_stdout(io.StringIO()):
-                cli.install_node_packages(client=True)
-                cli.install_node_packages(client=True)
+                installer.install_node_packages(client=True)
+                installer.install_node_packages(client=True)
                 directory = state / 'client-runtime'
                 self.assertEqual((directory / 'node_modules/required/LICENSE').read_text(), 'Preserved upstream license')
                 verify.side_effect = [ValueError('damaged installation'), None]
-                cli.install_node_packages(client=True)
+                installer.install_node_packages(client=True)
                 self.assertTrue((directory / '.installed-lock').is_file())
                 self.assertEqual((state / 'settings.json').read_text(), 'saved settings')
                 self.assertFalse(list(directory.glob('.node-install-*')))
@@ -75,11 +75,11 @@ class NodeBundleTests(unittest.TestCase):
             marker = directory / 'node_modules/preserve.txt'
             marker.write_text('previous runtime')
             (bundle / 'client.zip').write_bytes(b'corrupted')
-            with patch.object(cli, 'home', return_value=root / 'state'), patch.object(cli, 'PACKAGE', package), \
-                 patch.object(cli, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
+            with patch.object(runtime_env, 'home', return_value=root / 'state'), patch.object(runtime_env, 'PACKAGE', package), \
+                 patch.object(runtime_env, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
                  patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('no fallback')), \
                  contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, 'SHA256'):
-                cli.install_node_packages(client=True)
+                installer.install_node_packages(client=True)
             self.assertEqual(marker.read_text(), 'previous runtime')
             self.assertFalse((directory / '.installed-lock').exists())
 
@@ -239,20 +239,20 @@ class NodeBundleTests(unittest.TestCase):
                 return native_rmtree(path, *args, **kwargs)
 
             output = io.StringIO()
-            with patch.object(cli, 'home', return_value=state), patch.object(cli, 'PACKAGE', package), \
-                 patch.object(cli, 'node', return_value='node'), \
+            with patch.object(runtime_env, 'home', return_value=state), patch.object(runtime_env, 'PACKAGE', package), \
+                 patch.object(runtime_env, 'node', return_value='node'), \
                  patch.object(node_bundle, 'release_bundle', return_value=bundle), \
                  patch.object(node_bundle, 'verify_installed'), \
                  patch.object(node_bundle.shutil, 'rmtree', side_effect=keep_locked_previous), \
                  patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('npm network')), \
                  contextlib.redirect_stdout(output):
-                cli.install_node_role('client')
+                installer.install_node_role('client')
                 node_bundle.verify_bundle_files(bundle, package, 'client', directory)
                 expected = hashlib.sha256((package / 'client/package-lock.json').read_bytes()).hexdigest()
                 self.assertEqual((directory / '.installed-lock').read_text(), expected)
                 self.assertEqual((previous / 'old').read_text(), 'locked previous runtime')
                 with patch.object(node_bundle, 'install_bundle', side_effect=AssertionError('Already installed')):
-                    cli.install_node_role('client')
+                    installer.install_node_role('client')
             self.assertEqual(cleanup_attempts, [previous])
             self.assertIn('Reusing Copilot client integration', output.getvalue())
             self.assertFalse(list(directory.glob('.node-install-*')))
@@ -273,12 +273,12 @@ class NodeBundleTests(unittest.TestCase):
                 state = root / 'state'
                 directory = state / 'client-runtime'
                 args = argparse.Namespace(server=None, client_only=True, server_only=False)
-                with patch.object(cli, 'home', return_value=state), patch.object(cli, 'PACKAGE', package), \
-                     patch.object(cli, 'node', return_value='node'), \
+                with patch.object(runtime_env, 'home', return_value=state), patch.object(runtime_env, 'PACKAGE', package), \
+                     patch.object(runtime_env, 'node', return_value='node'), \
                      patch.object(node_bundle, 'release_bundle', return_value=bundle), \
                      patch.object(node_bundle, 'verify_installed'), contextlib.redirect_stdout(io.StringIO()):
                     if operation != 'install':
-                        cli.install_node_role('client')
+                        installer.install_node_role('client')
                         if operation == 'repair':
                             target = directory / 'node_modules/required/LICENSE'
                             target.write_bytes(b'x' * target.stat().st_size)
@@ -301,10 +301,10 @@ class NodeBundleTests(unittest.TestCase):
                     with patch.object(node_bundle, '_open_bundle_file', side_effect=record_open), \
                          patch.object(hashlib, 'file_digest', side_effect=record_digest), \
                          patch.object(node_bundle, '_members', wraps=node_bundle._members) as members, \
-                         patch.object(cli, 'validate_setup_options'), patch.object(cli, 'require_client_prerequisites'), \
-                         patch.object(cli, 'setup_client_only', side_effect=lambda: cli.install_node_packages(client=True)), \
+                         patch.object(installer, 'validate_setup_options'), patch.object(installer, 'require_client_prerequisites'), \
+                         patch.object(installer, 'setup_client_only', side_effect=lambda: installer.install_node_packages(client=True)), \
                          patch('hindsightkit.command.install', return_value=state / 'bin/hindsightkit'):
-                        cli.setup(args)
+                        installer.setup(args)
                     self.assertEqual(len(opened), 1)
                     self.assertEqual(digested, opened)
                     members.assert_called_once()
@@ -425,19 +425,19 @@ class NodeBundleTests(unittest.TestCase):
                 return original_digest(stream, *arguments, **keywords)
 
             def server_setup(_args):
-                cli.install_node_packages()
+                installer.install_node_packages()
                 return {'apiUrl': 'http://localhost:9077'}
 
-            with patch.object(cli, 'home', return_value=root / 'state'), patch.object(cli, 'PACKAGE', package), \
-                 patch.object(cli, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
-                 patch.object(node_bundle, 'verify_installed'), patch.object(cli, 'validate_setup_options'), \
-                 patch.object(cli, 'require_client_prerequisites'), patch.object(cli, 'can_connect_local_client', return_value=True), \
-                 patch.object(cli, 'setup_server', side_effect=server_setup), \
-                 patch.object(cli, 'setup_client', side_effect=lambda *a, **k: cli.install_node_packages(client=True)), \
+            with patch.object(runtime_env, 'home', return_value=root / 'state'), patch.object(runtime_env, 'PACKAGE', package), \
+                 patch.object(runtime_env, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
+                 patch.object(node_bundle, 'verify_installed'), patch.object(installer, 'validate_setup_options'), \
+                 patch.object(installer, 'require_client_prerequisites'), patch.object(installer, 'can_connect_local_client', return_value=True), \
+                 patch.object(installer, 'setup_server', side_effect=server_setup), \
+                 patch.object(installer, 'setup_client', side_effect=lambda *a, **k: installer.install_node_packages(client=True)), \
                  patch('hindsightkit.command.install', return_value=root / 'bin/hindsightkit'), \
                  patch.object(node_bundle, '_open_bundle_file', side_effect=record_open) as opener, \
                  patch.object(hashlib, 'file_digest', side_effect=record_digest), contextlib.redirect_stdout(io.StringIO()):
-                cli.setup(args)
+                installer.setup(args)
             self.assertEqual(set(opened), {'client.zip', 'server.zip'})
             self.assertCountEqual(digested, opened.values())
             self.assertEqual(sum(call.args[0].suffix == '.zip' for call in opener.call_args_list), 2)

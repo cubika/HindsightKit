@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hindsightkit import cli
+from hindsightkit import runtime as runtime_env
 from hindsightkit.hooks import session_config
 from hindsightkit.memory import Memory, Scope, SHARED_BANK, scope_for
 from hindsightkit.mcp import scope_from_roots
@@ -57,10 +57,10 @@ class MemoryTests(unittest.TestCase):
             a, b, worktree = root / 'a/repo', root / 'b/repo', root / 'wt'
             for path in [a, b]:
                 path.mkdir(parents=True)
-                cli.run(['git', 'init', path], capture=True)
-                cli.run(['git', '-C', path, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                runtime_env.run(['git', 'init', path], capture=True)
+                runtime_env.run(['git', '-C', path, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                          'commit', '--allow-empty', '-m', 'fixture'], capture=True)
-            cli.run(['git', '-C', a, 'worktree', 'add', '-b', 'test', worktree], capture=True)
+            runtime_env.run(['git', '-C', a, 'worktree', 'add', '-b', 'test', worktree], capture=True)
             self.assertNotEqual(scope_for(a), scope_for(b))
             self.assertEqual(scope_for(a), scope_for(worktree))
             (a / 'sub').mkdir()
@@ -71,7 +71,7 @@ class MemoryTests(unittest.TestCase):
             root = Path(temp)
             a, b = root / 'a', root / 'b'
             a.mkdir(); b.mkdir()
-            cli.run(['git', 'init', a], capture=True)
+            runtime_env.run(['git', 'init', a], capture=True)
             with patch('hindsightkit.hooks.home', return_value=root):
                 first = session_config({'sessionId': 'session', 'cwd': str(a)}, {'apiUrl': 'local'})
                 second = session_config({'sessionId': 'session', 'cwd': str(b)}, {'apiUrl': 'local'})
@@ -86,7 +86,7 @@ class MemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             a, b = Path(temp) / 'a', Path(temp) / 'b'
             a.mkdir(); b.mkdir()
-            for path in [a, b]: cli.run(['git', 'init', path], capture=True)
+            for path in [a, b]: runtime_env.run(['git', 'init', path], capture=True)
             with self.assertRaisesRegex(ValueError, 'one repository'):
                 scope_from_roots([SimpleNamespace(uri=a.as_uri()), SimpleNamespace(uri=b.as_uri())])
             self.assertEqual(scope_from_roots([]), Scope(SHARED_BANK))

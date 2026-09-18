@@ -45,13 +45,11 @@ class ReleasePackageTests(unittest.TestCase):
               '[[package]]\nname = "hindsightkit"\nversion = "0.1.1"\nsource = { editable = "." }\n'
               'dependencies = []\n[package.optional-dependencies]\nserver = []\n')
         write(source, "src/hindsightkit/__init__.py")
+        write(source, "src/hindsightkit/install_options.ps1",
+              (ROOT / "src/hindsightkit/install_options.ps1").read_text(encoding="utf-8"))
         write(source, "docs/install.md")
-        write(source, "distribution/install.ps1", "\n".join([
-            "$version = '@@VERSION@@'", "$url = '@@RELEASE_URL@@'",
-            "$name = '@@PACKAGE_NAME@@'", "$sha = '@@PACKAGE_SHA256@@'",
-            "$clientName = '@@CLIENT_PACKAGE_NAME@@'", "$clientSha = '@@CLIENT_PACKAGE_SHA256@@'",
-            "$repository = '@@REPOSITORY@@'", "$requiresAuth = @@REQUIRES_AUTH@@",
-        ]))
+        write(source, "distribution/install.ps1",
+              (ROOT / "distribution/install.ps1").read_text(encoding="utf-8"))
         for name in package.REQUIRED_POSTGRES:
             write(postgres, name)
         for extension in package.EXTENSIONS:
@@ -199,6 +197,7 @@ class ReleasePackageTests(unittest.TestCase):
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
                     "app/src/hindsightkit/__init__.py",
+                    "app/src/hindsightkit/install_options.ps1",
                     *("app/src/hindsightkit/" + prefix + name for prefix in ("", "client/")
                       for name in ("package.json", "package-lock.json")),
                     "app/docs/install.md", "app/release.json", "app/python/python-bundle.json",
@@ -254,7 +253,10 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(release["postgres"]["url"], base + "/" + package.POSTGRES_NAME)
             self.assertEqual(release["postgres"]["sha256"], package.inspect_file(output / package.POSTGRES_NAME))
             installer = (output / "install.ps1").read_text()
-            self.assertNotIn("@@", installer)
+            self.assertIsNone(re.search(r"@@[A-Z0-9_]+@@", installer))
+            shared_options = (source / "src/hindsightkit/install_options.ps1").read_text().rstrip()
+            self.assertIn(shared_options, installer)
+            self.assertEqual(installer.count('function Resolve-InstallMode('), 1)
             self.assertIn("$requiresAuth = $false", installer)
             self.assertIn(package.inspect_file(output / package.APP_NAME), installer)
             self.assertIn(package.inspect_file(output / package.CLIENT_APP_NAME), installer)
@@ -839,6 +841,15 @@ class ReleasePackageTests(unittest.TestCase):
             args = self.fixture(Path(directory))
             write(args["source_root"], "distribution/install.ps1", "@@VERSION@@\n@@SURPRISE@@")
             with self.assertRaisesRegex(ValueError, "template"):
+                package.package_release(**args)
+            self.assertFalse(args["output"].exists())
+
+    def test_shared_installation_options_are_required_before_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.fixture(Path(directory))
+            (args["source_root"] / "src/hindsightkit/install_options.ps1").unlink()
+            self.python_bundle(args["python_directory"], args["source_root"])
+            with self.assertRaisesRegex(ValueError, "Shared installation options"):
                 package.package_release(**args)
             self.assertFalse(args["output"].exists())
 

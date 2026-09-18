@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 import uuid
 
-from hindsightkit.cli import profile_config
+from hindsightkit.services import profile_config
 from hindsightkit.connection import server_load, sdk
 from hindsightkit.mail_outcome import OutcomeBuilder, prepare_messages
 from hindsightkit.mail_sync import MailSync

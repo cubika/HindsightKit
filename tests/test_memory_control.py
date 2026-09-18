@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastmcp.exceptions import ToolError
 
-from hindsightkit import cli, hooks, mcp, memory_control as control
+from hindsightkit import cli, runtime as runtime_env, hooks, mcp, memory_control as control
 from hindsightkit.memory import Scope
 
 
@@ -24,7 +24,7 @@ class RepositoryMemoryTests(unittest.TestCase):
         self.other = self.root / "other"
         for directory in (self.repo, self.other):
             directory.mkdir()
-            cli.run(["git", "init", directory], capture=True)
+            runtime_env.run(["git", "init", directory], capture=True)
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {"HINDSIGHTKIT_HOME": str(self.root / "state"),
                                 "HINDSIGHT_DISABLE_HOOKS": "", "COPILOT_AGENT_SESSION_ID": ""}).start()
@@ -48,13 +48,13 @@ class RepositoryMemoryTests(unittest.TestCase):
         return config
 
     def test_cli_switch_is_local_shared_with_worktrees_and_ignores_git_environment(self):
-        cli.run(["git", "-C", self.repo, "-c", "user.name=Fixture", "-c",
+        runtime_env.run(["git", "-C", self.repo, "-c", "user.name=Fixture", "-c",
                  "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], capture=True)
         worktree = self.root / "worktree"
-        cli.run(["git", "-C", self.repo, "worktree", "add", "-b", "fixture", worktree], capture=True)
+        runtime_env.run(["git", "-C", self.repo, "worktree", "add", "-b", "fixture", worktree], capture=True)
         subdirectory = worktree / "sub"
         subdirectory.mkdir()
-        with patch("hindsightkit.cli.prepare_env"), patch("hindsightkit.memory_control.Path.cwd", return_value=subdirectory), \
+        with patch("hindsightkit.runtime.prepare_env"), patch("hindsightkit.memory_control.Path.cwd", return_value=subdirectory), \
              patch.dict(os.environ, {"GIT_DIR": str(self.other / ".git"), "GIT_CONFIG_COUNT": "1",
                                      "GIT_CONFIG_KEY_0": control.ENABLED, "GIT_CONFIG_VALUE_0": "true"}), \
              contextlib.redirect_stdout(io.StringIO()) as output:
@@ -68,7 +68,7 @@ class RepositoryMemoryTests(unittest.TestCase):
         epoch = control.state(str(self.repo)).capture_epoch
         self.command("on")
         self.assertEqual(control.state(str(self.repo)).capture_epoch, epoch)
-        self.assertEqual(cli.run(["git", "-C", self.repo, "status", "--porcelain"], capture=True), "")
+        self.assertEqual(runtime_env.run(["git", "-C", self.repo, "status", "--porcelain"], capture=True), "")
 
     def test_outside_git_and_invalid_config_fail_without_changing_other_scopes(self):
         for action in ("on", "off", "status"):

@@ -148,7 +148,7 @@ class MailPrefilter(OutcomeBuilder):
     async def _classify(self, prompt, source_ids):
         profile = self.profile
         if profile is None:
-            from .cli import profile_config
+            from .services import profile_config
             profile, _ = profile_config()
         if profile.get('HINDSIGHT_API_LLM_PROVIDER', 'github-copilot') != 'github-copilot':
             raise ValueError('prefilter_copilot_profile_required')

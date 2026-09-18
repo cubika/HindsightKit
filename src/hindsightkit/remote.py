@@ -5,15 +5,16 @@ import base64
 import getpass
 import hashlib
 import json
-from pathlib import Path
 import re
 import socket
 import os
+import secrets
 from urllib.parse import urlsplit
 
 import aiohttp
 
-from . import connection, lifecycle
+from . import connection, lifecycle, installer, services
+from . import runtime as runtime_env
 
 
 PREFIX = 'hk1.'
@@ -56,9 +57,8 @@ def options(**values):
 
 
 def client_root(transport):
-    from .cli import home
     identity = hashlib.sha256(json.dumps(transport, sort_keys=True).encode()).hexdigest()[:16]
-    return home() / 'remote/clients' / identity
+    return runtime_env.home() / 'remote/clients' / identity
 
 
 def prepare_client(config, *, interactive=False):
@@ -72,25 +72,27 @@ def prepare_client(config, *, interactive=False):
         relay.ensure_running(client_root(transport), transport, interactive=interactive)
 
 
-def resume():
-    from .cli import home
+def resume_host():
     from . import relay
-    current = lifecycle.state()
-    if current.get('stopped'):
-        return
-    host = home() / 'remote/host'
+    host = runtime_env.home() / 'remote/host'
     spec = relay.load_spec(host)
     if spec:
         relay.ensure_running(host, spec)
+
+
+def resume():
+    current = lifecycle.state()
+    if current.get('stopped'):
+        return
+    resume_host()
     path = connection.config_path()
     if path.is_file() and not current.get('disconnected'):
         prepare_client(json.loads(path.read_text(encoding='utf-8')))
 
 
 def stop():
-    from .cli import home
     from . import relay
-    root = home() / 'remote'
+    root = runtime_env.home() / 'remote'
     errors = []
     directories = [root / 'host'] + [item for item in (root / 'clients').glob('*') if item.is_dir()]
     for directory in directories:
@@ -103,9 +105,8 @@ def stop():
 
 
 def status():
-    from .cli import home
     from . import relay
-    host_root = home() / 'remote/host'
+    host_root = runtime_env.home() / 'remote/host'
     host = relay.status(host_root) if (host_root / 'spec.json').is_file() else None
     if host:
         print('Remote sharing: ' + str(host.get('state', 'stopped')))
@@ -119,9 +120,8 @@ def status():
 
 
 def unshare():
-    from . import cli
     from .postgres import private_directory, restrict_access
-    root = cli.home() / 'remote/host'
+    root = runtime_env.home() / 'remote/host'
     # Remove saved recovery before stopping processes.
     (root / 'spec.json').unlink(missing_ok=True)
     path = connection.config_path()
@@ -142,13 +142,13 @@ def unshare():
     if local:
         from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
         from .memory import SHARED_BANK
-        running = DaemonEmbedManager().is_running(cli.PROFILE)
+        running = DaemonEmbedManager().is_running(runtime_env.PROFILE)
         # Revoke old codes even if a relay process failed to stop. The official
         # API-key extension reads the replacement key on restart.
-        key = cli.secrets.token_urlsafe(32)
-        profile, paths = cli.profile_config()
-        cli.configure_sharing(key, profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=False)
-        key_path = cli.home() / 'server/connection-key.txt'
+        key = secrets.token_urlsafe(32)
+        profile, paths = services.profile_config()
+        services.configure_sharing(key, profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=False)
+        key_path = runtime_env.home() / 'server/connection-key.txt'
         private_directory(key_path.parent)
         key_path.write_text(key, encoding='utf-8')
         restrict_access(key_path)
@@ -157,7 +157,7 @@ def unshare():
             client['apiToken'] = key
             save_client(path, client)
         if running and not lifecycle.state().get('stopped'):
-            cli.start(remote_connections=False)
+            services.start_local()
         print('Sharing disabled. Previous connection codes were revoked; local memory is preserved.')
     else:
         print('Client disconnected. Run hindsightkit connect to choose a server.')
@@ -181,25 +181,26 @@ def save_client(path, config):
 
 
 def share(args):
-    from . import cli, relay
+    from . import relay
     if args.relay_provider and not args.relay:
         raise ValueError('--relay-provider requires share --relay.')
-    cli.require_local()
-    profile, _ = cli.profile_config()
-    if profile.get('HINDSIGHT_API_HOST') == '127.0.0.1':
-        from .memory import SHARED_BANK
-        cli.configure_sharing(profile['HINDSIGHT_API_TENANT_API_KEY'],
-                              profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=True)
-    cli.start(remote_connections=False)
+    services.require_local()
     config = connection.server_load()
     port = urlsplit(config['apiUrl']).port
     url = connection.validate_url(args.address or f'http://{socket.gethostname()}:{port}')
+    profile, _ = services.profile_config()
+    if profile.get('HINDSIGHT_API_HOST') == '127.0.0.1':
+        from .memory import SHARED_BANK
+        services.configure_sharing(profile['HINDSIGHT_API_TENANT_API_KEY'],
+                              profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=True)
+    services.start_local()
     invitation = {'version': 1, 'url': url, 'key': config['apiToken']}
     if args.relay:
-        root = cli.home() / 'remote/host'
+        root = runtime_env.home() / 'remote/host'
         spec = relay.create_host(root, port, provider=args.relay_provider)
         relay.ensure_running(root, spec, interactive=True)
         invitation['relay'] = {name: spec[name] for name in ('tunnel_id', 'remote_port')}
+    lifecycle.start()
     print('On the other computer, run hindsightkit connect and paste this code at its hidden prompt.')
     print('This code grants access to this memory server. Share it privately with your own computer.')
     print(encode_invitation(invitation))
@@ -209,34 +210,28 @@ def share(args):
         print('Direct connection is ready. If the other computer cannot reach it, run hindsightkit share --relay here.')
 
 
-async def discover(candidate):
-    result = await connection.request(candidate, 'GET', '/ext/hindsightkit/connection', timeout=5)
-    if result.get('protocol') != 1 or result.get('routing') != 'repository':
-        raise RuntimeError('This server is not compatible. Update its HindsightKit installation.')
-    return result
-
-
 def connect(args):
-    from . import cli, relay
+    from . import relay
     if args.relay_provider and (args.local or args.server):
         raise ValueError('--relay-provider requires a connection code; omit --local and --server.')
     if args.api_key_env and not args.server:
         raise ValueError('--api-key-env requires --server.')
     if args.local:
-        cli.require_local()
-        cli.start(remote_connections=False)
-        configure_client(connection.server_load())
-        stop_clients()
+        services.require_local()
+        with services.startup():
+            services.start_local()
+            configure_client(connection.server_load())
+            stop_clients()
         return
     if args.server:
         invitation = {'url': connection.validate_url(args.server),
-                      'key': cli.api_key(options(api_key_env=args.api_key_env))}
+                      'key': installer.api_key(options(api_key_env=args.api_key_env))}
     else:
         invitation = decode_invitation(getpass.getpass('Connection code (hidden): ').strip())
     candidate = {'apiUrl': invitation['url'], 'apiToken': invitation['key']}
     transport = None
     try:
-        asyncio.run(discover(candidate))
+        discovered = asyncio.run(connection.discover(candidate))
         print('Direct connection verified.')
     except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientConnectorSSLError):
         raise
@@ -257,14 +252,14 @@ def connect(args):
         try:
             relay.ensure_running(root, transport, interactive=True, provider=args.relay_provider)
             candidate['apiUrl'] = f'http://127.0.0.1:{transport["local_port"]}'
-            asyncio.run(discover(candidate))
+            discovered = asyncio.run(connection.discover(candidate))
         except Exception:
             if transport != saved:
                 relay.stop(root)
             raise
     # setup_client validates discovery and editor conflicts before saving the new destination.
     try:
-        configure_client(candidate, transport=transport)
+        configure_client(candidate, transport=transport, discovered=discovered)
     except Exception:
         if transport and transport != saved:
             relay.stop(client_root(transport))
@@ -272,31 +267,13 @@ def connect(args):
     stop_clients(except_transport=transport)
 
 
-def configure_client(candidate, *, transport=None):
-    """Restore the selected connection if registration fails after writing it."""
-    from . import cli
-    from .postgres import restrict_access
-    path = connection.config_path()
-    previous = path.read_bytes() if path.is_file() else None
-    try:
-        cli.setup_client(options(), local_server=candidate, transport=transport)
-        restrict_access(path)
-    except Exception:
-        if previous is None:
-            path.unlink(missing_ok=True)
-        else:
-            temporary = path.with_name(path.name + '.restore')
-            temporary.write_bytes(previous)
-            restrict_access(temporary)
-            os.replace(temporary, path)
-        raise
-    lifecycle.connected()
+def configure_client(candidate, *, transport=None, discovered=None):
+    installer.setup_client(options(), local_server=candidate, transport=transport, discovered=discovered)
 
 
 def stop_clients(*, except_transport=None):
-    from .cli import home
     from . import relay
     keep = client_root(except_transport) if except_transport else None
-    for directory in (home() / 'remote/clients').glob('*'):
+    for directory in (runtime_env.home() / 'remote/clients').glob('*'):
         if directory.is_dir() and directory != keep:
             relay.stop(directory)

@@ -13,23 +13,24 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-from hindsightkit import cli
+from hindsightkit import cli, connection, services, runtime as runtime_env
 
 
 class UiTests(unittest.TestCase):
     def test_ui_starts_services_before_opening_browser(self):
         events = []
         url = 'http://localhost:19077'
-        with patch.object(cli, 'prepare_env'), \
-             patch.object(cli, 'start', side_effect=lambda: events.append('ready') or ('api', url)), \
-             patch.object(cli.webbrowser, 'open', side_effect=lambda value: events.append(value)):
+        with patch.object(runtime_env, 'prepare_env'), patch.object(services, 'require_local') as require_local, \
+             patch.object(services, 'start', side_effect=lambda: events.append('ready') or ('api', url)), \
+             patch('webbrowser.open', side_effect=lambda value: events.append(value)):
             self.assertEqual(cli.main(['ui']), 0)
+        require_local.assert_called_once_with()
         self.assertEqual(events, ['ready', url])
 
     def test_startup_failure_does_not_open_browser(self):
-        with patch.object(cli, 'prepare_env'), \
-             patch.object(cli, 'start', side_effect=RuntimeError('startup failed')), \
-             patch.object(cli.webbrowser, 'open') as browser, \
+        with patch.object(runtime_env, 'prepare_env'), patch.object(services, 'require_local'), \
+             patch.object(services, 'start', side_effect=RuntimeError('startup failed')), \
+             patch('webbrowser.open') as browser, \
              contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(cli.main(['ui']), 1)
         browser.assert_not_called()
@@ -39,9 +40,9 @@ class UiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             paths = argparse.Namespace(ui_port=19077, ui_log=Path(temp) / 'test.ui.log')
             with patch.object(DaemonEmbedManager, 'is_ui_running', return_value=True), \
-                 patch.object(cli, 'check_ui', new_callable=AsyncMock) as check, \
-                 patch.object(cli, 'launch_ui') as launch:
-                self.assertEqual(cli.start_ui(paths), 'http://localhost:19077')
+                 patch.object(services, 'check_ui', new_callable=AsyncMock) as check, \
+                 patch.object(services, 'launch_ui') as launch:
+                self.assertEqual(services.start_ui(paths), 'http://localhost:19077')
                 check.assert_awaited_once_with('http://localhost:19077')
                 launch.assert_not_called()
             self.assertEqual(paths.ui_log.with_suffix('.port').read_text(), '19077')
@@ -57,13 +58,13 @@ class UiTests(unittest.TestCase):
             for error, expected in [(TimeoutError('dashboard unavailable'), RuntimeError),
                                     (KeyboardInterrupt(), KeyboardInterrupt)]:
                 with self.subTest(error=type(error).__name__), \
-                     patch.object(cli.connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
+                     patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
                      patch.object(Path, 'is_file', return_value=True), \
-                     patch.object(cli, 'node', return_value='node'), \
-                     patch.object(cli.subprocess, 'Popen', return_value=process), \
-                     patch.object(cli, 'wait_ui', side_effect=error):
+                     patch.object(runtime_env, 'node', return_value='node'), \
+                     patch.object(services.subprocess, 'Popen', return_value=process), \
+                     patch.object(services, 'wait_ui', side_effect=error):
                     with self.assertRaises(expected) as caught:
-                        cli.launch_ui(paths, 'http://localhost:19077')
+                        services.launch_ui(paths, 'http://localhost:19077')
                     if expected is RuntimeError:
                         self.assertIn('test.ui.log', str(caught.exception))
                 process.kill.assert_called_once_with()
@@ -74,7 +75,7 @@ class UiTests(unittest.TestCase):
         process = Mock(returncode=7)
         process.poll.return_value = 7
         with self.assertRaisesRegex(RuntimeError, 'code 7'):
-            asyncio.run(cli.wait_ui('http://localhost:1', process))
+            asyncio.run(services.wait_ui('http://localhost:1', process))
 
     def test_occupied_port_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp, socket.socket() as listener:
@@ -84,9 +85,9 @@ class UiTests(unittest.TestCase):
             paths = argparse.Namespace(port=9077, ui_port=port, ui_log=Path(temp) / 'test.ui.log')
             with patch.object(Path, 'is_file', return_value=True), \
                  patch.object(DaemonEmbedManager, 'is_ui_running', return_value=False), \
-                 patch.object(cli.subprocess, 'Popen') as spawn:
+                 patch.object(services.subprocess, 'Popen') as spawn:
                 with self.assertRaisesRegex(RuntimeError, f'port {port} is already in use'):
-                    cli.start_ui(paths)
+                    services.start_ui(paths)
             spawn.assert_not_called()
             self.assertFalse(paths.ui_log.with_suffix('.port').exists())
             with socket.create_connection(('127.0.0.1', port), timeout=2):
@@ -121,13 +122,13 @@ HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()
             launcher = root / 'launch.py'
             launcher.write_text('''import argparse, sys
 from pathlib import Path
-from hindsightkit import cli
+from hindsightkit import connection, services, runtime as runtime_env
 root, port = Path(sys.argv[1]), int(sys.argv[2])
-cli.home = lambda: root
-cli.connection.server_load = lambda: {'apiUrl': 'http://127.0.0.1:9077'}
-cli.node = lambda: sys._base_executable
+runtime_env.home = lambda: root
+connection.server_load = lambda: {'apiUrl': 'http://127.0.0.1:9077'}
+runtime_env.node = lambda: sys._base_executable
 paths = argparse.Namespace(port=9077, ui_port=port, ui_log=root / 'ui.log')
-cli.launch_ui(paths, f'http://localhost:{port}')
+services.launch_ui(paths, f'http://localhost:{port}')
 ''', encoding='utf-8')
             env = os.environ.copy()
             env['PYTHONPATH'] = str(Path(cli.__file__).resolve().parents[1])
@@ -145,7 +146,7 @@ cli.launch_ui(paths, f'http://localhost:{port}')
                 self.assertEqual(process['hostname'], 'localhost')
                 self.assertIn('--max-old-space-size=512', process['node_options'])
                 self.assertIn('--dns-result-order=ipv4first', process['node_options'])
-                asyncio.run(cli.check_ui(f'http://localhost:{port}'))
+                asyncio.run(services.check_ui(f'http://localhost:{port}'))
                 self.assertIn('UI fixture started', (root / 'ui.log').read_text())
             finally:
                 if info.exists():

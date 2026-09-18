@@ -128,7 +128,7 @@ def serve(context: str, directory: str | None = None):
         return await call(ctx, 'reflect', query=query, max_tokens=max_tokens)
 
     from .connector_registry import register_tools
-    from .cli import home
+    from .runtime import home
     register_tools(server, config, home())
 
     server.run(transport='stdio', show_banner=False)

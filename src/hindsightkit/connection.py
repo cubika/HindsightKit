@@ -15,7 +15,7 @@ def config_path() -> Path:
 
 
 def device_id(previous=None):
-    from .cli import home
+    from .runtime import home
     from filelock import FileLock
     path = home() / 'device-id'
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ def load() -> dict:
 
 def server_load() -> dict:
     """Server processes never inherit a coding client's remote destination or key."""
-    from .cli import profile_config
+    from .services import profile_config
     profile, paths = profile_config()
     return {'apiUrl': f'http://127.0.0.1:{paths.port}',
             'apiToken': profile.get('HINDSIGHT_API_TENANT_API_KEY'), 'hindsightkit': {'mode': 'server'}}
@@ -90,6 +90,20 @@ async def request(config, method, path, *, body=None, timeout=10):
             if response.status >= 300:
                 raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
             return await response.json()
+
+
+async def discover(config):
+    result = await request(config, 'GET', '/ext/hindsightkit/connection', timeout=5)
+    if not isinstance(result, dict) or result.get('protocol') != 1 or result.get('routing') != 'repository':
+        raise RuntimeError('This server is not compatible. Update its HindsightKit installation.')
+    validate_bank(result.get('sharedBank', ''))
+    return result
+
+
+def identity(config):
+    return (config.get('apiUrl', '').rstrip('/'), fixed_bank(config),
+            config.get('hindsightkit', {}).get('routing'),
+            config.get('hindsightkit', {}).get('transport'))
 
 
 async def register(config):

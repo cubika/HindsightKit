@@ -15,17 +15,17 @@ from hindsight_client import Hindsight
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
-from hindsightkit import cli, hooks, connection
+from hindsightkit import services, runtime as runtime_env, hooks, connection
 from hindsightkit.memory import SHARED_BANK, scope_for
 
 
 async def main():
-    cli.prepare_env()
-    _, paths = cli.profile_config()
+    runtime_env.prepare_env()
+    _, paths = services.profile_config()
     url = f'http://127.0.0.1:{paths.port}'
     key = connection.load().get('apiToken')
     client = Hindsight(base_url=url, api_key=key)
-    runtime = cli.runtime()
+    runtime = runtime_env.runtime()
     suffix = uuid.uuid4().hex[:10]
     marker_a, marker_b, marker_shared = [prefix + suffix for prefix in ['A-', 'B-', 'SHARED-']]
     report = {}
@@ -34,7 +34,7 @@ async def main():
         base = Path(temp)
         a, b, outside = base / 'a/repo', base / 'b/repo', base / 'ordinary folder'
         for path in [a, b, outside]: path.mkdir(parents=True)
-        for path in [a, b]: cli.run(['git', 'init', path], capture=True)
+        for path in [a, b]: runtime_env.run(['git', 'init', path], capture=True)
         bank_a, bank_b = scope_for(a).bank, scope_for(b).bank
         config = base / 'coding-agent.json'
         config.write_text(json.dumps({'apiUrl': url, 'apiToken':key, 'serverMode':'self-hosted','optInOnly':False}))

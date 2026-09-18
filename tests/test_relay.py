@@ -192,7 +192,7 @@ class RelayConfigurationTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows signed CLI installation')
     def test_background_missing_cli_never_downloads(self):
         with tempfile.TemporaryDirectory() as directory, \
-                patch('hindsightkit.cli.home', return_value=Path(directory)), \
+                patch('hindsightkit.runtime.home', return_value=Path(directory)), \
                 patch.object(relay.shutil, 'which', return_value=None), \
                 patch.object(relay.subprocess, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, 'CLI is missing'):
@@ -206,7 +206,7 @@ class RelayConfigurationTests(unittest.TestCase):
             binary = root / 'tools/devtunnel.exe'
             binary.parent.mkdir()
             binary.write_bytes(b'fixture')
-            with patch('hindsightkit.cli.home', return_value=root), \
+            with patch('hindsightkit.runtime.home', return_value=root), \
                     patch.object(relay.shutil, 'which', return_value='powershell.exe'), \
                     patch.object(relay.subprocess, 'run', return_value=Mock(returncode=1)) as run:
                 with self.assertRaisesRegex(RuntimeError, 'verify'):

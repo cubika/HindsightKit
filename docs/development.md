@@ -13,7 +13,7 @@ uv sync --frozen --python 3.12 --extra server
 Install the locked Node integration packages before running the suite so those checks are available:
 
 ```powershell
-.venv/Scripts/python.exe -c "from hindsightkit.cli import install_node_packages; install_node_packages(); install_node_packages(client=True)"
+.venv/Scripts/python.exe -c "from hindsightkit.installer import install_node_packages; install_node_packages(); install_node_packages(client=True)"
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
 

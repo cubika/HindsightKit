@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import hindsightkit
-from hindsightkit import cli, connection, remote
+from hindsightkit import cli, installer, services, runtime as runtime_env, connection, remote
 
 
 def options(**values):
@@ -69,18 +69,18 @@ class RemoteTests(unittest.TestCase):
             relay.load_spec = Mock(return_value=None)
             stack.enter_context(patch.dict('sys.modules', {'hindsightkit.relay': relay}))
             stack.enter_context(patch.object(hindsightkit, 'relay', relay, create=True))
-            stack.enter_context(patch.object(cli, 'home', return_value=root))
-            stack.enter_context(patch.object(cli, 'profile_config', return_value=({}, None)))
+            stack.enter_context(patch.object(runtime_env, 'home', return_value=root))
+            stack.enter_context(patch.object(services, 'profile_config', return_value=({}, None)))
             stack.enter_context(patch.object(connection, 'config_path', return_value=path))
             prompt = stack.enter_context(patch.object(remote.getpass, 'getpass', return_value=remote.encode_invitation(invitation)))
-            setup = stack.enter_context(patch.object(cli, 'setup_client'))
+            setup = stack.enter_context(patch.object(installer, 'setup_client'))
             stop_clients = stack.enter_context(patch.object(remote, 'stop_clients'))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield SimpleNamespace(root=root, path=path, previous=previous, saved=saved, invitation=invitation,
                                   relay=relay, prompt=prompt, setup=setup, stop_clients=stop_clients, output=output)
 
     def test_direct_success_never_starts_or_creates_relay(self):
-        with self.environment() as state, patch.object(remote, 'discover', new_callable=AsyncMock) as discover:
+        with self.environment() as state, patch.object(connection, 'discover', new_callable=AsyncMock) as discover:
             remote.connect(options())
             state.prompt.assert_called_once_with('Connection code (hidden): ')
             self.assertEqual(discover.await_args.args[0], {'apiUrl': 'http://new-host:9077', 'apiToken': 'new-key'})
@@ -128,7 +128,7 @@ class RemoteTests(unittest.TestCase):
     def test_network_failure_without_relay_leaves_saved_connection(self):
         invitation = {'version': 1, 'url': 'http://unreachable:9077', 'key': 'new-key'}
         with self.environment(invitation=invitation) as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock, side_effect=aiohttp.ClientConnectionError()):
+             patch.object(connection, 'discover', new_callable=AsyncMock, side_effect=aiohttp.ClientConnectionError()):
             with self.assertRaisesRegex(RuntimeError, 'share --relay'):
                 remote.connect(options())
             state.setup.assert_not_called()
@@ -138,7 +138,7 @@ class RemoteTests(unittest.TestCase):
     def test_tls_validation_error_never_triggers_relay(self):
         error = aiohttp.ClientConnectorCertificateError(Mock(), ssl.CertificateError('untrusted certificate'))
         with self.environment() as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock, side_effect=error):
+             patch.object(connection, 'discover', new_callable=AsyncMock, side_effect=error):
             with self.assertRaises(aiohttp.ClientConnectorCertificateError):
                 remote.connect(options())
             state.relay.ensure_running.assert_not_called()
@@ -146,7 +146,7 @@ class RemoteTests(unittest.TestCase):
             self.assertEqual(state.path.read_bytes(), state.saved)
 
     def test_network_failure_allocates_a_free_port_and_passes_transport(self):
-        with self.environment() as state, patch.object(remote, 'discover', new_callable=AsyncMock) as discover:
+        with self.environment() as state, patch.object(connection, 'discover', new_callable=AsyncMock) as discover:
             discover.side_effect = [aiohttp.ClientConnectionError(), {'protocol': 1, 'routing': 'repository'}]
             listener = Mock()
             listener.getsockname.return_value = ('127.0.0.1', 41234)
@@ -170,7 +170,7 @@ class RemoteTests(unittest.TestCase):
         previous = {'apiUrl': 'http://127.0.0.1:43210', 'apiToken': 'old-key',
                     'hindsightkit': {'mode': 'client', 'transport': transport}}
         with self.environment(previous=previous) as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock, side_effect=[TimeoutError(), {}]), \
+             patch.object(connection, 'discover', new_callable=AsyncMock, side_effect=[TimeoutError(), {'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}]), \
              patch.object(remote, 'socket', SimpleNamespace(socket=Mock(), gaierror=remote.socket.gaierror)) as socket_module:
             remote.connect(options())
             socket_module.socket.assert_not_called()
@@ -180,7 +180,7 @@ class RemoteTests(unittest.TestCase):
     def test_failed_relay_candidate_stops_only_its_process_and_preserves_configuration(self):
         for failure in ('discovery', 'setup'):
             with self.subTest(failure=failure), self.environment() as state, \
-                 patch.object(remote, 'discover', new_callable=AsyncMock) as discover:
+                 patch.object(connection, 'discover', new_callable=AsyncMock) as discover:
                 discover.side_effect = [TimeoutError(), RuntimeError('candidate rejected') if failure == 'discovery' else {}]
                 if failure == 'setup':
                     state.setup.side_effect = RuntimeError('candidate rejected')
@@ -195,7 +195,7 @@ class RemoteTests(unittest.TestCase):
         previous = {'apiUrl': 'http://127.0.0.1:43210', 'apiToken': 'old-key',
                     'hindsightkit': {'mode': 'client', 'transport': transport}}
         with self.environment(previous=previous) as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock,
+             patch.object(connection, 'discover', new_callable=AsyncMock,
                           side_effect=[TimeoutError(), RuntimeError('wrong key')]):
             with self.assertRaisesRegex(RuntimeError, 'wrong key'):
                 remote.connect(options())
@@ -205,8 +205,8 @@ class RemoteTests(unittest.TestCase):
 
     def test_local_reset_stops_clients_only_after_local_configuration_succeeds(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}
-        with self.environment() as state, patch.object(cli, 'require_local') as require, \
-             patch.object(cli, 'start') as start, patch.object(connection, 'server_load', return_value=local):
+        with self.environment() as state, patch.object(services, 'require_local') as require, \
+             patch.object(services, 'start_local') as start, patch.object(connection, 'server_load', return_value=local):
             calls = Mock()
             calls.attach_mock(state.setup, 'setup')
             calls.attach_mock(state.stop_clients, 'stop')
@@ -228,9 +228,9 @@ class RemoteTests(unittest.TestCase):
                     'hindsightkit': {'mode': 'client', 'transport': transport}}
         for command in ('share', 'local'):
             with self.subTest(command=command), self.environment(previous=previous) as state, \
-                 patch.object(cli, 'require_local'), patch.object(cli, 'run'), \
-                 patch.object(cli, 'start_ui', return_value='http://localhost:19077'), \
-                 patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'},
+                 patch.object(services, 'require_local'), patch.object(runtime_env, 'run'), \
+                 patch.object(services, 'start_ui', return_value='http://localhost:19077'), \
+                 patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'},
                               SimpleNamespace(port=9077, ui_port=19077))), \
                  patch('hindsightkit.postgres.Postgres') as database, \
                  patch('hindsightkit.connector_registry.enabled_connectors', return_value=[]), \
@@ -245,13 +245,13 @@ class RemoteTests(unittest.TestCase):
                 state.relay.ensure_running.assert_not_called()
 
     def test_late_client_registration_failure_restores_previous_destination(self):
-        real_setup = cli.setup_client
+        real_setup = installer.setup_client
         with self.environment() as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock, side_effect=[TimeoutError(), {}]), \
-             patch.object(cli, 'require_client_prerequisites'), patch.object(cli, 'install_node_packages'), \
-             patch.object(cli, 'vscode_user_directories', return_value=[state.root / 'Code']), \
-             patch.object(cli, 'remove_project_registration'), patch.object(cli, 'backup'), \
-             patch.object(cli, 'node', return_value='node'), \
+             patch.object(connection, 'discover', new_callable=AsyncMock, side_effect=[TimeoutError(), {'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}]), \
+             patch.object(installer, 'require_client_prerequisites'), patch.object(installer, 'install_node_packages'), \
+             patch.object(installer, 'vscode_user_directories', return_value=[state.root / 'Code']), \
+             patch.object(installer, 'remove_project_registration'), patch.object(runtime_env, 'backup'), \
+             patch.object(runtime_env, 'node', return_value='node'), \
              patch.object(connection, 'device_id', return_value='11111111-1111-1111-1111-111111111111'), \
              patch.object(connection, 'request', new_callable=AsyncMock,
                           return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'hindsightkit-shared'}), \
@@ -261,7 +261,7 @@ class RemoteTests(unittest.TestCase):
             def integrate(action, *args, **kwargs):
                 if action == 'config':
                     state.path.write_text(json.dumps({'apiUrl': args[1], **kwargs['data']}), encoding='utf-8')
-            with patch.object(cli, 'integrate', side_effect=integrate):
+            with patch.object(installer, 'integrate', side_effect=integrate):
                 with self.assertRaisesRegex(RuntimeError, 'registration failed'):
                     remote.connect(options())
             self.assertEqual(state.path.read_bytes(), state.saved)
@@ -269,16 +269,16 @@ class RemoteTests(unittest.TestCase):
             state.stop_clients.assert_not_called()
 
     def test_direct_reconfiguration_removes_saved_transport_metadata(self):
-        real_setup = cli.setup_client
+        real_setup = installer.setup_client
         previous = {'apiUrl': 'http://127.0.0.1:43210', 'apiToken': 'old-key',
                     'hindsightkit': {'mode': 'client', 'transport': {'mode': 'connect',
                       'tunnel_id': 'old-tunnel', 'remote_port': 9077, 'local_port': 43210}}}
         with self.environment(previous=previous) as state, \
-             patch.object(remote, 'discover', new_callable=AsyncMock), \
-             patch.object(cli, 'require_client_prerequisites'), patch.object(cli, 'install_node_packages'), \
-             patch.object(cli, 'vscode_user_directories', return_value=[state.root / 'Code']), \
-             patch.object(cli, 'remove_project_registration'), patch.object(cli, 'backup'), \
-             patch.object(cli, 'node', return_value='node'), \
+             patch.object(connection, 'discover', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}), \
+             patch.object(installer, 'require_client_prerequisites'), patch.object(installer, 'install_node_packages'), \
+             patch.object(installer, 'vscode_user_directories', return_value=[state.root / 'Code']), \
+             patch.object(installer, 'remove_project_registration'), patch.object(runtime_env, 'backup'), \
+             patch.object(runtime_env, 'node', return_value='node'), \
              patch.object(connection, 'device_id', return_value='11111111-1111-1111-1111-111111111111'), \
              patch.object(connection, 'request', new_callable=AsyncMock,
                           return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'hindsightkit-shared'}), \
@@ -288,7 +288,7 @@ class RemoteTests(unittest.TestCase):
             def integrate(action, *args, **kwargs):
                 if action == 'config':
                     state.path.write_text(json.dumps({'apiUrl': args[1], **kwargs['data']}), encoding='utf-8')
-            with patch.object(cli, 'integrate', side_effect=integrate):
+            with patch.object(installer, 'integrate', side_effect=integrate):
                 remote.connect(options())
             configured = json.loads(state.path.read_text(encoding='utf-8'))
             self.assertEqual(configured['apiUrl'], 'http://new-host:9077')
@@ -297,9 +297,9 @@ class RemoteTests(unittest.TestCase):
             state.stop_clients.assert_called_once_with(except_transport=None)
 
     def test_stop_completes_local_shutdown_when_a_relay_cannot_stop(self):
-        with self.environment() as state, patch.object(cli, 'prepare_env'), \
-             patch.object(cli, 'require_local'), patch.object(cli, 'run') as run, \
-             patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'}, None)), \
+        with self.environment() as state, patch.object(runtime_env, 'prepare_env'), \
+             patch.object(services, 'require_local'), patch.object(runtime_env, 'run') as run, \
+             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'}, None)), \
              patch.object(connection, 'has_server', return_value=True), \
              patch.object(remote, 'stop', side_effect=RuntimeError('remote stop failed')), \
              patch('hindsightkit.connectors.stop') as stop_connectors, \
@@ -309,14 +309,14 @@ class RemoteTests(unittest.TestCase):
             database.return_value.state_path.is_file.return_value = True
             self.assertEqual(cli.main(['stop']), 1)
             self.assertEqual([call.args[0][-2:] for call in run.call_args_list], [['ui', 'stop']])
-            daemon.return_value.stop.assert_called_once_with(cli.PROFILE)
+            daemon.return_value.stop.assert_called_once_with(runtime_env.PROFILE)
             stop_connectors.assert_called_once_with(state.root / 'connectors')
             database.return_value.stop.assert_called_once()
             self.assertIn('remote stop failed', error.getvalue())
 
     def test_share_direct_does_not_create_relay_and_outputs_separate_hidden_prompt_code(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
-        with self.environment() as state, patch.object(cli, 'require_local'), patch.object(cli, 'start'), \
+        with self.environment() as state, patch.object(services, 'require_local'), patch.object(services, 'start_local'), \
              patch.object(connection, 'server_load', return_value=local), \
              patch.object(remote.socket, 'gethostname', return_value='memory-host'):
             remote.share(options())
@@ -329,7 +329,7 @@ class RemoteTests(unittest.TestCase):
 
     def test_share_relay_returns_only_routing_metadata_in_invitation(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
-        with self.environment() as state, patch.object(cli, 'require_local'), patch.object(cli, 'start'), \
+        with self.environment() as state, patch.object(services, 'require_local'), patch.object(services, 'start_local'), \
              patch.object(connection, 'server_load', return_value=local):
             remote.share(options(relay=True, address='https://memory.example.com'))
             root = state.root / 'remote/host'
@@ -354,25 +354,25 @@ class RemoteTests(unittest.TestCase):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
         for provider in ('microsoft', 'github'):
             with self.subTest(provider=provider), self.environment() as state, \
-                    patch.object(cli, 'require_local'), patch.object(cli, 'start'), \
+                    patch.object(services, 'require_local'), patch.object(services, 'start_local'), \
                     patch.object(connection, 'server_load', return_value=local):
                 remote.share(options(relay=True, relay_provider=provider))
                 state.relay.create_host.assert_called_once_with(state.root / 'remote/host', 9077, provider=provider)
             with self.environment() as state, \
-                    patch.object(remote, 'discover', new_callable=AsyncMock,
+                    patch.object(connection, 'discover', new_callable=AsyncMock,
                                  side_effect=[aiohttp.ClientConnectionError(), {}]):
                 remote.connect(options(relay_provider=provider))
                 self.assertEqual(state.relay.ensure_running.call_args.kwargs,
                                  {'interactive': True, 'provider': provider})
 
     def test_provider_option_with_direct_success_does_not_start_login(self):
-        with self.environment() as state, patch.object(remote, 'discover', new_callable=AsyncMock):
+        with self.environment() as state, patch.object(connection, 'discover', new_callable=AsyncMock):
             remote.connect(options(relay_provider='github'))
             state.relay.ensure_running.assert_not_called()
 
     def test_provider_option_rejects_incompatible_commands_before_side_effects(self):
-        with self.environment() as state, patch.object(cli, 'require_local') as require, \
-                patch.object(cli, 'start') as start:
+        with self.environment() as state, patch.object(services, 'require_local') as require, \
+                patch.object(services, 'start_local') as start:
             with self.assertRaisesRegex(ValueError, 'requires share --relay'):
                 remote.share(options(relay_provider='github'))
             for destination in ({'local': True}, {'server': 'http://memory-host:9077'}):
@@ -384,8 +384,8 @@ class RemoteTests(unittest.TestCase):
             state.setup.assert_not_called()
 
     def test_cli_remote_commands_accept_no_secret_argument_and_setup_is_internal(self):
-        with patch.object(cli, 'prepare_env'), patch.object(remote, 'connect') as connect, \
-             patch.object(remote, 'share') as share, patch.object(cli, 'setup') as setup:
+        with patch.object(runtime_env, 'prepare_env'), patch.object(remote, 'connect') as connect, \
+             patch.object(remote, 'share') as share, patch.object(installer, 'setup') as setup:
             self.assertEqual(cli.main(['connect']), 0)
             self.assertFalse(connect.call_args.args[0].local)
             self.assertEqual(cli.main(['connect', '--local']), 0)

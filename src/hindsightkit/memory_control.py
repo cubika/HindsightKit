@@ -78,5 +78,13 @@ def command(action: str, directory=None):
                     git(repository, "config", "--local", "--replace-all", ENABLED, "true")
     current = state(repository)
     print(f"Repository memory: {'on' if current.enabled else 'off'} ({repository})")
+    from . import lifecycle
+    service = lifecycle.state()
+    if service.get('stopped'):
+        print('HindsightKit is stopped. Run hindsightkit start to use memory.')
+        return
+    if service.get('disconnected'):
+        print('This client is disconnected. Run hindsightkit connect to use memory.')
+        return
     if action == "on" and current.capture_epoch:
         print("Start a new Copilot CLI session to resume automatic session saving. MCP and recall resume immediately.")

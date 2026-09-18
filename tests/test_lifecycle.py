@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastmcp.exceptions import ToolError
 
-from hindsightkit import cli, connection, hooks, lifecycle, mcp, remote
+from hindsightkit import cli, services, runtime as runtime_env, connection, hooks, lifecycle, mcp, remote
 from hindsightkit.memory import Scope
 
 
@@ -29,7 +29,7 @@ class LifecycleTests(unittest.TestCase):
         patch.dict(os.environ, {'HINDSIGHTKIT_HOME': str(self.root / 'state'),
                                 'HINDSIGHT_CONFIG': str(self.config_path),
                                 'COPILOT_AGENT_SESSION_ID': '', 'HINDSIGHT_DISABLE_HOOKS': ''}).start()
-        patch.object(cli, 'prepare_env').start()
+        patch.object(runtime_env, 'prepare_env').start()
 
     def test_running_mcp_honors_stop_start_and_disconnect_before_any_transport(self):
         async def check():
@@ -119,7 +119,7 @@ class LifecycleTests(unittest.TestCase):
             self.hook('userPromptTransformed', 'before')
             recall.assert_awaited_once()
             self.hook('sessionStart', 'fresh')
-            record = next(json.loads(path.read_text()) for path in (cli.home() / 'sessions').glob('*.json')
+            record = next(json.loads(path.read_text()) for path in (runtime_env.home() / 'sessions').glob('*.json')
                           if json.loads(path.read_text())['_service_epoch'] == lifecycle.state()['capture_epoch'])
             self.assertIsNotNone(record['_service_epoch'])
 
@@ -127,16 +127,16 @@ class LifecycleTests(unittest.TestCase):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}
         with patch.object(connection, 'has_server', return_value=True), \
              patch.object(connection, 'server_load', return_value=local), \
-             patch.object(connection, 'request', new_callable=AsyncMock) as request, \
-             patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch.object(connection, 'request', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}) as request, \
+             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
              patch('hindsightkit.postgres.Postgres') as database, \
              patch('hindsightkit.postgres.check_external', new_callable=AsyncMock), \
-             patch.object(cli, 'check_memory', new_callable=AsyncMock) as memory, \
+             patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
              contextlib.redirect_stdout(io.StringIO()) as output:
             database.return_value.state_path.is_file.return_value = False
             self.assertEqual(cli.main(['check']), 0)
             memory.assert_awaited_once_with(local['apiUrl'], local['apiToken'])
-            request.assert_awaited_once_with(self.config, 'GET', '/ext/hindsightkit/connection')
+            request.assert_awaited_once_with(self.config, 'GET', '/ext/hindsightkit/connection', timeout=5)
             self.assertIn(self.config['apiUrl'], output.getvalue())
             self.assertIn(local['apiUrl'], output.getvalue())
             memory.reset_mock()
@@ -146,8 +146,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_check_client_only_never_writes_a_remote_test_bank(self):
         with patch.object(connection, 'has_server', return_value=False), \
-             patch.object(connection, 'request', new_callable=AsyncMock) as request, \
-             patch.object(cli, 'check_memory', new_callable=AsyncMock) as memory, \
+             patch.object(connection, 'request', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}) as request, \
+             patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(['check']), 0)
             request.assert_awaited_once()
@@ -170,15 +170,15 @@ class LifecycleTests(unittest.TestCase):
         manager = ProfileManager.__new__(ProfileManager)
         def profile():
             with patch.object(manager, 'resolve_profile_paths', return_value=paths):
-                return manager.load_profile_config(cli.PROFILE), paths
+                return manager.load_profile_config(runtime_env.PROFILE), paths
         local = {**self.config, 'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'old-key'}
         self.config_path.write_text(json.dumps(local))
-        shared = cli.home() / 'remote/host/spec.json'
+        shared = runtime_env.home() / 'remote/host/spec.json'
         shared.parent.mkdir(parents=True)
         shared.write_text('{}')
         with patch.object(connection, 'has_server', return_value=True), \
-             patch.object(cli, 'profile_config', side_effect=profile), \
-             patch.object(cli, 'stop_profile_services') as stop, patch.object(cli, 'start') as start, \
+             patch.object(services, 'profile_config', side_effect=profile), \
+             patch.object(services, 'stop_profile_services') as stop, patch.object(services, 'start_local') as start, \
              patch('hindsightkit.remote.stop'), \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
              contextlib.redirect_stdout(io.StringIO()):
@@ -189,11 +189,11 @@ class LifecycleTests(unittest.TestCase):
             self.assertNotEqual(new_key, 'old-key')
             self.assertEqual(updated['HINDSIGHT_API_HOST'], '127.0.0.1')
             self.assertEqual(json.loads(self.config_path.read_text())['apiToken'], new_key)
-            self.assertEqual((cli.home() / 'server/connection-key.txt').read_text(), new_key)
+            self.assertEqual((runtime_env.home() / 'server/connection-key.txt').read_text(), new_key)
             self.assertFalse(shared.exists())
             self.assertTrue(lifecycle.available())
             stop.assert_called_once_with(remote_connections=False)
-            start.assert_called_once_with(remote_connections=False)
+            start.assert_called_once_with()
             extension = ApiKeyTenantExtension({'api_key': new_key})
             with self.assertRaises(AuthenticationError):
                 asyncio.run(extension.authenticate(RequestContext(api_key='old-key')))
@@ -201,20 +201,20 @@ class LifecycleTests(unittest.TestCase):
                        return_value=SimpleNamespace(database_schema='fixture')):
                 self.assertEqual(asyncio.run(extension.authenticate(RequestContext(api_key=new_key))).schema_name, 'fixture')
             # An ordinary upgrade must preserve disabled sharing.
-            cli.configure_sharing(new_key, 'hindsightkit-shared', enabled=None)
+            services.configure_sharing(new_key, 'hindsightkit-shared', enabled=None)
             self.assertEqual(profile()[0]['HINDSIGHT_API_HOST'], '127.0.0.1')
 
     def test_stop_attempts_api_shutdown_even_when_dashboard_stop_fails(self):
         with patch.object(connection, 'has_server', return_value=True), patch.object(remote, 'stop'), \
-             patch('hindsightkit.connectors.stop'), patch.object(cli, 'run') as run, \
+             patch('hindsightkit.connectors.stop'), patch.object(runtime_env, 'run') as run, \
              patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
-             patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
              patch('hindsightkit.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()):
             run.side_effect = [RuntimeError('dashboard failure'), None]
             database.return_value.state_path.is_file.return_value = False
             self.assertEqual(cli.main(['stop']), 1)
             self.assertEqual([call.args[0][-2:] for call in run.call_args_list], [['ui', 'stop']])
-            daemon.return_value.stop.assert_called_once_with(cli.PROFILE)
+            daemon.return_value.stop.assert_called_once_with(runtime_env.PROFILE)
             self.assertTrue(lifecycle.state()['stopped'])
 
     def test_busy_api_is_stopped_without_health_gate_and_failure_is_reported(self):
@@ -224,8 +224,8 @@ class LifecycleTests(unittest.TestCase):
             daemon.return_value.is_running.return_value = False
             daemon.return_value.stop.return_value = False
             with self.assertRaisesRegex(RuntimeError, 'could not be stopped'):
-                cli.stop_profile_services()
-            daemon.return_value.stop.assert_called_once_with(cli.PROFILE)
+                services.stop_profile_services()
+            daemon.return_value.stop.assert_called_once_with(runtime_env.PROFILE)
             daemon.return_value.is_running.assert_not_called()
 
 

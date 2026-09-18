@@ -7,7 +7,7 @@ from filelock import FileLock
 
 
 def path():
-    from .cli import home
+    from .runtime import home
     return home() / 'service-state.json'
 
 
@@ -40,8 +40,11 @@ def disconnect():
     update(disconnected=True, capture_epoch=uuid.uuid4().hex, connection_epoch=uuid.uuid4().hex)
 
 
-def connected():
-    update(stopped=False, disconnected=False, connection_epoch=uuid.uuid4().hex, capture_epoch=uuid.uuid4().hex)
+def connected(*, changed=True):
+    changes = dict(stopped=False, disconnected=False)
+    if changed or state().get('disconnected'):
+        changes.update(connection_epoch=uuid.uuid4().hex, capture_epoch=uuid.uuid4().hex)
+    update(**changes)
 
 
 def available(current=None):

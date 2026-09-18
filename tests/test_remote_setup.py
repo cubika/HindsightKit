@@ -13,7 +13,7 @@ import unittest
 import zipfile
 from unittest.mock import AsyncMock, patch
 
-from hindsightkit import cli, connection, installer
+from hindsightkit import cli, installer, services, runtime as runtime_env, connection
 
 
 def options(**values):
@@ -54,25 +54,25 @@ class RemoteSetupTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path),
                 'TEST_MEMORY_KEY': 'client-key', 'COPILOT_HOME': str(root / '.copilot')}))
-            stack.enter_context(patch.object(cli.Path, 'home', return_value=root))
-            stack.enter_context(patch.object(cli, 'home', return_value=root / 'runtime'))
-            stack.enter_context(patch.object(cli, 'vscode_user_directories', return_value=[root / 'Code']))
-            packages = stack.enter_context(patch.object(cli, 'install_node_packages'))
-            auth = stack.enter_context(patch.object(cli, 'ensure_copilot'))
-            stack.enter_context(patch.object(cli.shutil, 'which', return_value='git'))
-            stack.enter_context(patch.object(cli, 'node', return_value='node'))
-            stack.enter_context(patch.object(cli.socket, 'gethostname', return_value='Automatic-Hostname'))
-            configure = stack.enter_context(patch.object(cli, 'configure_profile'))
-            profile = stack.enter_context(patch.object(cli, 'profile_config'))
-            start = stack.enter_context(patch.object(cli, 'start'))
-            stack.enter_context(patch.object(cli, 'remove_project_registration'))
+            stack.enter_context(patch.object(runtime_env.Path, 'home', return_value=root))
+            stack.enter_context(patch.object(runtime_env, 'home', return_value=root / 'runtime'))
+            stack.enter_context(patch.object(installer, 'vscode_user_directories', return_value=[root / 'Code']))
+            packages = stack.enter_context(patch.object(installer, 'install_node_packages'))
+            auth = stack.enter_context(patch.object(installer, 'ensure_copilot'))
+            stack.enter_context(patch.object(runtime_env.shutil, 'which', return_value='git'))
+            stack.enter_context(patch.object(runtime_env, 'node', return_value='node'))
+            stack.enter_context(patch.object(installer.socket, 'gethostname', return_value='Automatic-Hostname'))
+            configure = stack.enter_context(patch.object(installer, 'configure_profile'))
+            profile = stack.enter_context(patch.object(services, 'profile_config'))
+            start = stack.enter_context(patch.object(services, 'start'))
+            stack.enter_context(patch.object(installer, 'remove_project_registration'))
 
             def integration(action, *args, **kwargs):
                 if action == 'config':
                     previous = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
                     path.write_text(json.dumps({**previous, 'apiUrl': args[1], **kwargs['data']}), encoding='utf-8')
 
-            integrate = stack.enter_context(patch.object(cli, 'integrate', side_effect=integration))
+            integrate = stack.enter_context(patch.object(installer, 'integrate', side_effect=integration))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
             request.return_value = {'protocol': 1, 'routing': 'repository', 'sharedBank': 'hindsightkit-shared'}
             async def response(config, method, endpoint, **kwargs):
@@ -98,36 +98,37 @@ class RemoteSetupTests(unittest.TestCase):
             environment = {key: value for key, value in os.environ.items() if key not in {'APPDATA', 'COPILOT_HOME'}}
             environment['HINDSIGHT_CONFIG'] = str(client_path)
             stack.enter_context(patch.dict(os.environ, environment, clear=True))
-            stack.enter_context(patch.object(cli.Path, 'home', return_value=root))
-            stack.enter_context(patch.object(cli, 'home', return_value=root / 'runtime'))
-            stack.enter_context(patch.object(cli, 'profile_config', return_value=(profile, paths)))
-            configure = stack.enter_context(patch.object(cli, 'configure_profile'))
-            sharing = stack.enter_context(patch.object(cli, 'configure_sharing'))
-            stopped = stack.enter_context(patch.object(cli, 'stop_profile_services'))
-            packages = stack.enter_context(patch.object(cli, 'install_node_packages'))
-            stack.enter_context(patch.object(cli, 'ensure_copilot'))
-            stack.enter_context(patch.object(cli, 'start', return_value=('http://127.0.0.1:9077', 'http://localhost:19077')))
-            check = stack.enter_context(patch.object(cli, 'check_memory', new_callable=AsyncMock))
-            stack.enter_context(patch.object(cli, 'ensure_bank', new_callable=AsyncMock))
+            stack.enter_context(patch.object(runtime_env.Path, 'home', return_value=root))
+            stack.enter_context(patch.object(runtime_env, 'home', return_value=root / 'runtime'))
+            stack.enter_context(patch.object(services, 'profile_config', return_value=(profile, paths)))
+            configure = stack.enter_context(patch.object(installer, 'configure_profile'))
+            sharing = stack.enter_context(patch.object(services, 'configure_sharing'))
+            stopped = stack.enter_context(patch.object(services, 'stop_profile_services'))
+            packages = stack.enter_context(patch.object(installer, 'install_node_packages'))
+            stack.enter_context(patch.object(installer, 'ensure_copilot'))
+            stack.enter_context(patch.object(services, 'start_local', return_value=('http://127.0.0.1:9077', 'http://localhost:19077')))
+            check = stack.enter_context(patch.object(services, 'check_memory', new_callable=AsyncMock))
+            stack.enter_context(patch.object(services, 'ensure_bank', new_callable=AsyncMock))
             request = stack.enter_context(patch.object(connection, 'request', new_callable=AsyncMock))
             register = stack.enter_context(patch.object(connection, 'register', new_callable=AsyncMock))
             stack.enter_context(patch('hindsightkit.postgres.setup_database'))
+            host = stack.enter_context(patch('hindsightkit.remote.resume_host'))
             stack.enter_context(patch('hindsightkit.routing.seed_aliases'))
             stack.enter_context(patch('hindsightkit.postgres.private_directory', side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)))
             stack.enter_context(patch('hindsightkit.postgres.restrict_access'))
-            integrate = stack.enter_context(patch.object(cli, 'integrate'))
-            hosts = stack.enter_context(patch.object(cli, 'vscode_user_directories'))
-            cleanup = stack.enter_context(patch.object(cli, 'remove_project_registration'))
-            git = stack.enter_context(patch.object(cli.shutil, 'which'))
-            prompt = stack.enter_context(patch.object(cli.getpass, 'getpass'))
+            integrate = stack.enter_context(patch.object(installer, 'integrate'))
+            hosts = stack.enter_context(patch.object(installer, 'vscode_user_directories'))
+            cleanup = stack.enter_context(patch.object(installer, 'remove_project_registration'))
+            git = stack.enter_context(patch.object(runtime_env.shutil, 'which'))
+            prompt = stack.enter_context(patch.object(installer.getpass, 'getpass'))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield SimpleNamespace(path=client_path, configure=configure, sharing=sharing,
                 check=check, request=request, register=register, integrate=integrate,
-                hosts=hosts, cleanup=cleanup, git=git, prompt=prompt, stopped=stopped, packages=packages)
+                hosts=hosts, cleanup=cleanup, git=git, prompt=prompt, stopped=stopped, packages=packages, host=host)
 
     def test_installer_exposes_server_address_and_removes_old_setup_flags(self):
-        with patch.object(cli, 'prepare_env'), patch.object(cli, 'setup') as setup, \
-             patch.object(cli, 'run'), patch.object(installer, 'record_mode'):
+        with patch.object(runtime_env, 'prepare_env'), patch.object(installer, 'setup') as setup, \
+             patch.object(runtime_env, 'run'), patch.object(installer, 'record_mode'):
             self.assertEqual(installer.main([]), 0)
             self.assertIsNone(setup.call_args.args[0].server)
             self.assertFalse(setup.call_args.args[0].server_only)
@@ -152,8 +153,8 @@ class RemoteSetupTests(unittest.TestCase):
             with self.client_environment(root) as state, \
                  patch('hindsightkit.command.install', return_value='hindsightkit.exe') as launcher, \
                  patch.object(connection, 'has_server', return_value=False), \
-                 patch.object(cli, 'setup_server') as server, patch.object(cli, 'stop_profile_services') as stop:
-                cli.setup(options(client_only=True))
+                 patch.object(installer, 'setup_server') as server, patch.object(services, 'stop_profile_services') as stop:
+                installer.setup(options(client_only=True))
                 state.packages.assert_called_once_with(client=True)
                 state.auth.assert_called_once_with()
                 launcher.assert_called_once_with(root / 'runtime/bin')
@@ -170,7 +171,7 @@ class RemoteSetupTests(unittest.TestCase):
             with self.client_environment(root) as state, \
                  patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
                  patch.object(connection, 'has_server', return_value=True), \
-                 patch.object(cli, 'setup_server') as server, patch.object(cli, 'stop_profile_services') as stop:
+                 patch.object(installer, 'setup_server') as server, patch.object(services, 'stop_profile_services') as stop:
                 previous = {'apiUrl': 'http://127.0.0.1:41234', 'apiToken': 'saved-client-key',
                     'optInOnly': False, 'custom': 'preserved',
                     'hindsightkit': {'mode': 'client', 'activity': True, 'deviceId': 'saved-device',
@@ -180,7 +181,7 @@ class RemoteSetupTests(unittest.TestCase):
                 original = state.path.read_bytes()
                 state.request.side_effect = AssertionError('A disconnected server cannot block a client upgrade')
                 for _ in range(2):
-                    cli.setup(options(client_only=True))
+                    installer.setup(options(client_only=True))
                 self.assertEqual(state.path.read_bytes(), original)
                 self.assertEqual(state.profile_path.read_text(), 'HINDSIGHT_API_TENANT_API_KEY=server-only-key\n')
                 self.assertEqual(state.packages.call_count, 2)
@@ -194,9 +195,9 @@ class RemoteSetupTests(unittest.TestCase):
                 for call in state.integrate.call_args_list:
                     self.assertEqual(call.kwargs['runtime_path'], root / 'runtime/client-runtime')
                     if call.args[0] == 'install-cli':
-                        self.assertEqual(call.args[-1], cli.sys.executable)
+                        self.assertEqual(call.args[-1], runtime_env.sys.executable)
                     if call.args[0] == 'vscode':
-                        self.assertEqual(call.args[2], cli.sys.executable)
+                        self.assertEqual(call.args[2], runtime_env.sys.executable)
 
     def test_client_only_upgrade_rejects_unmanaged_config_without_changes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -205,7 +206,7 @@ class RemoteSetupTests(unittest.TestCase):
                 state.path.write_text('{"apiUrl": "https://existing.invalid"}\n')
                 before = state.path.read_bytes()
                 with self.assertRaisesRegex(RuntimeError, 'not managed by HindsightKit'):
-                    cli.setup(options(client_only=True))
+                    installer.setup(options(client_only=True))
                 self.assertEqual(state.path.read_bytes(), before)
                 state.packages.assert_not_called()
                 state.integrate.assert_not_called()
@@ -215,8 +216,8 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             with self.client_environment(root) as state, \
                  patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
-                 patch.object(cli, 'setup_server') as server:
-                cli.setup(options(client_only=True, server='https://memory.invalid', api_key_env='TEST_MEMORY_KEY'))
+                 patch.object(installer, 'setup_server') as server:
+                installer.setup(options(client_only=True, server='https://memory.invalid', api_key_env='TEST_MEMORY_KEY'))
                 server.assert_not_called()
                 self.assertEqual(json.loads(state.path.read_text())['apiUrl'], 'https://memory.invalid')
                 state.register.assert_awaited_once()
@@ -230,15 +231,15 @@ class RemoteSetupTests(unittest.TestCase):
             installed.write_text('// installed fixture')
             (directory / '.installed-lock').write_text('verified-lock')
             output = io.StringIO()
-            with patch.object(cli, 'home', return_value=root), \
+            with patch.object(runtime_env, 'home', return_value=root), \
                  patch.object(connection, 'config_path', return_value=root / 'unconnected.json'), \
                  patch.object(connection, 'has_server', return_value=False), \
                  patch.object(connection, 'server_load', side_effect=AssertionError('No server dependencies')), \
                  patch.object(connection, 'request', new_callable=AsyncMock) as request, \
                  patch('hindsightkit.remote.status'), patch('hindsightkit.remote.resume') as resume, \
-                 patch.object(cli, 'prepare_env'), contextlib.redirect_stdout(output), \
+                 patch.object(runtime_env, 'prepare_env'), contextlib.redirect_stdout(output), \
                  contextlib.redirect_stderr(output):
-                self.assertTrue(cli.status())
+                self.assertTrue(services.status())
                 self.assertIn('installed; not connected', output.getvalue())
                 self.assertEqual(cli.main(['start']), 1)
                 self.assertEqual(cli.main(['check']), 1)
@@ -254,15 +255,17 @@ class RemoteSetupTests(unittest.TestCase):
             path = root / 'coding-agent.json'
             path.write_text(json.dumps({'apiUrl': 'https://remote.invalid', 'hindsightkit': {'mode': 'client'}}))
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path)}), \
-                 patch.object(cli, 'setup_server', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}) as server, \
-                 patch.object(cli, 'setup_client') as client, patch.object(cli, 'require_client_prerequisites'), \
-                 patch.object(cli, 'home', return_value=root), \
+                 patch.object(installer, 'setup_server', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}) as server, \
+             patch.object(installer, 'setup_client') as client, patch.object(installer, 'require_client_prerequisites'), \
+             patch.object(installer, 'setup_client_only') as refresh, \
+                 patch.object(runtime_env, 'home', return_value=root), \
                  patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
                  contextlib.redirect_stdout(io.StringIO()):
-                cli.setup(options())
+                installer.setup(options())
                 server.assert_called_once()
                 client.assert_not_called()
-                cli.setup(options(server='http://remote.invalid'))
+                refresh.assert_called_once()
+                installer.setup(options(server='http://remote.invalid'))
                 client.assert_called_once()
 
     def test_default_setup_connects_client_to_server_result_and_server_only_skips_it(self):
@@ -270,37 +273,37 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             local = {'apiUrl': 'http://127.0.0.1:18077', 'apiToken': 'generated-key'}
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(root / 'client.json')}), \
-                 patch.object(cli, 'setup_server', return_value=local) as server, \
-                 patch.object(cli, 'setup_client') as client, patch.object(cli, 'require_client_prerequisites') as prereqs, \
-                 patch.object(cli, 'home', return_value=root), \
+                 patch.object(installer, 'setup_server', return_value=local) as server, \
+                 patch.object(installer, 'setup_client') as client, patch.object(installer, 'require_client_prerequisites') as prereqs, \
+                 patch.object(runtime_env, 'home', return_value=root), \
                  patch('hindsightkit.command.install', return_value='hindsightkit.exe'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 args = options(port=18077, model='chosen-model')
-                cli.setup(args)
+                installer.setup(args)
                 server.assert_called_once_with(args)
                 client.assert_called_once_with(args, local_server=local)
                 client.reset_mock()
                 prereqs.reset_mock()
-                cli.setup(options(server_only=True))
+                installer.setup(options(server_only=True))
                 client.assert_not_called()
                 prereqs.assert_not_called()
 
     def test_invalid_options_and_missing_prerequisites_fail_before_server_changes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            with patch.object(cli, 'setup_server') as server, patch.object(cli, 'setup_client') as client, \
-                 patch.object(cli.Path, 'home', return_value=root), \
+            with patch.object(installer, 'setup_server') as server, patch.object(installer, 'setup_client') as client, \
+                 patch.object(runtime_env.Path, 'home', return_value=root), \
                  patch.dict(os.environ, {'COPILOT_HOME': str(root / '.copilot')}):
                 for args in [options(server='http://host', server_only=True),
                              options(client_only=True, server_only=True), options(client_only=True, model='server-model'),
                              options(client_only=True, api_key_env='NOT_USED'), options(port=65536),
                              options(model_dir=str(root / 'missing')), options(server='ftp://host')]:
                     with self.subTest(args=args), self.assertRaises((ValueError, FileNotFoundError)):
-                        cli.setup(args)
-                with patch.object(cli.shutil, 'which', return_value=None), self.assertRaisesRegex(RuntimeError, 'Git'):
-                    cli.setup(options())
+                        installer.setup(args)
+                with patch.object(runtime_env.shutil, 'which', return_value=None), self.assertRaisesRegex(RuntimeError, 'Git'):
+                    installer.setup(options())
                 with patch.dict(os.environ, {'COPILOT_HOME': str(root / 'other')}), self.assertRaisesRegex(RuntimeError, 'COPILOT_HOME'):
-                    cli.setup(options(server_only=True))
+                    installer.setup(options(server_only=True))
                 server.assert_not_called()
                 client.assert_not_called()
 
@@ -312,6 +315,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+            (root / 'src/hindsightkit').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                            root / 'src/hindsightkit/install_options.ps1')
             environment = powershell_environment(root)
             for arguments in [['-Server', 'ftp://invalid.example'], ['-Server', 'http://host/path'],
                               ['-Server', 'http://host', '-Model', 'server-only'],
@@ -333,6 +339,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(temp)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+            (root / 'src/hindsightkit').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                            root / 'src/hindsightkit/install_options.ps1')
             for changes, message in [({'PATH': '', 'COPILOT_HOME': ''}, 'Git must be installed'),
                                      ({'COPILOT_HOME': str(root / 'custom-copilot')}, 'Unset COPILOT_HOME')]:
                 with self.subTest(changes=changes):
@@ -363,6 +372,9 @@ class RemoteSetupTests(unittest.TestCase):
                         release.mkdir(parents=True)
                         script = release / 'setup.ps1'
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+                        (release / 'src/hindsightkit').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                                        release / 'src/hindsightkit/install_options.ps1')
                         if installed_server == 'profile':
                             profile = case / '.hindsight/profiles/hindsightkit.env'
                             profile.parent.mkdir(parents=True)
@@ -426,6 +438,9 @@ class RemoteSetupTests(unittest.TestCase):
                     release.mkdir(parents=True)
                     script = release / 'setup.ps1'
                     shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+                    (release / 'src/hindsightkit').mkdir(parents=True)
+                    shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                                    release / 'src/hindsightkit/install_options.ps1')
                     (release / 'python/wheels').mkdir(parents=True)
                     (release / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                     for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -484,6 +499,9 @@ class RemoteSetupTests(unittest.TestCase):
             root = Path(directory)
             script = root / 'setup.ps1'
             shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+            (root / 'src/hindsightkit').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                            root / 'src/hindsightkit/install_options.ps1')
             result = subprocess.run(offline_setup_command(shell, script, ['-ServerOnly']),
                 env=powershell_environment(root, HINDSIGHTKIT_RELEASE_MANIFEST=str(root / 'release.json')),
                 capture_output=True, text=True, encoding='utf-8', timeout=15)
@@ -524,6 +542,9 @@ class Runtime { static void Main(string[] args) {
                         app = case / 'app'
                         app.mkdir(parents=True)
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', app / 'setup.ps1')
+                        (app / 'src/hindsightkit').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                                        app / 'src/hindsightkit/install_options.ps1')
                         (app / 'python/wheels').mkdir(parents=True)
                         (app / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                         for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -597,7 +618,7 @@ $global:LASTEXITCODE = $LASTEXITCODE
                 fixture.path.write_text(json.dumps({'apiUrl': 'https://remote.invalid', 'apiToken': 'client-key',
                     'hindsightkit': {'mode': 'client'}}), encoding='utf-8')
                 original = fixture.path.read_bytes()
-                cli.setup_server(options())
+                installer.setup_server(options())
                 self.assertEqual(fixture.path.read_bytes(), original)
                 fixture.configure.assert_called_once()
                 self.assertEqual(fixture.sharing.call_args.args[0], 'server-key')
@@ -613,12 +634,13 @@ $global:LASTEXITCODE = $LASTEXITCODE
                 self.assertEqual(request_config['apiUrl'], 'http://127.0.0.1:9077')
                 self.assertEqual((root / 'runtime/server/connection-key.txt').read_text(), 'server-key')
                 fixture.stopped.assert_called_once()
+                fixture.host.assert_called_once()
 
     def test_client_discovers_routing_and_hostname_without_changing_server(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.client_environment(Path(temp)) as fixture:
                 before = fixture.profile_path.read_bytes()
-                cli.setup_client(options(server='http://127.0.0.1:19078', api_key_env='TEST_MEMORY_KEY'))
+                installer.setup_client(options(server='http://127.0.0.1:19078', api_key_env='TEST_MEMORY_KEY'))
                 fixture.configure.assert_not_called()
                 fixture.profile.assert_not_called()
                 fixture.start.assert_not_called()
@@ -641,8 +663,8 @@ $global:LASTEXITCODE = $LASTEXITCODE
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://127.0.0.1:19078', 'apiToken': 'saved-key',
                     'logLevel': 'warn', 'hindsightkit': {'mode': 'client', 'bank': 'previous-bank',
                     'deviceId': '39c07d23-4f04-4e57-a4b3-e80f9f2229cc', 'name': 'Old hostname'}}))
-                with patch.object(cli.getpass, 'getpass') as prompt:
-                    cli.setup_client(options(server='http://127.0.0.1:19078'))
+                with patch.object(installer.getpass, 'getpass') as prompt:
+                    installer.setup_client(options(server='http://127.0.0.1:19078'))
                 prompt.assert_not_called()
                 config = json.loads(fixture.path.read_text())
                 self.assertEqual(config['apiToken'], 'saved-key')
@@ -657,8 +679,8 @@ $global:LASTEXITCODE = $LASTEXITCODE
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://127.0.0.1:18077', 'apiToken': 'old-key',
                     'hindsightkit': {'mode': 'client'}}))
                 local = {'apiUrl': 'http://127.0.0.1:18077', 'apiToken': 'current-key'}
-                with patch.object(cli.getpass, 'getpass') as prompt:
-                    cli.setup_client(options(model='server-model', port=18077), local_server=local)
+                with patch.object(installer.getpass, 'getpass') as prompt:
+                    installer.setup_client(options(model='server-model', port=18077), local_server=local)
                 prompt.assert_not_called()
                 fixture.auth.assert_not_called()
                 config = fixture.register.call_args.args[0]
@@ -671,8 +693,8 @@ $global:LASTEXITCODE = $LASTEXITCODE
             with self.client_environment(Path(temp)) as fixture:
                 fixture.path.write_text(json.dumps({'apiUrl': 'http://old.invalid', 'apiToken': 'old-server-key',
                     'hindsightkit': {'mode': 'client'}}))
-                with patch.object(cli.getpass, 'getpass', return_value='new-server-key') as prompt:
-                    cli.setup_client(options(server='http://new.invalid'))
+                with patch.object(installer.getpass, 'getpass', return_value='new-server-key') as prompt:
+                    installer.setup_client(options(server='http://new.invalid'))
                 prompt.assert_called_once()
                 self.assertTrue(all(item.args[0]['apiToken'] == 'new-server-key'
                                     for item in fixture.request.call_args_list))
@@ -689,7 +711,7 @@ $global:LASTEXITCODE = $LASTEXITCODE
                     else:
                         fixture.request.return_value = discovery
                     with self.assertRaises((RuntimeError, ValueError)):
-                        cli.setup_client(options(server='http://new.invalid', api_key_env='TEST_MEMORY_KEY'))
+                        installer.setup_client(options(server='http://new.invalid', api_key_env='TEST_MEMORY_KEY'))
                     self.assertEqual(fixture.path.read_bytes(), before)
                     fixture.packages.assert_not_called()
                     fixture.integrate.assert_not_called()
@@ -701,7 +723,7 @@ $global:LASTEXITCODE = $LASTEXITCODE
             client = {'apiUrl': 'https://remote.invalid', 'apiToken': 'remote-key', 'hindsightkit': {'mode': 'client'}}
             path.write_text(json.dumps(client))
             with patch.dict(os.environ, {'HINDSIGHT_CONFIG': str(path)}), \
-                 patch.object(cli, 'profile_config', return_value=({'HINDSIGHT_API_TENANT_API_KEY': 'server-key'},
+                 patch.object(services, 'profile_config', return_value=({'HINDSIGHT_API_TENANT_API_KEY': 'server-key'},
                     SimpleNamespace(port=9077))), patch.object(connection, 'has_server', return_value=True):
                 self.assertEqual(connection.load(), client)
                 server = connection.server_load()

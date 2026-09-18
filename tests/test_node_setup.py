@@ -8,7 +8,7 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
-from hindsightkit import cli
+from hindsightkit import cli, runtime as runtime_env
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows Node.js selection')
@@ -26,6 +26,9 @@ using System.IO;
 class Fixture { static void Main(string[] args) {
   string path = System.Reflection.Assembly.GetExecutingAssembly().Location;
   if (Path.GetFileName(path) == "uv.exe") {
+    if (File.Exists(Path.Combine(Path.GetDirectoryName(path), "broken.txt"))) {
+      File.Delete(Path.Combine(Path.GetDirectoryName(path), "broken.txt")); Environment.Exit(2);
+    }
     if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("uv 0.12.15"); }
   } else if (Path.GetFileName(path) == "node.exe") {
     if (args.Length > 0 && args[0] == "-p") {
@@ -80,6 +83,9 @@ class Fixture { static void Main(string[] args) {
                         app.mkdir(parents=True)
                         script = app / 'setup.ps1'
                         shutil.copyfile(Path(__file__).resolve().parents[1] / 'setup.ps1', script)
+                        (app / 'src/hindsightkit').mkdir(parents=True)
+                        shutil.copyfile(Path(__file__).resolve().parents[1] / 'src/hindsightkit/install_options.ps1',
+                                        app / 'src/hindsightkit/install_options.ps1')
                         (app / 'python/wheels').mkdir(parents=True)
                         (app / 'python/wheels/fixture.whl').write_bytes(b'fixture')
                         for name in ('requirements-client.txt', 'requirements-server.txt'):
@@ -95,10 +101,9 @@ class Fixture { static void Main(string[] args) {
                             (binary / 'uv.ps1').unlink()
                             cached_uv = app / '.runtime/tools/uv-0.12.15/uv.exe'
                             cached_uv.parent.mkdir(parents=True)
-                            if case_name == 'cached-uv':
-                                shutil.copyfile(native, cached_uv)
-                            else:
-                                cached_uv.write_bytes(b'interrupted executable')
+                            shutil.copyfile(native, cached_uv)
+                            if case_name == 'broken-cached-uv':
+                                (cached_uv.parent / 'broken.txt').write_text('cached executable fails its version check')
                         (binary / 'hindsightkit.ps1').write_text('$global:LASTEXITCODE = 0\n')
                         path = [str(binary)]
                         expected = app / '.runtime/tools/node-v22.23.2-win-x64/node.exe'
@@ -197,6 +202,6 @@ exit $LASTEXITCODE
                             self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
                             self.assertIn('Reusing Node.js', repeated.stdout)
                             self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
-                        with patch.dict(os.environ, env, clear=True), patch.object(cli, 'home', return_value=state):
-                            cli.prepare_env()
+                        with patch.dict(os.environ, env, clear=True), patch.object(runtime_env, 'home', return_value=state):
+                            runtime_env.prepare_env()
                             self.assertTrue(Path(os.environ['PATH'].split(os.pathsep)[0]).samefile(expected.parent))

@@ -11,6 +11,7 @@ import zipfile
 
 
 TEMPLATE = Path(__file__).resolve().parents[1] / 'distribution/install.ps1'
+INSTALL_OPTIONS = TEMPLATE.parent.parent / 'src/hindsightkit/install_options.ps1'
 RELEASE_URL = 'https://github.com/example/HindsightKit/releases/download/v0.1.0'
 
 
@@ -81,6 +82,7 @@ exit 0
             'app/uv.lock': 'version = 1\n',
             'app/src/hindsightkit/cli.py': '# harmless test fixture\n',
             'app/src/hindsightkit/installer.py': '# harmless installer fixture\n',
+            'app/src/hindsightkit/install_options.ps1': INSTALL_OPTIONS.read_text(encoding='utf-8'),
             'app/release.json': json.dumps(manifest),
         }
         payload.update(entries or {})
@@ -98,6 +100,7 @@ exit 0
                            'PACKAGE_SHA256': digest, 'REPOSITORY': 'example/HindsightKit',
                            'CLIENT_PACKAGE_NAME': 'hindsightkit-client-windows-x64.zip',
                            'CLIENT_PACKAGE_SHA256': digest,
+                           'INSTALL_OPTIONS': INSTALL_OPTIONS.read_text(encoding='utf-8'),
                            'REQUIRES_AUTH': '$true' if authenticated else '$false'}.items():
             template = template.replace('@@' + key + '@@', value)
         installer = self.root / 'install.ps1'
@@ -481,6 +484,14 @@ try { Expand-InstallPackage $stream $env:TEST_DESTINATION } finally { $stream.Di
         self.assertFalse(self.destination.exists())
         self.run_installer(digest, '-ServerOnly -ClientOnly', expected=1)
         self.assertFalse(self.destination.exists())
+
+    def test_invalid_api_ports_fail_before_writing_installation(self):
+        digest = self.package()
+        for port in (-1, 1, 1023, 55535, 65535):
+            with self.subTest(port=port):
+                result = self.run_installer(digest, f'-Port {port}', expected=1)
+                self.assertIn('between 1024 and 55534', result.stdout)
+                self.assertFalse(self.destination.exists())
 
 
 if __name__ == '__main__':

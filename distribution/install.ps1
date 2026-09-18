@@ -33,32 +33,7 @@ function Write-InstallMessage([string]$Message) {
     }
 }
 
-function Resolve-InstallMode([System.Collections.IDictionary]$Options) {
-    if ($Options['Server'] -or $Options['ClientOnly']) { return 'client-only' }
-    if ($Options['ServerOnly']) { return 'server-only' }
-    if ($Options.ContainsKey('ClientOnly')) { return 'full' }
-    # The release bootstrap has already resolved defaults before selecting an archive.
-    if ($env:HINDSIGHTKIT_INSTALL_MODE -in @('client-only', 'server-only', 'full')) {
-        return $env:HINDSIGHTKIT_INSTALL_MODE
-    }
-    $settings = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
-    $record = Join-Path $settings 'installation.json'
-    if (Test-Path -LiteralPath $record -PathType Leaf) {
-        $installed = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
-        if ($installed.schema -ne 1 -or $installed.mode -notin @('client-only', 'server-only', 'full')) {
-            throw 'Invalid installation mode record. Rerun with -ClientOnly or -ClientOnly:$false to select the installation role.'
-        }
-        return $installed.mode
-    }
-    $profile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
-    $config = if ($env:HINDSIGHT_CONFIG) { $env:HINDSIGHT_CONFIG } else { Join-Path $env:USERPROFILE '.hindsight/coding-agent.json' }
-    if (-not (Test-Path -LiteralPath $profile -PathType Leaf) -and
-        ((Test-Path -LiteralPath (Join-Path $settings 'client-runtime/.installed-lock') -PathType Leaf) -or
-         (Test-Path -LiteralPath $config -PathType Leaf))) {
-        return 'client-only'
-    }
-    return 'full'
-}
+@@INSTALL_OPTIONS@@
 
 function Protect-InstallLogs([string]$Directory) {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -132,7 +107,7 @@ function Expand-InstallFiles([IO.Stream]$Stream, [string]$Destination, $Expected
 
 function Expand-InstallPackage([IO.Stream]$Archive, [string]$Destination) {
     $hashes = Expand-InstallFiles $Archive $Destination
-    foreach ($required in @('setup.ps1', 'pyproject.toml', 'uv.lock', 'release.json', 'src/hindsightkit/cli.py', 'src/hindsightkit/installer.py')) {
+    foreach ($required in @('setup.ps1', 'pyproject.toml', 'uv.lock', 'release.json', 'src/hindsightkit/cli.py', 'src/hindsightkit/installer.py', 'src/hindsightkit/install_options.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Destination $required) -PathType Leaf)) { throw "Release package is missing $required" }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $Destination 'release.json') -Raw | ConvertFrom-Json
@@ -284,20 +259,9 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
     if ($releaseVersion.StartsWith('@@')) { throw 'Use install.ps1 from a published release. This file is a packaging template.' }
     if ($env:OS -ne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne 'AMD64')) { throw 'HindsightKit requires x64 Windows.' }
     $installationMode = Resolve-InstallMode $Options
+    Assert-InstallOptions $Options $installationMode
     $clientInstall = $installationMode -eq 'client-only'
     if ($installationMode -eq 'server-only') { $ServerOnly = $true }
-    if ($ServerOnly -and $clientInstall) { throw 'ServerOnly and client-only options cannot be combined.' }
-    if ($clientInstall -and ($Model -or $ModelDir -or $Port -or $ReasoningEffort)) { throw 'Model and port options belong on the server.' }
-    if ($clientInstall -and $ApiKeyEnv -and -not $Server) { throw '-ApiKeyEnv requires -Server during client-only installation.' }
-    if ($ReasoningEffort -and $ReasoningEffort -notin @('low', 'medium', 'high', 'xhigh', 'max')) { throw 'Unknown reasoning effort.' }
-    if ($Port -lt 0 -or $Port -gt 65535) { throw 'Choose an API port between 1 and 65535, or 0 for the default.' }
-    if ($Server) {
-        $parsedServer = [uri]$Server
-        if ($parsedServer.Scheme -notin @('http', 'https') -or -not $parsedServer.Host -or $parsedServer.UserInfo -or
-            $parsedServer.Query -or $parsedServer.Fragment -or $parsedServer.AbsolutePath -ne '/' -or $Server -match '\s') {
-            throw 'Use an HTTP(S) server address without credentials, path, query, or fragment.'
-        }
-    }
     if (-not $ServerOnly -and -not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Install Git before installing coding integrations.' }
     if ($requiresAuth -and -not (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Install GitHub CLI and run gh auth login with an account that can read this repository.' }
     $root = Assert-InstallDirectory $InstallDir

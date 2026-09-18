@@ -16,7 +16,7 @@ from hindsightkit.postgres import Postgres, require_postgresql, available_port, 
 def check_hindsight(server, root):
     """Run the unmodified official API against the disposable non-superuser DB."""
     import aiohttp
-    from hindsightkit import cli
+    from hindsightkit import cli, installer, services, runtime as runtime_env
     from hindsight_embed.profile_manager import ProfileManager
     config = ProfileManager().load_profile_config('hindsightkit')
     port = available_port(0)
@@ -46,7 +46,7 @@ def check_hindsight(server, root):
                 await asyncio.sleep(1)
             else:
                 raise RuntimeError('Hindsight API startup timed out; see ' + str(log_path))
-        await cli.check_memory(url)
+        await services.check_memory(url)
     try:
         asyncio.run(check())
     except BaseException:

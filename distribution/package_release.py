@@ -500,11 +500,15 @@ def package_release(*, version: str, repository: str, server_url: str,
     template_path = ordinary_path(source_root / "distribution/install.ps1")
     inspect_file(template_path, needles)
     template = template_path.read_text(encoding="utf-8-sig")
+    options_path = source_root / "src/hindsightkit/install_options.ps1"
+    if "app/src/hindsightkit/install_options.ps1" not in application:
+        raise ValueError("Shared installation options are missing")
     substitutions = {"@@VERSION@@": version, "@@RELEASE_URL@@": release_url,
                      "@@PACKAGE_NAME@@": APP_NAME, "@@PACKAGE_SHA256@@": "",
                      "@@CLIENT_PACKAGE_NAME@@": CLIENT_APP_NAME, "@@CLIENT_PACKAGE_SHA256@@": "",
                      "@@REPOSITORY@@": repository,
-                     "@@REQUIRES_AUTH@@": "$true" if requires_auth else "$false"}
+                     "@@REQUIRES_AUTH@@": "$true" if requires_auth else "$false",
+                     "@@INSTALL_OPTIONS@@": options_path.read_text(encoding="utf-8-sig").rstrip()}
     if any(template.count(token) != 1 for token in substitutions) \
             or set(re.findall(r"@@[A-Z0-9_]+@@", template)) != set(substitutions):
         raise ValueError("Installer template must contain each supported token exactly once")

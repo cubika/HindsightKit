@@ -92,7 +92,7 @@ def _json(executable, *arguments):
 def ensure_cli(interactive=True):
     if os.name != 'nt':
         raise RuntimeError('Managed relay installation currently supports Windows only.')
-    from .cli import home
+    from .runtime import home
     managed = home() / 'tools/devtunnel.exe'
     existing = managed if managed.is_file() else shutil.which('devtunnel.exe')
     binary = Path(existing).resolve() if existing else managed

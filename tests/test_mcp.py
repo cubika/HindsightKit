@@ -11,7 +11,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp import types
 
-from hindsightkit import cli, connection, mcp as memory_mcp
+from hindsightkit import runtime as runtime_env, connection, mcp as memory_mcp
 from hindsightkit import memory_control
 
 
@@ -44,7 +44,7 @@ class McpTests(unittest.TestCase):
                 a, b = root / 'a', root / 'b'
                 for path in [a, b]:
                     path.mkdir()
-                    cli.run(['git', 'init', path], capture=True)
+                    runtime_env.run(['git', 'init', path], capture=True)
 
                 async def session(context, cwd, roots=None, changed_roots=None):
                     active_roots = roots
@@ -84,7 +84,7 @@ class McpTests(unittest.TestCase):
         async def check():
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
-                cli.run(['git', 'init', root], capture=True)
+                runtime_env.run(['git', 'init', root], capture=True)
                 async def list_roots(_):
                     return types.ListRootsResult(roots=[types.Root(uri=root.as_uri())])
                 params = StdioServerParameters(command=sys.executable,

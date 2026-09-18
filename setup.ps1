@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [string]$Model,
-    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$ReasoningEffort,
     [string]$ModelDir,
     [int]$Port = 0,
@@ -27,48 +26,13 @@ function Write-InstallStatus([string]$Message) {
     Add-InstallLog $Message
 }
 
-function Resolve-InstallMode([System.Collections.IDictionary]$Options) {
-    if ($Options['Server'] -or $Options['ClientOnly']) { return 'client-only' }
-    if ($Options['ServerOnly']) { return 'server-only' }
-    if ($Options.ContainsKey('ClientOnly')) { return 'full' }
-    # The release bootstrap has already resolved defaults before selecting an archive.
-    if ($env:HINDSIGHTKIT_INSTALL_MODE -in @('client-only', 'server-only', 'full')) {
-        return $env:HINDSIGHTKIT_INSTALL_MODE
-    }
-    $settings = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
-    $record = Join-Path $settings 'installation.json'
-    if (Test-Path -LiteralPath $record -PathType Leaf) {
-        $installed = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
-        if ($installed.schema -ne 1 -or $installed.mode -notin @('client-only', 'server-only', 'full')) {
-            throw 'Invalid installation mode record. Rerun with -ClientOnly or -ClientOnly:$false to select the installation role.'
-        }
-        return $installed.mode
-    }
-    $profile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
-    $config = if ($env:HINDSIGHT_CONFIG) { $env:HINDSIGHT_CONFIG } else { Join-Path $env:USERPROFILE '.hindsight/coding-agent.json' }
-    if (-not (Test-Path -LiteralPath $profile -PathType Leaf) -and
-        ((Test-Path -LiteralPath (Join-Path $settings 'client-runtime/.installed-lock') -PathType Leaf) -or
-         (Test-Path -LiteralPath $config -PathType Leaf))) {
-        return 'client-only'
-    }
-    return 'full'
-}
+. (Join-Path $PSScriptRoot 'src/hindsightkit/install_options.ps1')
 
 # Validate before installing dependencies or touching an existing connection.
 $installationMode = Resolve-InstallMode $PSBoundParameters
+Assert-InstallOptions $PSBoundParameters $installationMode
 $clientOnly = $installationMode -eq 'client-only'
 if ($installationMode -eq 'server-only') { $ServerOnly = $true }
-if ($clientOnly -and ($ServerOnly -or $Model -or $ModelDir -or $Port -or $ReasoningEffort)) {
-    throw 'Client setup accepts -Server; model and port options belong on the server.'
-}
-if ($Port -lt 0 -or $Port -gt 65535) { throw 'Choose an API port between 1 and 65535, or 0 for the default.' }
-if ($Server) {
-    $parsedApi = [uri]$Server
-    if ($parsedApi.Scheme -notin @('http', 'https') -or -not $parsedApi.Host -or $parsedApi.UserInfo -or
-        $parsedApi.Query -or $parsedApi.Fragment -or $parsedApi.AbsolutePath -ne '/' -or $Server -match '\s') {
-        throw 'Use an HTTP(S) server address without credentials, path, query, or fragment.'
-    }
-}
 if ($ModelDir) {
     $ModelDir = (Resolve-Path -LiteralPath $ModelDir).Path
     if (-not (Test-Path -LiteralPath (Join-Path $ModelDir 'onnx/model.onnx') -PathType Leaf) -or
@@ -77,7 +41,6 @@ if ($ModelDir) {
     }
 }
 if ($ApiKeyEnv) {
-    if ($clientOnly -and -not $Server) { throw '-ApiKeyEnv requires -Server during client-only installation.' }
     $selectedKey = [Environment]::GetEnvironmentVariable($ApiKeyEnv)
     if (-not $selectedKey) { throw 'The selected API-key environment variable is empty.' }
     if ($selectedKey -match '[^\x00-\x7f]|\s') { throw 'Connection key must contain ASCII characters without whitespace.' }

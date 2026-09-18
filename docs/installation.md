@@ -51,7 +51,7 @@ The downloaded `install.ps1` accepts these arguments. When using a release page'
 | `-NoOpen` | Do not open the dashboard after setup. |
 | `-InstallDir C:\Apps\HindsightKit` | Change the release application, managed Python, and installation-log location. It does not relocate memory or user configuration. |
 | `-Model` / `-ReasoningEffort` | Select model settings for a new server profile. |
-| `-Port` | Set the API port for a new server profile. Default: 9077. |
+| `-Port` | Set the API port for a new server profile: 1024–55534. Default: 9077. |
 | `-ModelDir C:\models\e5` | Reuse the official multilingual E5 model. The directory must contain `onnx\model.onnx` and tokenizer files, including `tokenizer.json`. |
 | `-ApiKeyEnv NAME` | Read a connection key from a named environment variable for automated setup. |
 
@@ -118,6 +118,8 @@ The application downloads separately from Python and Node dependencies. Dependen
 All required archives are downloaded and assembled before setup runs. A download or extraction failure leaves the previous version in place and keeps verified downloads for the next attempt. Existing releases that used a single combined archive have no component cache; their first upgrade to this format downloads the required components. Clearing the download cache also requires those downloads again.
 
 Setup preserves existing model settings, memory banks, and unrelated editor configuration. Changed integration files receive a `.hindsightkit-backup` copy once. Conflicting endpoints or disabled-learning settings stop registration. The official coding-agent configuration must be strict JSON; VS Code JSONC comments are preserved.
+
+A full upgrade also refreshes this computer's client components when they use a remote server. The selected address and connection key remain unchanged.
 
 Upgrading files does not update already running sessions. A source installation still depends on its checkout until a release installation has completed and the relevant services and clients have restarted. Do not delete a directory that still supplies a running installation.
 

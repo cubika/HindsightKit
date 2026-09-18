@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import os
 from pathlib import Path
@@ -16,7 +15,7 @@ from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.models import RequestContext
 from hindsight_embed.profile_manager import ProfileManager
 
-from hindsightkit import cli
+from hindsightkit import services, runtime as runtime_env
 from hindsightkit.server import ClientsExtension
 
 
@@ -35,28 +34,28 @@ class SharingConfigurationTests(unittest.TestCase):
         self.path.write_text("# Keep this comment.\nHINDSIGHT_API_PORT=9077\n"
                              "HINDSIGHT_API_HOST=127.0.0.1\nHINDSIGHT_API_LLM_MODEL=existing-model\n"
                              "CUSTOM_SETTING=keep=this-value\n", encoding="utf-8")
-        for patcher in [patch.object(cli, "profile_config", side_effect=self.profile),
-                        patch.object(cli, "home", return_value=self.root),
-                        patch.object(cli, "executable", return_value="fixture-hindsight-embed")]:
+        for patcher in [patch.object(services, "profile_config", side_effect=self.profile),
+                        patch.object(runtime_env, "home", return_value=self.root),
+                        patch.object(runtime_env, "executable", return_value="fixture-hindsight-embed")]:
             patcher.start()
             self.addCleanup(patcher.stop)
         manager = patch("hindsight_embed.daemon_embed_manager.DaemonEmbedManager")
         self.manager = manager.start()
         self.addCleanup(manager.stop)
         self.manager.return_value.is_ui_running.return_value = True
-        self.manager.return_value.is_running.return_value = True
-        runner = patch.object(cli, "run")
+        self.manager.return_value.is_running.side_effect = AssertionError('Stopping must not depend on API health')
+        runner = patch.object(runtime_env, "run")
         self.run = runner.start()
         self.addCleanup(runner.stop)
 
     def profile(self):
         manager = ProfileManager.__new__(ProfileManager)
         with patch.object(manager, "resolve_profile_paths", return_value=self.paths):
-            return manager.load_profile_config(cli.PROFILE), self.paths
+            return manager.load_profile_config(runtime_env.PROFILE), self.paths
 
     def test_sharing_preserves_profile_and_enables_official_extensions(self):
         original = self.path.read_bytes()
-        cli.configure_sharing(TOKEN, "hindsightkit-shared")
+        services.configure_sharing(TOKEN, "hindsightkit-shared")
         config, _ = self.profile()
         self.assertEqual(config["HINDSIGHT_API_HOST"], "0.0.0.0")
         self.assertEqual(config["HINDSIGHT_API_TENANT_EXTENSION"], TENANT_EXTENSION)
@@ -69,27 +68,30 @@ class SharingConfigurationTests(unittest.TestCase):
         self.assertTrue(self.path.read_text(encoding="utf-8").startswith("# Keep this comment.\n"))
         self.assertEqual(self.path.with_name("hindsightkit.env.hindsightkit-backup").read_bytes(), original)
         self.assertEqual(self.run.call_args_list, [
-            call(["fixture-hindsight-embed", "--profile", cli.PROFILE, "ui", "stop"]),
+            call(["fixture-hindsight-embed", "--profile", runtime_env.PROFILE, "ui", "stop"]),
         ])
+        self.manager.return_value.stop.assert_called_once_with(runtime_env.PROFILE)
+        self.manager.return_value.is_running.assert_not_called()
         self.assertFalse((self.root / "clients.json").exists())
 
     def test_repeating_sharing_does_not_stop_services_or_rewrite_config(self):
-        cli.configure_sharing(TOKEN, "hindsightkit-shared")
+        services.configure_sharing(TOKEN, "hindsightkit-shared")
         original = self.path.read_bytes()
         self.manager.reset_mock()
         self.run.reset_mock()
-        with patch.object(cli, "backup") as backup:
-            cli.configure_sharing(TOKEN, "hindsightkit-shared")
+        with patch.object(runtime_env, "backup") as backup:
+            services.configure_sharing(TOKEN, "hindsightkit-shared")
         self.manager.assert_not_called()
         self.run.assert_not_called()
         backup.assert_not_called()
         self.assertEqual(self.path.read_bytes(), original)
 
-    def test_stopped_services_are_not_stopped_again(self):
+    def test_stopped_dashboard_is_not_restarted_or_stopped_but_api_stop_is_attempted(self):
         self.manager.return_value.is_ui_running.return_value = False
-        self.manager.return_value.is_running.return_value = False
-        cli.configure_sharing(TOKEN, "hindsightkit-shared")
+        services.configure_sharing(TOKEN, "hindsightkit-shared")
         self.run.assert_not_called()
+        self.manager.return_value.stop.assert_called_once_with(runtime_env.PROFILE)
+        self.manager.return_value.is_running.assert_not_called()
         self.assertEqual(self.profile()[0]["HINDSIGHT_API_HOST"], "0.0.0.0")
 
     def test_conflicting_extensions_and_mcp_auth_reject_before_service_changes(self):
@@ -105,7 +107,7 @@ class SharingConfigurationTests(unittest.TestCase):
                 self.path.write_text(original + name + "=" + value + "\n", encoding="utf-8")
                 before = self.path.read_bytes()
                 with self.assertRaises(RuntimeError):
-                    cli.configure_sharing(TOKEN, "hindsightkit-shared")
+                    services.configure_sharing(TOKEN, "hindsightkit-shared")
                 self.assertEqual(self.path.read_bytes(), before)
         self.manager.assert_not_called()
         self.run.assert_not_called()
