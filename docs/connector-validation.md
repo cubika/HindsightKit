@@ -142,7 +142,7 @@ The v0.1.4 repository-memory switch candidate passed all 397 tests. Connector ch
 
 ## September 18, 2026: mail ledger and session refactor
 
-The repository suite passed all 503 tests with `PYTHONPATH` set to the checkout's `src` directory. The local virtual environment otherwise imported an older installed package. The 16 connector registry tests also passed after removing an unused test import. Checks used synthetic data and made no mailbox reads or model calls.
+The repository suite passed all 503 tests with `PYTHONPATH` set to the checkout's `src` directory. The local virtual environment otherwise imported an older installed package. The 16 connector registry tests also passed after removing an unused test import. After integrating the newer device sign-in change, all 254 affected mail, connector registry, relay, remote setup, and lifecycle tests passed. Checks used synthetic data and made no mailbox reads or model calls.
 
 Regression cases verified index creation after migration of an older ledger, preservation of discovery errors, folder filtering and thread deduplication, matching active and saved status, the ten-item failure limit, and read-only snapshots. Existing publication recovery and cancellation tests passed. New session-creation timeout and cancellation tests verified runtime cleanup and the prefilter's uncertain result on timeout.
 
