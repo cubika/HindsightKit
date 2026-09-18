@@ -255,6 +255,283 @@ function Remove-InstallStage([string]$Root, [string]$Stage) {
     Remove-Item -LiteralPath $checked -Recurse -Force
 }
 
+function Read-InstallRecord([string]$Path) {
+    Assert-InstallDirectory ([IO.Path]::GetDirectoryName($Path)) | Out-Null
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -gt 4MB) {
+        throw 'Cannot safely read installation metadata.'
+    }
+    return [IO.File]::ReadAllText($Path)
+}
+
+function Get-InstalledRelease([string]$Path) {
+    Assert-InstallDirectory $Path | Out-Null
+    $pending = Get-InstallCleanupReceipt $Path
+    if (Test-Path -LiteralPath $pending) {
+        $record = Read-InstallRecord $pending | ConvertFrom-Json
+        if ($record.schema -ne 1 -or $record.Digest -cnotmatch '^[a-f0-9]{64}$' -or
+            (Split-Path -Leaf $Path) -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?-[a-f0-9]{12}$' -or
+            -not (Split-Path -Leaf $Path).EndsWith('-' + $record.Digest.Substring(0, 12)) -or
+            $record.Files -isnot [pscustomobject] -or -not $record.Files.'setup.ps1' -or -not $record.Files.'release.json' -or
+            -not $record.Archives -or @($record.Archives | Where-Object { $_ -cnotmatch '^[a-f0-9]{64}\.zip$' }).Count) {
+            throw 'Invalid cleanup receipt.'
+        }
+        return [pscustomobject]@{ Path=$Path; Digest=$record.Digest; Files=$record.Files; Archives=$record.Archives;
+            Completed=$null; Created=$null; Started=$false; Pending=$true }
+    }
+    $digest = (Read-InstallRecord (Join-Path $Path '.package-sha256')).Trim()
+    $manifest = Read-InstallRecord (Join-Path $Path 'release.json') | ConvertFrom-Json
+    if ($digest -cnotmatch '^[a-f0-9]{64}$' -or $manifest.schema -ne 1 -or
+        $manifest.version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$' -or
+        (Split-Path -Leaf $Path) -cne ($manifest.version + '-' + $digest.Substring(0, 12))) {
+        throw 'Unrecognized release directory.'
+    }
+    $files = Read-InstallRecord (Join-Path $Path '.package-files.json') | ConvertFrom-Json
+    if ($files -isnot [pscustomobject] -or -not $files.'setup.ps1' -or -not $files.'release.json') {
+        throw 'Unrecognized installed file manifest.'
+    }
+    $archives = @($digest + '.zip')
+    foreach ($component in $manifest.components) {
+        if ($component.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid installed component digest.' }
+        $archives += $component.sha256 + '.zip'
+    }
+    $completed = $null
+    $receipt = Join-Path $Path '.install-success.json'
+    if (Test-Path -LiteralPath $receipt) {
+        $record = Read-InstallRecord $receipt | ConvertFrom-Json
+        if ($record.schema -ne 1 -or $record.package_sha256 -cne $digest) { throw 'Invalid installation receipt.' }
+        $completed = [DateTimeOffset]::Parse($record.completed_utc).UtcDateTime
+    }
+    return [pscustomobject]@{ Path=$Path; Digest=$digest; Files=$files; Archives=$archives; Completed=$completed;
+        Created=(Get-Item -LiteralPath $Path).CreationTimeUtc;
+        Started=(Test-Path -LiteralPath (Join-Path $Path '.install-started'));
+        Pending=$false }
+}
+
+function Get-InstallCleanupReceipt([string]$App) {
+    $root = Split-Path -Parent (Split-Path -Parent $App)
+    return Assert-InstallChild $root (Join-Path $root ('.cleanup-' + (Split-Path -Leaf $App) + '.json'))
+}
+
+function ConvertTo-InstallReference([string]$Value) {
+    # Match JSON-escaped paths, JSONC, environment variables, and launcher shebangs.
+    $decoded = [regex]::Replace($Value, '\\u([0-9a-fA-F]{4})', {
+        param($match)
+        [string][char][Convert]::ToInt32($match.Groups[1].Value, 16)
+    })
+    # ExpandEnvironmentVariables stops at NUL on Windows; launcher binaries contain NULs.
+    $decoded = $decoded.Replace([string][char]0, '')
+    return ([Environment]::ExpandEnvironmentVariables($decoded).Replace('\', '/') -replace '/+', '/').ToLowerInvariant()
+}
+
+function Get-InstallReferences {
+    $settings = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
+    $official = Join-Path $env:USERPROFILE '.hindsight'
+    $config = if ($env:HINDSIGHT_CONFIG) { $env:HINDSIGHT_CONFIG } else { Join-Path $official 'coding-agent.json' }
+    $paths = @($config, (Join-Path $official 'profiles/hindsightkit.env'),
+        (Join-Path $env:USERPROFILE '.copilot/mcp-config.json'),
+        (Join-Path $env:USERPROFILE '.copilot/hooks/hindsight-coding-agents.json'))
+    foreach ($relative in @('node-path.txt', 'bin/hindsightkit.exe', 'bin/hk.exe', 'clients.json', 'repositories.json',
+            'remote/host/launch.json')) { $paths += Join-Path $settings $relative }
+    $clients = Join-Path $settings 'remote/clients'
+    if (Test-Path -LiteralPath $clients) {
+        Assert-InstallDirectory $clients | Out-Null
+        foreach ($client in Get-ChildItem -LiteralPath $clients -Directory -Force) {
+            $paths += Join-Path $client.FullName 'launch.json'
+        }
+    }
+    if ($env:APPDATA) {
+        foreach ($editor in @('Code', 'Code - Insiders')) {
+            $user = Join-Path $env:APPDATA ($editor + '/User')
+            $paths += Join-Path $user 'mcp.json'
+            $profiles = Join-Path $user 'profiles'
+            if (Test-Path -LiteralPath $profiles) {
+                Assert-InstallDirectory $profiles | Out-Null
+                foreach ($profile in Get-ChildItem -LiteralPath $profiles -Directory -Force) {
+                    $paths += Join-Path $profile.FullName 'mcp.json'
+                }
+            }
+        }
+    }
+    $references = @($settings, $official, $config, $env:PATH, $env:VIRTUAL_ENV)
+    foreach ($path in $paths) {
+        # The location itself may contain user data inside a release directory.
+        $references += [IO.Path]::GetFullPath($path)
+        Assert-InstallDirectory ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))) | Out-Null
+        if (Test-Path -LiteralPath $path) { $references += Read-InstallRecord $path }
+    }
+    return ConvertTo-InstallReference ($references -join [Environment]::NewLine)
+}
+
+function Get-InstallProcessReferences {
+    $references = @()
+    $processes = @(Get-CimInstance Win32_Process -Property Name, ExecutablePath, CommandLine -OperationTimeoutSec 10 -ErrorAction Stop)
+    if (-not $processes.Count) { throw 'Process inspection returned no results.' }
+    foreach ($process in $processes) {
+        if ($process.Name -match '^(python.*|node|hindsight.*|hk|copilot|powershell|pwsh|cmd)\.exe$' -and
+            (-not $process.ExecutablePath -or -not $process.CommandLine)) {
+            throw 'Cannot inspect a process that may use an older installation. Close older HindsightKit sessions and rerun the installer to retry cleanup.'
+        }
+        $references += [string]$process.ExecutablePath
+        $references += [string]$process.CommandLine
+    }
+    return ConvertTo-InstallReference ($references -join [Environment]::NewLine)
+}
+
+function Get-InstallTree([string]$Root, [string]$Path) {
+    $checked = Assert-InstallChild $Root $Path
+    Assert-InstallDirectory $checked | Out-Null
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($checked)
+    while ($pending.Count) {
+        $directory = $pending.Pop()
+        foreach ($item in Get-ChildItem -LiteralPath $directory -Force) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Cleanup found a linked file or directory.' }
+            $item
+            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+        }
+    }
+}
+
+function Remove-OldInstalledRelease([string]$Root, $Release, $Totals) {
+    $path = Assert-InstallChild (Join-Path $Root 'versions') $Release.Path
+    $references = (Get-InstallReferences) + [Environment]::NewLine + (Get-InstallProcessReferences)
+    if ($references.Contains((ConvertTo-InstallReference $path))) { throw 'Release is still referenced by a process or configuration.' }
+    $items = @(Get-InstallTree $Root $path)
+    $control = @('.package-sha256', '.package-files.json', 'release.json', '.install-success.json',
+        '.install-success.json.tmp', '.install-started')
+    $ownedDirectories = @{}
+    foreach ($property in $Release.Files.PSObject.Properties) {
+        $relative = $property.Name
+        while ($relative.Contains('/')) {
+            $relative = $relative.Substring(0, $relative.LastIndexOf('/'))
+            $ownedDirectories[$relative] = $true
+        }
+    }
+    foreach ($directory in $items | Where-Object PSIsContainer) {
+        $relative = $directory.FullName.Substring($path.Length + 1).Replace('\', '/')
+        if (-not $ownedDirectories.ContainsKey($relative) -and
+            $relative -notmatch '^(\.venv(?:/|$)|\.runtime$|\.runtime/(tools|uv-cache)(?:/|$))') {
+            throw 'Release contains directories not owned by the installer.'
+        }
+    }
+    foreach ($file in $items | Where-Object { -not $_.PSIsContainer }) {
+        $relative = $file.FullName.Substring($path.Length + 1).Replace('\', '/')
+        if ($relative -notin $control -and -not $Release.Files.PSObject.Properties[$relative] -and
+            $relative -notmatch '^(\.venv/|\.runtime/(tools|uv-cache)/)') {
+            throw 'Release contains files not owned by the installer.'
+        }
+        # Check locks before removing anything, including lazily imported modules.
+        $handle = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        $handle.Dispose()
+        if ($Release.Pending -and $Release.Files.PSObject.Properties[$relative] -and
+            (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $Release.Files.$relative) {
+            throw 'Installed application files changed during interrupted cleanup.'
+        }
+    }
+    if (-not $Release.Pending) { Assert-InstalledPackage $path }
+    $pending = Get-InstallCleanupReceipt $path
+    if (-not $Release.Pending) {
+        $record = @{ schema=1; Digest=$Release.Digest; Files=$Release.Files; Archives=$Release.Archives } | ConvertTo-Json -Depth 5
+        $temporary = $pending + '.tmp'
+        if (Test-Path -LiteralPath $temporary) { Read-InstallRecord $temporary | Out-Null }
+        [IO.File]::WriteAllText($temporary, $record)
+        [IO.File]::Move($temporary, $pending)
+    }
+    # The external receipt survives an interruption, even during metadata deletion.
+    foreach ($file in $items | Where-Object { -not $_.PSIsContainer -and $_.FullName.Substring($path.Length + 1) -notin $control }) {
+        Remove-Item -LiteralPath $file.FullName -Force
+        $Totals.Bytes += $file.Length
+    }
+    foreach ($directory in $items | Where-Object PSIsContainer | Sort-Object { $_.FullName.Length } -Descending) {
+        [IO.Directory]::Delete($directory.FullName)
+    }
+    foreach ($name in $control) {
+        $file = Join-Path $path $name
+        if (Test-Path -LiteralPath $file) {
+            $size = (Get-Item -LiteralPath $file -Force).Length
+            Remove-Item -LiteralPath $file -Force
+            $Totals.Bytes += $size
+        }
+    }
+    [IO.Directory]::Delete($path)
+    $Totals.Versions++
+    Remove-Item -LiteralPath $pending -Force
+}
+
+function Invoke-InstallRetention([string]$Root, [string]$App) {
+    # Called only after setup's runtime, launcher, and memory checks succeed, under install.lock.
+    $totals = @{ Bytes=[long]0; Versions=0; Files=0 }
+    try {
+        $current = Get-InstalledRelease $App
+        $receipt = Join-Path $App '.install-success.json'
+        $temporary = $receipt + '.tmp'
+        foreach ($file in @($receipt, $temporary)) { if (Test-Path -LiteralPath $file) { Read-InstallRecord $file | Out-Null } }
+        $record = @{ schema=1; package_sha256=$current.Digest; completed_utc=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
+        [IO.File]::WriteAllText($temporary, $record)
+        if (Test-Path -LiteralPath $receipt) { [IO.File]::Replace($temporary, $receipt, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $receipt) }
+        if ($current.Pending) { Remove-Item -LiteralPath (Get-InstallCleanupReceipt $App) -Force }
+        $versions = Assert-InstallDirectory (Join-Path $Root 'versions')
+        $releases = @()
+        $cacheSafe = $true
+        foreach ($pending in Get-ChildItem -LiteralPath $Root -Filter '.cleanup-*.json' -File -Force) {
+            try {
+                $name = $pending.Name.Substring(9, $pending.Name.Length - 14)
+                $path = Assert-InstallChild $versions (Join-Path $versions $name)
+                if (-not (Test-Path -LiteralPath $path)) {
+                    # Validate the receipt before removing an orphan left after directory deletion.
+                    Get-InstalledRelease $path | Out-Null
+                    Remove-Item -LiteralPath $pending.FullName -Force
+                }
+            } catch { $cacheSafe = $false }
+        }
+        foreach ($directory in Get-ChildItem -LiteralPath $versions -Directory -Force) {
+            try { $releases += Get-InstalledRelease $directory.FullName }
+            catch { $cacheSafe = $false }
+        }
+        $previous = $releases | Where-Object { $_.Path -ne $App -and $_.Completed -and -not $_.Pending } |
+            Sort-Object Completed -Descending | Select-Object -First 1
+        if (-not $previous) {
+            # Keep one legacy copy when upgrading from installers without success receipts.
+            $previous = $releases | Where-Object { $_.Path -ne $App -and -not $_.Started -and -not $_.Pending } |
+                Sort-Object Created -Descending | Select-Object -First 1
+        }
+        foreach ($release in $releases) {
+            if ($release.Path -eq $App -or $release.Path -eq $previous.Path -or
+                ($release.Started -and -not $release.Completed)) { continue }
+            try { Remove-OldInstalledRelease $Root $release $totals }
+            catch { Write-InstallMessage ('Kept older release ' + (Split-Path -Leaf $release.Path) + ': ' + $_.Exception.Message) }
+        }
+        $archives = @{}
+        foreach ($release in $releases) {
+            if (Test-Path -LiteralPath $release.Path) { foreach ($archive in $release.Archives) { $archives[$archive] = $true } }
+        }
+        foreach ($name in @('downloads', 'logs')) {
+            $directory = Assert-InstallDirectory (Join-Path $Root $name)
+            if (-not (Test-Path -LiteralPath $directory)) { continue }
+            foreach ($file in Get-ChildItem -LiteralPath $directory -File -Force) {
+                if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                if ($name -eq 'downloads') {
+                    # Leave recent failed downloads available for retries.
+                    if (-not $cacheSafe -or $file.Name -cnotmatch '^[a-f0-9]{64}\.zip(?:\.partial)?$' -or
+                        $archives.ContainsKey(($file.Name -replace '\.partial$', '')) -or
+                        $file.LastWriteTimeUtc -ge [DateTime]::UtcNow.AddDays(-7)) { continue }
+                } elseif ($file.Name -cnotmatch '^install-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}\.log$' -or
+                    $file.FullName -eq $script:installLog -or $file.LastWriteTimeUtc -ge [DateTime]::UtcNow.AddDays(-30)) { continue }
+                try {
+                    $checked = Assert-InstallChild $Root $file.FullName
+                    Remove-Item -LiteralPath $checked -Force
+                    $totals.Bytes += $file.Length
+                    $totals.Files++
+                } catch { Write-InstallMessage 'An old cache or log file is in use; cleanup will retry after a later installation.' }
+            }
+        }
+    } catch { Write-InstallMessage ('Installation cleanup deferred: ' + $_.Exception.Message) }
+    Write-InstallMessage ('Cleanup: removed {0} older version(s), {1} cache/log file(s), {2:N1} MiB of files. Kept current and previous successful versions and any protected releases.' -f
+        $totals.Versions, $totals.Files, ($totals.Bytes / 1MB))
+}
+
 function Install-HindsightKit([System.Collections.IDictionary]$Options) {
     if ($releaseVersion.StartsWith('@@')) { throw 'Use install.ps1 from a published release. This file is a packaging template.' }
     if ($env:OS -ne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne 'AMD64')) { throw 'HindsightKit requires x64 Windows.' }
@@ -310,6 +587,8 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
             Assert-InstalledPackage $app
         }
         Write-InstallMessage ("Using verified application: " + $app)
+        $started = Join-Path $app '.install-started'
+        if (-not (Test-Path -LiteralPath $started)) { [IO.File]::WriteAllText($started, $packageSha256) }
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $app 'setup.ps1'))
         if ($ServerOnly) { $arguments += '-ServerOnly' }
         if ($clientInstall) { $arguments += '-ClientOnly' }
@@ -357,6 +636,7 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
         $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
         $commandDirectory = Join-Path $commandRoot 'bin'
         $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
+        Invoke-InstallRetention $root $app
         Write-InstallMessage "HindsightKit $releaseVersion installed successfully."
         if ($clientInstall -and -not $Server) {
             Write-Host 'Client is ready. Use hindsightkit connect to choose a server; existing connections are preserved.'
