@@ -101,16 +101,16 @@ def install_node_packages(client=False):
 def install_node_role(role):
     from filelock import FileLock
     from .install_progress import run_install
-    from .node_bundle import install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
+    from .node_bundle import bundle_session, install_bundle, package_directory, release_bundle, verify_installed, verify_bundle_files
     directory = home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
     directory.mkdir(parents=True, exist_ok=True)
     source_root = package_directory(PACKAGE, role)
     lock = source_root / 'package-lock.json'
     stamp = directory / '.installed-lock'
-    digest = hashlib.sha256(lock.read_bytes()).hexdigest()
     label = {'client': 'Copilot client integration', 'server': 'Hindsight dashboard and server integration'}[role]
     bundle = release_bundle()
-    with FileLock(str(directory / '.install.lock'), timeout=60):
+    with FileLock(str(directory / '.install.lock'), timeout=60), bundle_session(bundle, PACKAGE, roles=(role,)):
+        digest = hashlib.sha256(lock.read_bytes()).hexdigest()
         if stamp.is_file() and stamp.read_bytes() == digest.encode('ascii'):
             print(f'Checking installed {label}...', flush=True)
             try:
@@ -610,26 +610,25 @@ def can_connect_local_client(api_url):
 
 def setup(args):
     validate_setup_options(args)
-    from .node_bundle import release_bundle, validate_bundle
+    from .node_bundle import bundle_session, release_bundle
     bundled = release_bundle()
-    if bundled is not None:
-        roles = ('client',) if args.server or getattr(args, 'client_only', False) else ('client', 'server')
-        validate_bundle(bundled, PACKAGE, roles=roles)
-    if not getattr(args, 'server_only', False):
-        require_client_prerequisites()
-    if args.server:
-        setup_client(args)
-        lifecycle.connected()
-    elif getattr(args, 'client_only', False):
-        setup_client_only()
-    else:
-        local = setup_server(args)
+    roles = ('client',) if args.server or getattr(args, 'client_only', False) else ('client', 'server')
+    with bundle_session(bundled, PACKAGE, roles=roles):
         if not getattr(args, 'server_only', False):
-            if can_connect_local_client(local['apiUrl']):
-                setup_client(args, local_server=local)
-            else:
-                print('Existing client connection preserved. To connect this computer to the local server, run:')
-                print('hindsightkit connect --local')
+            require_client_prerequisites()
+        if args.server:
+            setup_client(args)
+            lifecycle.connected()
+        elif getattr(args, 'client_only', False):
+            setup_client_only()
+        else:
+            local = setup_server(args)
+            if not getattr(args, 'server_only', False):
+                if can_connect_local_client(local['apiUrl']):
+                    setup_client(args, local_server=local)
+                else:
+                    print('Existing client connection preserved. To connect this computer to the local server, run:')
+                    print('hindsightkit connect --local')
     from .command import install
     launcher = install(home() / 'bin')
     print(f'Command installed: {launcher}. Open a new terminal to use hindsightkit.')

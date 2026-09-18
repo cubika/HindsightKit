@@ -1,12 +1,12 @@
 # Installation and maintenance
 
-Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the v0.1.4 Windows x64 preview. The `-ClientOnly` entry requires v0.1.2 or later. Linux, macOS, and Windows ARM are not supported. See [release validation](release-validation.md) for completed checks and publication status.
+Use the installation command on a published release page. It downloads the installer and application files without a source checkout. This guide describes the current Windows x64 installer source; see [release validation](release-validation.md) for published versions and completed checks. The `-ClientOnly` entry requires v0.1.2 or later. Linux, macOS, and Windows ARM are not supported.
 
 ## Before installing
 
 - Use Windows PowerShell 5.1 or PowerShell 7 on Windows x64.
 - Install Git for coding integrations, and have a Copilot account available for sign-in. A dedicated server installed with ServerOnly does not need Git for client routing.
-- Allow downloads from GitHub and Node.js. Python and npm packages come in the release archive; the interpreter and, when needed, Node.js still download. A new local server also downloads the embedding model and database distribution.
+- Allow downloads from GitHub and Node.js. The release supplies the application and pinned dependency archives separately. The Python interpreter and, when needed, Node.js still download. A new local server also downloads the embedding model and database distribution.
 - For a private or internal release, install GitHub CLI and sign in with an account that can read the repository. The release page provides its authenticated command. A browser login does not authenticate PowerShell downloads.
 
 The installer uses the default Copilot profile. A custom `COPILOT_HOME` must be unset before setup. WorkIQ is optional and is not installed by HindsightKit.
@@ -25,7 +25,7 @@ An existing remote client connection is preserved by default setup. Use the sepa
 
 ## Prepare a client for another server
 
-Use the release page's `-ClientOnly` command. On a fresh client it selects the smaller archive, containing the 87 locked client Python packages, and prepares the command and Copilot components. It does not invent a default endpoint, contact a memory server, or install a local dashboard, database, or model.
+Use the release page's `-ClientOnly` command. On a fresh client it downloads the application and client dependency archives, then prepares the command and Copilot components. It does not invent a default endpoint, contact a memory server, or install a local dashboard, database, or model.
 
 After preparation, choose the server:
 
@@ -89,7 +89,9 @@ Application versions are separated from persistent settings and memory so upgrad
 
 | Location | Contents |
 | --- | --- |
-| `%LOCALAPPDATA%\HindsightKit\versions\<version>-<hash>` | Application, bundled Python wheels and requirements in `python`, its `.venv`, managed Node.js, download cache, and release metadata |
+| `%LOCALAPPDATA%\HindsightKit\versions\<version>-<hash>` | Application, assembled Python wheels and requirements in `python`, npm archives in `node`, its `.venv`, and release metadata |
+| `%LOCALAPPDATA%\HindsightKit\downloads` | Release archives cached by SHA256 and checked again before reuse |
+| `%LOCALAPPDATA%\HindsightKit\cache` | Shared uv package cache and portable setup tools |
 | `%LOCALAPPDATA%\HindsightKit\python` | Managed Python runtime |
 | `%LOCALAPPDATA%\HindsightKit\logs\install-<timestamp>-<id>.log` | Installation stages and dependency-command output; interactive setup output is excluded |
 | `%USERPROFILE%\.hindsightkit\bin` | Installed `hindsightkit` and optional `hk` commands |
@@ -111,6 +113,10 @@ Run the newer release's installer to upgrade. It preserves the last successful i
 
 To change roles, explicitly use `-ClientOnly`, `-ServerOnly`, or `-ClientOnly:$false` for full installation in the PowerShell script-block invocation. Installation and configuration are handled by the installer; the public command has no `setup` or `copilot` subcommand. Use the independent `copilot` command to launch Copilot.
 
+The application downloads separately from Python and Node dependencies. Dependencies are split into client and server components. If their content hashes match the cached archives, an upgrade downloads only the application. A dependency change downloads only the affected component archives. Python environments remain separate for each application version and reuse the shared uv cache; existing npm installations are checked before reuse.
+
+All required archives are downloaded and assembled before setup runs. A download or extraction failure leaves the previous version in place and keeps verified downloads for the next attempt. Existing releases that used a single combined archive have no component cache; their first upgrade to this format downloads the required components. Clearing the download cache also requires those downloads again.
+
 Setup preserves existing model settings, memory banks, and unrelated editor configuration. Changed integration files receive a `.hindsightkit-backup` copy once. Conflicting endpoints or disabled-learning settings stop registration. The official coding-agent configuration must be strict JSON; VS Code JSONC comments are preserved.
 
 Upgrading files does not update already running sessions. A source installation still depends on its checkout until a release installation has completed and the relevant services and clients have restarted. Do not delete a directory that still supplies a running installation.
@@ -129,7 +135,7 @@ The log contains stage messages and dependency-command output, not a complete te
 
 If this computer only connects to another server, use the release's `-ClientOnly` command, or pass `-Server` with the server address. A fresh client downloads the smaller package and skips the local dashboard, database, and embedding model. An existing local server keeps its management dependencies.
 
-Release installation uses bundled Python wheels and Hindsight npm components. Copilot CLI is separate: setup checks and reuses an existing installation; if missing, it installs the official CLI globally through npm. That step requires network access and uses the user's npm registry, proxy, and CA settings. Existing Copilot installations are not upgraded or overwritten.
+Release installation uses pinned Python wheels and Hindsight npm components from separate release archives. Copilot CLI is separate: setup checks and reuses an existing installation; if missing, it installs the official CLI globally through npm. That step requires network access and uses the user's npm registry, proxy, and CA settings. Existing Copilot installations are not upgraded or overwritten.
 
 Setup reuses x64 Node.js 22+ with npm from PATH. Otherwise it reuses the current installation's portable Node.js or downloads the pinned official runtime. It skips runtimes inside another HindsightKit checkout or release directory.
 

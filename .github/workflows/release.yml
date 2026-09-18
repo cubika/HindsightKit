@@ -75,13 +75,15 @@ jobs:
           $distribution = Join-Path $env:RUNNER_TEMP 'hindsightkit-postgres/pgsql'
           .venv/Scripts/python.exe distribution/package_release.py --version $env:RELEASE_TAG --repository $env:GITHUB_REPOSITORY --server-url $env:GITHUB_SERVER_URL --visibility $env:RELEASE_VISIBILITY --postgres-directory $distribution --python-directory dist/python --node-directory dist/node --output dist/release
           if ($LASTEXITCODE) { throw 'Release packaging failed.' }
-      - name: Verify Python installation from the final application archive
+      - name: Verify installation from the final application and dependency archives
         shell: pwsh
         run: |
-          Expand-Archive -LiteralPath dist/release/hindsightkit-windows-x64.zip -DestinationPath dist/verified-application
+          .venv/Scripts/python.exe distribution/verify_release_components.py --release-directory dist/release --output dist/verified-application
+          if ($LASTEXITCODE) { throw 'Packaged application and dependency verification failed.' }
           .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/verified-application/app/python --uv uv
           if ($LASTEXITCODE) { throw 'Packaged offline installation failed.' }
-          Expand-Archive -LiteralPath dist/release/hindsightkit-client-windows-x64.zip -DestinationPath dist/verified-client
+          .venv/Scripts/python.exe distribution/verify_release_components.py --release-directory dist/release --application hindsightkit-client-windows-x64.zip --output dist/verified-client
+          if ($LASTEXITCODE) { throw 'Packaged client and dependency verification failed.' }
           .venv/Scripts/python.exe distribution/verify_python_install.py --bundle dist/verified-client/app/python --uv uv
           if ($LASTEXITCODE) { throw 'Client package offline installation failed.' }
           .venv/Scripts/python.exe distribution/verify_node_install.py --bundle dist/verified-application/app/node --package dist/verified-application/app/src/hindsightkit
@@ -115,4 +117,4 @@ jobs:
         run: |
           set -euo pipefail
           export GH_HOST="${GITHUB_SERVER_URL#https://}"
-          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "HindsightKit $RELEASE_TAG" --notes-file release/release-notes.md release/install.ps1 release/hindsightkit-windows-x64.zip release/hindsightkit-client-windows-x64.zip release/postgresql-18.6-pgvector-0.8.6-windows-x64.zip release/QUICKSTART.md release/release-notes.md release/SHA256SUMS
+          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "HindsightKit $RELEASE_TAG" --notes-file release/release-notes.md release/*

@@ -88,21 +88,34 @@ function Assert-InstallChild([string]$Parent, [string]$Child) {
     return $absolute
 }
 
-function Expand-InstallPackage([string]$Archive, [string]$Destination) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+function Assert-ReleaseFile([string]$Name) {
+    if (-not $Name -or $Name.Contains('\') -or $Name -match '[<>:"|?*\x00-\x1f]') { throw "Invalid release package entry: $Name" }
+    foreach ($part in $Name.Split('/')) {
+        if (-not $part -or $part -in @('.', '..') -or $part.TrimEnd(' ', '.') -ne $part -or
+            $part -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') { throw "Invalid release package entry: $Name" }
+    }
+}
+
+function Expand-InstallFiles([IO.Stream]$Stream, [string]$Destination, $ExpectedFiles = $null) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $Stream.Position = 0
+    $zip = New-Object IO.Compression.ZipArchive($Stream, [IO.Compression.ZipArchiveMode]::Read, $true)
     $seen = @{}
     $hashes = [ordered]@{}
     try {
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName
-            if (-not $name.StartsWith('app/', [StringComparison]::Ordinal) -or $name.Contains('\') -or
-                $name.Contains(':') -or $name -match '(^|/)\.{1,2}(/|$)' -or $name -match '[\x00-\x1f]' -or
+            if (-not $name.StartsWith('app/', [StringComparison]::Ordinal) -or
                 (($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000) { throw "Invalid release package entry: $name" }
             $relative = $name.Substring(4)
-            if (-not $relative -or $relative.EndsWith('/')) { continue }
+            Assert-ReleaseFile $relative
             if ($seen.ContainsKey($relative)) { throw "Duplicate release package entry: $name" }
             $seen[$relative] = $true
+            if ($null -ne $ExpectedFiles -and -not $ExpectedFiles.Contains($relative)) { throw "Unexpected component file: $relative" }
+        }
+        if ($null -ne $ExpectedFiles -and $seen.Count -ne $ExpectedFiles.Count) { throw 'Dependency component is missing files.' }
+        foreach ($entry in $zip.Entries) {
+            $relative = $entry.FullName.Substring(4)
             $target = Assert-InstallChild $Destination (Join-Path $Destination $relative)
             $parent = Assert-InstallDirectory ([IO.Path]::GetDirectoryName($target))
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
@@ -111,8 +124,14 @@ function Expand-InstallPackage([string]$Archive, [string]$Destination) {
                 throw 'Extracted application files must not be links.'
             }
             $hashes[$relative] = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+            if ($null -ne $ExpectedFiles -and $hashes[$relative] -ne $ExpectedFiles[$relative]) { throw "Component file SHA256 mismatch: $relative" }
         }
     } finally { $zip.Dispose() }
+    return $hashes
+}
+
+function Expand-InstallPackage([IO.Stream]$Archive, [string]$Destination) {
+    $hashes = Expand-InstallFiles $Archive $Destination
     foreach ($required in @('setup.ps1', 'pyproject.toml', 'uv.lock', 'release.json', 'src/hindsightkit/cli.py', 'src/hindsightkit/installer.py')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Destination $required) -PathType Leaf)) { throw "Release package is missing $required" }
     }
@@ -121,6 +140,113 @@ function Expand-InstallPackage([string]$Archive, [string]$Destination) {
         throw 'Release package metadata does not match this installer.'
     }
     [IO.File]::WriteAllText((Join-Path $Destination '.package-files.json'), ($hashes | ConvertTo-Json))
+}
+
+function Open-VerifiedAsset([string]$Root, [string]$Asset, [string]$Digest) {
+    if ($Asset -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$' -or $Digest -cnotmatch '^[a-f0-9]{64}$') {
+        throw 'Invalid release asset identity.'
+    }
+    $cache = Assert-InstallDirectory (Join-Path $Root 'downloads')
+    New-Item -ItemType Directory -Path $cache -Force | Out-Null
+    $cached = Assert-InstallChild $cache (Join-Path $cache ($Digest + '.zip'))
+    $partial = Assert-InstallChild $cache ($cached + '.partial')
+    foreach ($path in @($cached, $partial)) {
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).PSIsContainer -or
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint))) {
+            throw 'Download cache files must be ordinary files.'
+        }
+    }
+    if (Test-Path -LiteralPath $cached) {
+        # Hold the same handle through hashing and extraction. FileShare.Read
+        # prevents writes and replacement while these verified bytes are used.
+        $stream = [IO.File]::Open($cached, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+        catch { $stream.Dispose(); throw }
+        finally { $sha.Dispose() }
+        if ($actual -eq $Digest) {
+            $stream.Position = 0
+            Write-InstallMessage "Reusing verified download: $Asset"
+            return ,$stream
+        }
+        $stream.Dispose()
+        Write-InstallMessage "Cached download changed; downloading again: $Asset"
+        Remove-Item -LiteralPath $cached -Force
+    }
+    Write-InstallMessage "Downloading $Asset..."
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            if ($requiresAuth) {
+                $releaseHost = ([uri]$releaseUrl).Host
+                & gh release download $releaseVersion --repo ($releaseHost + '/' + $releaseRepository) --pattern $Asset --output $partial --clobber
+                if ($LASTEXITCODE) { throw 'Authenticated release download failed. Check gh auth status and repository access.' }
+            } else {
+                Invoke-WebRequest -Uri ($releaseUrl + '/' + $Asset) -OutFile $partial -UseBasicParsing -TimeoutSec 900
+            }
+            break
+        } catch { if ($attempt -eq 3) { throw }; Write-InstallMessage 'Download failed; retrying.' }
+    }
+    # The installer owns the cache lock. Rename before verification so the same
+    # read-only handle remains valid until the caller finishes extraction.
+    [IO.File]::Move($partial, $cached)
+    $stream = [IO.File]::Open($cached, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+    catch { $stream.Dispose(); throw }
+    finally { $sha.Dispose() }
+    if ($actual -ne $Digest) {
+        $stream.Dispose()
+        Remove-Item -LiteralPath $cached -Force
+        throw 'HindsightKit package SHA256 mismatch. Installation stopped.'
+    }
+    $stream.Position = 0
+    return ,$stream
+}
+
+function Install-ReleaseComponents([string]$Root, [string]$App) {
+    $release = Get-Content -LiteralPath (Join-Path $App 'release.json') -Raw | ConvertFrom-Json
+    $required = if ($release.package_role -eq 'client') { @('python-client', 'node-client') }
+        elseif ($release.package_role -eq 'full') { @('python-client', 'python-server', 'node-client', 'node-server') }
+        else { throw 'Unknown release package role.' }
+    $names = @{}
+    $allFiles = [ordered]@{}
+    $saved = Get-Content -LiteralPath (Join-Path $App '.package-files.json') -Raw | ConvertFrom-Json
+    foreach ($property in $saved.PSObject.Properties) { $allFiles[$property.Name] = $property.Value }
+    # Validate the whole plan before downloading or writing any dependencies.
+    foreach ($component in $release.components) {
+        if ($component.name -notin $required -or $names.ContainsKey($component.name) -or
+            $component.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            $component.asset -cne ('hindsightkit-' + $component.name + '-' + $component.sha256 + '.zip')) {
+            throw 'Invalid dependency component identity.'
+        }
+        $names[$component.name] = $true
+        if ($component.files -isnot [pscustomobject]) { throw 'Dependency component files must be a mapping.' }
+        foreach ($property in $component.files.PSObject.Properties) {
+            Assert-ReleaseFile $property.Name
+            $allowed = if ($component.name.StartsWith('python-')) {
+                $property.Name -cmatch '^python/wheels/[A-Za-z0-9_.+-]+\.whl$' -and
+                $property.Name -notmatch '^python/wheels/hindsightkit-'
+            }
+                else { $property.Name -ceq ('node/' + $component.name.Substring(5) + '.zip') }
+            if (-not $allowed -or $property.Value -cnotmatch '^[a-f0-9]{64}$' -or $allFiles.Contains($property.Name)) {
+                throw 'Invalid or duplicate dependency component file.'
+            }
+            $allFiles[$property.Name] = $property.Value
+        }
+        if ($component.name.StartsWith('node-') -and @($component.files.PSObject.Properties).Count -ne 1) {
+            throw 'Node dependency component is missing its archive.'
+        }
+    }
+    if ($names.Count -ne $required.Count) { throw 'Release dependency components are incomplete.' }
+    foreach ($component in $release.components) {
+        $expected = [ordered]@{}
+        foreach ($property in $component.files.PSObject.Properties) { $expected[$property.Name] = $property.Value }
+        $stream = Open-VerifiedAsset $Root $component.asset $component.sha256
+        try { Expand-InstallFiles $stream $App $expected | Out-Null }
+        finally { $stream.Dispose() }
+        Write-InstallMessage ('Prepared ' + $component.name + '.')
+    }
+    [IO.File]::WriteAllText((Join-Path $App '.package-files.json'), ($allFiles | ConvertTo-Json))
 }
 
 function Assert-InstalledPackage([string]$App) {
@@ -201,26 +327,13 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
         if (-not (Test-Path -LiteralPath $app)) {
             $stage = Join-Path $root ('.install-' + [guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $stage | Out-Null
-            $archive = Join-Path $stage 'package.zip'
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            Write-InstallMessage "Downloading HindsightKit $releaseVersion and its pinned Python packages..."
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
-                try {
-                    if ($requiresAuth) {
-                        $releaseHost = ([uri]$releaseUrl).Host
-                        & gh release download $releaseVersion --repo ($releaseHost + '/' + $releaseRepository) --pattern $packageName --output $archive --clobber
-                        if ($LASTEXITCODE) { throw 'Authenticated release download failed. Check gh auth status and repository access.' }
-                    } else {
-                        Invoke-WebRequest -Uri ($releaseUrl + '/' + $packageName) -OutFile $archive -UseBasicParsing -TimeoutSec 900
-                    }
-                    break
-                } catch { if ($attempt -eq 3) { throw }; Write-InstallMessage 'Download failed; retrying.' }
-            }
-            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $packageSha256) { throw 'HindsightKit package SHA256 mismatch. Installation stopped.' }
-            Write-InstallMessage 'Download verified. Extracting application and Python packages...'
             $unpacked = Join-Path $stage 'app'
             New-Item -ItemType Directory -Path $unpacked | Out-Null
-            Expand-InstallPackage $archive $unpacked
+            $archive = Open-VerifiedAsset $root $packageName $packageSha256
+            try { Expand-InstallPackage $archive $unpacked }
+            finally { $archive.Dispose() }
+            Install-ReleaseComponents $root $unpacked
             [IO.File]::WriteAllText((Join-Path $unpacked '.package-sha256'), $packageSha256)
             [IO.Directory]::Move($unpacked, $app)
             Write-InstallMessage 'Application package extracted.'
@@ -250,6 +363,7 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
         $previousHkConflict = $env:HINDSIGHTKIT_HK_CONFLICT
         $previousInstallLog = $env:HINDSIGHTKIT_INSTALL_LOG
         $previousInstallMode = $env:HINDSIGHTKIT_INSTALL_MODE
+        $previousInstallCache = $env:HINDSIGHTKIT_INSTALL_CACHE
         try {
             # Windows PowerShell -File cannot forward a switch with a false value.
             $env:HINDSIGHTKIT_INSTALL_MODE = $installationMode
@@ -257,6 +371,7 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
             $env:HINDSIGHTKIT_INSTALL_LOG = $script:installLog
             $env:UV_PYTHON_INSTALL_DIR = Join-Path $root 'python'
             $env:UV_PYTHON_PREFERENCE = 'only-managed'
+            $env:HINDSIGHTKIT_INSTALL_CACHE = Assert-InstallDirectory (Join-Path $root 'cache')
             $env:PSModulePath = $null
             $occupied = Get-Command hk -All -ErrorAction SilentlyContinue | Where-Object {
                 $_.CommandType -notin @('Application', 'ExternalScript')
@@ -273,6 +388,7 @@ function Install-HindsightKit([System.Collections.IDictionary]$Options) {
             $env:HINDSIGHTKIT_HK_CONFLICT = $previousHkConflict
             $env:HINDSIGHTKIT_INSTALL_LOG = $previousInstallLog
             $env:HINDSIGHTKIT_INSTALL_MODE = $previousInstallMode
+            $env:HINDSIGHTKIT_INSTALL_CACHE = $previousInstallCache
         }
         $commandRoot = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
         $commandDirectory = Join-Path $commandRoot 'bin'

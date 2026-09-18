@@ -25,7 +25,9 @@ class NodeSetupTests(unittest.TestCase):
 using System.IO;
 class Fixture { static void Main(string[] args) {
   string path = System.Reflection.Assembly.GetExecutingAssembly().Location;
-  if (Path.GetFileName(path) == "node.exe") {
+  if (Path.GetFileName(path) == "uv.exe") {
+    if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("uv 0.12.15"); }
+  } else if (Path.GetFileName(path) == "node.exe") {
     if (args.Length > 0 && args[0] == "-p") {
       string arch = Path.Combine(Path.GetDirectoryName(path), "arch.txt");
       Console.WriteLine(File.Exists(arch) ? File.ReadAllText(arch) : "x64"); return;
@@ -38,6 +40,7 @@ class Fixture { static void Main(string[] args) {
   } else {
     File.WriteAllText(Environment.GetEnvironmentVariable("TEST_PYTHON_PATH"), Environment.GetEnvironmentVariable("PATH"));
     File.WriteAllLines(Environment.GetEnvironmentVariable("TEST_PYTHON_ARGS"), args);
+    File.WriteAllText(Environment.GetEnvironmentVariable("TEST_PYTHON_PATH") + ".cache", Environment.GetEnvironmentVariable("UV_CACHE_DIR"));
   }
 } }
 ''', encoding='utf-8')
@@ -51,6 +54,10 @@ class Fixture { static void Main(string[] args) {
                 zipped.writestr(prefix + 'version.txt', 'v22.23.2')
                 zipped.writestr(prefix + 'node_modules/npm/bin/npm-cli.js', '// fixture')
             checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            uv_archive = root / 'uv.zip'
+            with zipfile.ZipFile(uv_archive, 'w') as zipped:
+                zipped.write(native, 'uv.exe')
+            uv_checksum = hashlib.sha256(uv_archive.read_bytes()).hexdigest()
 
             def put_node(directory, version, with_npm=True):
                 directory.mkdir(parents=True, exist_ok=True)
@@ -63,7 +70,8 @@ class Fixture { static void Main(string[] args) {
                 return directory
 
             cases = ['node22', 'node24', 'old', 'missing-npm', 'broken', 'absent', 'ia32',
-                     'old-before-good', 'ia32-before-good', 'checkout-before-good', 'source']
+                     'old-before-good', 'ia32-before-good', 'checkout-before-good', 'source', 'shared-cache',
+                     'cached-uv', 'broken-cached-uv']
             for shell in shells:
                 for case_name in cases:
                     with self.subTest(shell=Path(shell).name, case=case_name):
@@ -83,10 +91,21 @@ class Fixture { static void Main(string[] args) {
                         binary.mkdir()
                         (binary / 'uv.ps1').write_text(
                             'if ($args[0] -eq "--version") { "uv 0.12.15" }; $global:LASTEXITCODE = 0\n')
+                        if case_name in ('cached-uv', 'broken-cached-uv'):
+                            (binary / 'uv.ps1').unlink()
+                            cached_uv = app / '.runtime/tools/uv-0.12.15/uv.exe'
+                            cached_uv.parent.mkdir(parents=True)
+                            if case_name == 'cached-uv':
+                                shutil.copyfile(native, cached_uv)
+                            else:
+                                cached_uv.write_bytes(b'interrupted executable')
                         (binary / 'hindsightkit.ps1').write_text('$global:LASTEXITCODE = 0\n')
                         path = [str(binary)]
                         expected = app / '.runtime/tools/node-v22.23.2-win-x64/node.exe'
-                        reused = case_name in ('node22', 'node24', 'old-before-good', 'ia32-before-good', 'checkout-before-good', 'source')
+                        if case_name == 'shared-cache':
+                            expected = case / 'shared-cache/tools/node-v22.23.2-win-x64/node.exe'
+                        reused = case_name in ('node22', 'node24', 'old-before-good', 'ia32-before-good', 'checkout-before-good', 'source',
+                                               'cached-uv', 'broken-cached-uv')
                         if case_name == 'checkout-before-good':
                             checkout = case / 'old checkout'
                             stale = put_node(checkout / '.runtime/tools/node-v22.23.2-win-x64', 'v22.23.2')
@@ -109,7 +128,8 @@ class Fixture { static void Main(string[] args) {
                                 expected = selected / 'node.exe'
                         # Retain Git and PowerShell prerequisites, but never select the host Node.
                         path.extend(part for part in os.environ['PATH'].split(os.pathsep)
-                                    if part and not (Path(part) / 'node.exe').is_file())
+                                    if part and not (Path(part) / 'node.exe').is_file()
+                                    and not (case_name in ('cached-uv', 'broken-cached-uv') and (Path(part) / 'uv.exe').is_file()))
                         state = case / 'state'
                         state.mkdir()
                         saved = state / 'node-path.txt'
@@ -120,6 +140,12 @@ class Fixture { static void Main(string[] args) {
                         wrapper.write_text('''function Invoke-WebRequest {
     param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
     Add-Content -LiteralPath $env:TEST_DOWNLOADS -Value $Uri
+    if ($Uri.EndsWith('uv-x86_64-pc-windows-msvc.zip.sha256')) {
+        [IO.File]::WriteAllText($OutFile, $env:TEST_UV_CHECKSUM); return
+    }
+    if ($Uri.EndsWith('uv-x86_64-pc-windows-msvc.zip')) {
+        Copy-Item -LiteralPath $env:TEST_UV_ARCHIVE -Destination $OutFile; return
+    }
     if ($Uri.EndsWith("SHASUMS256.txt")) {
         return @{ Content = $env:TEST_CHECKSUM + "  node-v22.23.2-win-x64.zip" }
     }
@@ -142,18 +168,35 @@ exit $LASTEXITCODE
                                'TEST_DOWNLOADS': str(requests), 'TEST_ARCHIVE': str(archive),
                                'TEST_CHECKSUM': checksum, 'TEST_PYTHON_PATH': str(trace),
                                'TEST_PYTHON_ARGS': str(arguments_trace)}
+                        env.update(TEST_UV_ARCHIVE=str(uv_archive), TEST_UV_CHECKSUM=uv_checksum)
+                        if case_name == 'shared-cache':
+                            env['HINDSIGHTKIT_INSTALL_CACHE'] = str(case / 'shared-cache')
+                            # No system Node: download into the shared tool cache on the first release.
+                            env['PATH'] = os.pathsep.join(part for part in path
+                                                       if not (Path(part) / 'node.exe').is_file())
                         result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                                  '-File', str(wrapper)], env=env,
                                                 capture_output=True, text=True, encoding='utf-8', timeout=30)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertTrue(Path(saved.read_text()).samefile(expected))
-                        self.assertEqual(requests.exists(), not reused)
-                        if not reused:
+                        self.assertEqual(requests.exists(), not reused or case_name == 'broken-cached-uv')
+                        if not reused or case_name == 'broken-cached-uv':
                             self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
                         self.assertIn('Reusing Node.js' if reused else 'Installed Node.js', result.stdout)
                         self.assertTrue(Path(trace.read_text().split(os.pathsep)[0]).samefile(expected.parent))
                         self.assertEqual(arguments_trace.read_text().splitlines(),
                                          ['-m', 'hindsightkit.installer', '--server-only', '--no-open'])
+                        if case_name == 'shared-cache':
+                            self.assertEqual(Path(Path(str(trace) + '.cache').read_text()), case / 'shared-cache/uv')
+                            next_app = case / 'next-release'
+                            shutil.copytree(app, next_app)
+                            env['TEST_SETUP'] = str(next_app / 'setup.ps1')
+                            env['HINDSIGHTKIT_RELEASE_MANIFEST'] = str(next_app / 'release.json')
+                            repeated = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                                '-File', str(wrapper)], env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+                            self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
+                            self.assertIn('Reusing Node.js', repeated.stdout)
+                            self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
                         with patch.dict(os.environ, env, clear=True), patch.object(cli, 'home', return_value=state):
                             cli.prepare_env()
                             self.assertTrue(Path(os.environ['PATH'].split(os.pathsep)[0]).samefile(expected.parent))

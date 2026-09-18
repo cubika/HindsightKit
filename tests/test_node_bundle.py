@@ -1,9 +1,11 @@
+import argparse
 import contextlib
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -262,3 +264,211 @@ class NodeBundleTests(unittest.TestCase):
             with patch.dict(os.environ, {'HINDSIGHTKIT_RELEASE_MANIFEST': ''}), \
                  patch.object(node_bundle.sys, 'executable', str(app / '.venv/Scripts/python.exe')):
                 self.assertEqual(node_bundle.release_bundle(), app.resolve() / 'node')
+
+    def test_setup_preflight_install_reuse_and_repair_validate_each_zip_once(self):
+        for operation in ('install', 'reuse', 'repair'):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                package, bundle = self.fixture(root)
+                state = root / 'state'
+                directory = state / 'client-runtime'
+                args = argparse.Namespace(server=None, client_only=True, server_only=False)
+                with patch.object(cli, 'home', return_value=state), patch.object(cli, 'PACKAGE', package), \
+                     patch.object(cli, 'node', return_value='node'), \
+                     patch.object(node_bundle, 'release_bundle', return_value=bundle), \
+                     patch.object(node_bundle, 'verify_installed'), contextlib.redirect_stdout(io.StringIO()):
+                    if operation != 'install':
+                        cli.install_node_role('client')
+                        if operation == 'repair':
+                            target = directory / 'node_modules/required/LICENSE'
+                            target.write_bytes(b'x' * target.stat().st_size)
+                    opened = []
+                    digested = []
+                    original_open = node_bundle._open_bundle_file
+                    original_digest = hashlib.file_digest
+
+                    def record_open(path):
+                        stream = original_open(path)
+                        if path.suffix == '.zip':
+                            opened.append(stream)
+                        return stream
+
+                    def record_digest(stream, *arguments, **keywords):
+                        if stream in opened:
+                            digested.append(stream)
+                        return original_digest(stream, *arguments, **keywords)
+
+                    with patch.object(node_bundle, '_open_bundle_file', side_effect=record_open), \
+                         patch.object(hashlib, 'file_digest', side_effect=record_digest), \
+                         patch.object(node_bundle, '_members', wraps=node_bundle._members) as members, \
+                         patch.object(cli, 'validate_setup_options'), patch.object(cli, 'require_client_prerequisites'), \
+                         patch.object(cli, 'setup_client_only', side_effect=lambda: cli.install_node_packages(client=True)), \
+                         patch('hindsightkit.command.install', return_value=state / 'bin/hindsightkit'):
+                        cli.setup(args)
+                    self.assertEqual(len(opened), 1)
+                    self.assertEqual(digested, opened)
+                    members.assert_called_once()
+                    self.assertTrue(opened[0].closed)
+                    self.assertIsNone(node_bundle._active_bundle.get())
+                    self.assertEqual((directory / 'node_modules/required/LICENSE').read_text(), 'Preserved upstream license')
+                    self.assertTrue((directory / '.installed-lock').is_file())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows archive sharing modes')
+    def test_session_prevents_archive_manifest_and_lock_mutation_and_replacement(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            paths = (bundle / 'client.zip', bundle / node_bundle.MANIFEST, package / 'client/package-lock.json')
+            with node_bundle.bundle_session(bundle, package, roles=('client',)) as verified:
+                for index, path in enumerate(paths):
+                    with self.subTest(path=path.name):
+                        original = path.read_bytes()
+                        with self.assertRaises(PermissionError):
+                            path.write_bytes(original)
+                        replacement = root / f'replacement-{index}'
+                        replacement.write_bytes(original)
+                        with self.assertRaises(PermissionError):
+                            replacement.replace(path)
+                        self.assertEqual(path.read_bytes(), original)
+                        verified.check_unchanged()
+            self.assertTrue(all(source.stream.closed for source in verified.inputs))
+            for path in paths:
+                path.write_bytes(path.read_bytes())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows archive sharing modes')
+    def test_session_rejects_existing_writer_and_releases_partial_validation_handles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            package, bundle = self.fixture(Path(temp))
+            with (bundle / 'client.zip').open('r+b'):
+                with self.assertRaises(OSError):
+                    node_bundle.validate_bundle(bundle, package, roles=('client',))
+            self.assertIsNone(node_bundle._active_bundle.get())
+            manifest = bundle / node_bundle.MANIFEST
+            manifest.write_bytes(manifest.read_bytes())
+            lock = package / 'client/package-lock.json'
+            lock.write_bytes(lock.read_bytes())
+            node_bundle.validate_bundle(bundle, package, roles=('client',))
+
+    def test_changed_archive_is_rejected_before_replacing_existing_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            directory = root / 'runtime'
+            (directory / 'node_modules').mkdir(parents=True)
+            marker = directory / 'node_modules/old'
+            marker.write_text('previous')
+            # Exercise the metadata guard independently of Windows deny-write
+            # handles, as used when tests or bundle tools run on another OS.
+            with patch.object(node_bundle, '_open_bundle_file', side_effect=lambda path: path.open('rb')):
+                with self.assertRaisesRegex(ValueError, 'changed during installation'):
+                    with node_bundle.bundle_session(bundle, package, roles=('client',)):
+                        archive = bundle / 'client.zip'
+                        with archive.open('r+b') as writer:
+                            writer.seek(40)
+                            writer.write(b'changed')
+                        info = archive.stat()
+                        os.utime(archive, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000_000))
+                        node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+            self.assertEqual(marker.read_text(), 'previous')
+            self.assertFalse(list(directory.glob('.node-install-*')))
+            self.assertIsNone(node_bundle._active_bundle.get())
+
+    def test_session_failure_closes_handles_and_next_call_revalidates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                with node_bundle.bundle_session(bundle, package, roles=('client',)) as verified:
+                    manifest = node_bundle.validate_bundle(bundle, package, roles=('client',))
+                    self.assertEqual(manifest, json.loads((bundle / node_bundle.MANIFEST).read_text()))
+                    raise RuntimeError('interrupted')
+            self.assertTrue(all(source.stream.closed for source in verified.inputs))
+            self.assertIsNone(node_bundle._active_bundle.get())
+            (bundle / 'client.zip').write_bytes(b'changed after setup')
+            for operation in (
+                    lambda: node_bundle.validate_bundle(bundle, package, roles=('client',)),
+                    lambda: node_bundle.verify_bundle_files(bundle, package, 'client', root / 'runtime'),
+                    lambda: node_bundle.install_bundle(bundle, package, 'client', root / 'runtime', 'node')):
+                with self.assertRaisesRegex(ValueError, 'SHA256'):
+                    operation()
+            self.assertFalse((root / 'runtime').exists())
+
+    def test_combined_setup_shares_preflight_handles_for_both_roles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            for name in ('package.json', 'package-lock.json'):
+                shutil.copyfile(package / 'client' / name, package / name)
+            shutil.copyfile(bundle / 'client.zip', bundle / 'server.zip')
+            with zipfile.ZipFile(bundle / 'server.zip', 'a') as archive:
+                archive.writestr(node_bundle.ENTRYPOINTS['server'][-1], '// server fixture')
+            manifest = json.loads((bundle / node_bundle.MANIFEST).read_text())
+            manifest['bundles']['server'] = {'archive': 'server.zip',
+                'sha256': node_bundle.sha256(bundle / 'server.zip'),
+                'lock_sha256': node_bundle.sha256(package / 'package-lock.json')}
+            (bundle / node_bundle.MANIFEST).write_text(json.dumps(manifest))
+            args = argparse.Namespace(server=None, client_only=False, server_only=False)
+            opened = {}
+            digested = []
+            original_open = node_bundle._open_bundle_file
+            original_digest = hashlib.file_digest
+
+            def record_open(path):
+                stream = original_open(path)
+                if path.suffix == '.zip':
+                    opened[path.name] = stream
+                return stream
+
+            def record_digest(stream, *arguments, **keywords):
+                if stream in opened.values():
+                    digested.append(stream)
+                return original_digest(stream, *arguments, **keywords)
+
+            def server_setup(_args):
+                cli.install_node_packages()
+                return {'apiUrl': 'http://localhost:9077'}
+
+            with patch.object(cli, 'home', return_value=root / 'state'), patch.object(cli, 'PACKAGE', package), \
+                 patch.object(cli, 'node', return_value='node'), patch.object(node_bundle, 'release_bundle', return_value=bundle), \
+                 patch.object(node_bundle, 'verify_installed'), patch.object(cli, 'validate_setup_options'), \
+                 patch.object(cli, 'require_client_prerequisites'), patch.object(cli, 'can_connect_local_client', return_value=True), \
+                 patch.object(cli, 'setup_server', side_effect=server_setup), \
+                 patch.object(cli, 'setup_client', side_effect=lambda *a, **k: cli.install_node_packages(client=True)), \
+                 patch('hindsightkit.command.install', return_value=root / 'bin/hindsightkit'), \
+                 patch.object(node_bundle, '_open_bundle_file', side_effect=record_open) as opener, \
+                 patch.object(hashlib, 'file_digest', side_effect=record_digest), contextlib.redirect_stdout(io.StringIO()):
+                cli.setup(args)
+            self.assertEqual(set(opened), {'client.zip', 'server.zip'})
+            self.assertCountEqual(digested, opened.values())
+            self.assertEqual(sum(call.args[0].suffix == '.zip' for call in opener.call_args_list), 2)
+            self.assertTrue(all(stream.closed for stream in opened.values()))
+
+    def test_archive_change_during_extraction_is_detected_before_runtime_replacement(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package, bundle = self.fixture(root)
+            directory = root / 'runtime'
+            (directory / 'node_modules').mkdir(parents=True)
+            marker = directory / 'node_modules/old'
+            marker.write_text('previous')
+            original_extract = zipfile.ZipFile.extract
+            changed = False
+
+            def change_during_extract(archive, *args, **kwargs):
+                nonlocal changed
+                result = original_extract(archive, *args, **kwargs)
+                if not changed:
+                    changed = True
+                    path = bundle / 'client.zip'
+                    info = path.stat()
+                    os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000_000))
+                return result
+
+            with patch.object(node_bundle, '_open_bundle_file', side_effect=lambda path: path.open('rb')), \
+                 patch.object(zipfile.ZipFile, 'extract', change_during_extract), \
+                 patch.object(node_bundle, 'verify_installed') as verify, \
+                 self.assertRaisesRegex(ValueError, 'changed during installation'):
+                node_bundle.install_bundle(bundle, package, 'client', directory, 'node')
+            verify.assert_not_called()
+            self.assertEqual(marker.read_text(), 'previous')
+            self.assertFalse(list(directory.glob('.node-install-*')))

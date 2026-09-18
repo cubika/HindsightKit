@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -116,7 +118,7 @@ def _platform_matches(item):
 
 
 def _check_packages(lock, read, exists):
-    if not isinstance(lock.get('packages'), dict):
+    if not isinstance(lock, dict) or not isinstance(lock.get('packages'), dict):
         raise ValueError('Npm lockfile has no packages')
     for name, item in lock['packages'].items():
         if not name or item.get('dev') or not _platform_matches(item):
@@ -129,33 +131,139 @@ def _check_packages(lock, read, exists):
             raise ValueError(f'Npm bundle is missing locked package: {name}@{item.get("version")}')
 
 
-def validate_bundle(bundle_directory: Path, package_directory: Path, roles=('client', 'server')) -> dict:
-    root = ordinary_path(bundle_directory)
-    manifest = _read_json(ordinary_path(root / MANIFEST).read_text(encoding='utf-8'))
-    if manifest.get('schema') != 1 or manifest.get('platform') != 'windows-x64':
-        raise ValueError('Npm bundle requires schema 1 and windows-x64')
-    bundles = manifest.get('bundles')
-    if not isinstance(bundles, dict) or not set(bundles).issubset(ENTRYPOINTS) or not set(roles).issubset(bundles):
-        raise ValueError('The release npm bundle is incomplete; download a complete release')
-    for role in roles:
-        entry = bundles[role]
-        source = package_directory if role == 'server' else package_directory / role
-        lock_path = ordinary_path(source / 'package-lock.json')
-        if (entry.get('archive') != role + '.zip' or entry.get('lock_sha256') != sha256(lock_path) or
-                not re.fullmatch('[a-f0-9]{64}', str(entry.get('sha256', '')))):
-            raise ValueError(f'Npm {role} bundle differs from its lockfile')
-        path = ordinary_path(root / entry['archive'])
-        with path.open('rb') as stream:
+def _open_bundle_file(path):
+    if os.name != 'nt':
+        return path.open('rb')
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    # Keep the exact bytes we verified immutable until setup finishes. Windows
+    # sharing checks also reject an already-open writer, including replacements.
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                      wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    handle = create(str(path), 0x80000000, 1, None, 3, 0x80, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    try:
+        return os.fdopen(descriptor, 'rb')
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _file_signature(info):
+    signature = info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+    # Windows deny-write handles protect the content. NTFS can update its
+    # change time after a read, and Python 3.12 stat/fstat disagree on ctime.
+    return signature if os.name == 'nt' else (*signature, info.st_ctime_ns)
+
+
+class _BundleFile:
+    def __init__(self, path, stack):
+        self.path = ordinary_path(path)
+        self.stream = stack.enter_context(_open_bundle_file(self.path))
+        info = os.fstat(self.stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f'Npm bundle path is not an ordinary file: {self.path}')
+        self.signature = _file_signature(info)
+        self.path_signature = _file_signature(self.path.stat())
+        if self.path_signature != self.signature:
+            raise ValueError(f'Npm bundle changed during installation: {self.path}')
+        self.check_unchanged()
+
+    def check_unchanged(self):
+        ordinary_path(self.path)
+        if (self.stream.closed or _file_signature(self.path.stat()) != self.path_signature or
+                _file_signature(os.fstat(self.stream.fileno())) != self.signature):
+            raise ValueError(f'Npm bundle changed during installation: {self.path}')
+
+
+class _VerifiedBundle:
+    def __init__(self, bundle, package, roles, stack):
+        self.root = ordinary_path(bundle)
+        self.package = ordinary_path(package)
+        self.inputs = [_BundleFile(self.root / MANIFEST, stack)]
+        self.manifest = manifest = _read_json(self.inputs[0].stream.read())
+        if not isinstance(manifest, dict) or manifest.get('schema') != 1 or manifest.get('platform') != 'windows-x64':
+            raise ValueError('Npm bundle requires schema 1 and windows-x64')
+        bundles = manifest.get('bundles')
+        if not isinstance(bundles, dict) or not set(bundles).issubset(ENTRYPOINTS) or not set(roles).issubset(bundles):
+            raise ValueError('The release npm bundle is incomplete; download a complete release')
+        self.archives = {}
+        for role in dict.fromkeys(roles):
+            entry = bundles[role]
+            lock_file = _BundleFile(package_directory(self.package, role) / 'package-lock.json', stack)
+            self.inputs.append(lock_file)
+            lock = lock_file.stream.read()
+            if (not isinstance(entry, dict) or entry.get('archive') != role + '.zip' or
+                    entry.get('lock_sha256') != hashlib.sha256(lock).hexdigest() or
+                    not re.fullmatch('[a-f0-9]{64}', str(entry.get('sha256', '')))):
+                raise ValueError(f'Npm {role} bundle differs from its lockfile')
+            archive_file = _BundleFile(self.root / entry['archive'], stack)
+            self.inputs.append(archive_file)
+            stream = archive_file.stream
             if hashlib.file_digest(stream, 'sha256').hexdigest() != entry['sha256']:
                 raise ValueError(f'Npm {role} archive failed SHA256 verification')
             stream.seek(0)
-            with zipfile.ZipFile(stream) as archive:
-                members = _members(archive)
-                exists = lambda name: name.casefold() in members and not members[name.casefold()].is_dir()
-                if not all(exists(name) for name in ENTRYPOINTS[role]):
-                    raise ValueError(f'Npm {role} entry point is missing')
-                _check_packages(_read_json(lock_path.read_bytes()), archive.read, exists)
-    return manifest
+            archive = stack.enter_context(zipfile.ZipFile(stream))
+            members = _members(archive)
+            exists = lambda name: name.casefold() in members and not members[name.casefold()].is_dir()
+            if not all(exists(name) for name in ENTRYPOINTS[role]):
+                raise ValueError(f'Npm {role} entry point is missing')
+            _check_packages(_read_json(lock), archive.read, exists)
+            self.archives[role] = archive
+        self.check_unchanged()
+
+    def check_unchanged(self):
+        for source in self.inputs:
+            source.check_unchanged()
+
+    def archive(self, role):
+        self.check_unchanged()
+        return self.archives[role]
+
+
+_active_bundle = ContextVar('hindsightkit_node_bundle', default=None)
+
+
+@contextmanager
+def bundle_session(bundle, package, roles=('client', 'server')):
+    """Keep verified archives open for one setup; standalone calls get a fresh session."""
+    if bundle is None:
+        yield None
+        return
+    active = _active_bundle.get()
+    if (active is not None and active.root == ordinary_path(bundle) and
+            active.package == ordinary_path(package) and set(roles).issubset(active.archives)):
+        active.check_unchanged()
+        yield active
+        active.check_unchanged()
+        return
+    with ExitStack() as stack:
+        verified = _VerifiedBundle(bundle, package, roles, stack)
+        token = _active_bundle.set(verified)
+        try:
+            yield verified
+            verified.check_unchanged()
+        finally:
+            _active_bundle.reset(token)
+
+
+def validate_bundle(bundle_directory: Path, package_directory: Path, roles=('client', 'server')) -> dict:
+    with bundle_session(bundle_directory, package_directory, roles) as verified:
+        return verified.manifest
 
 
 def release_bundle() -> Path | None:
@@ -185,9 +293,9 @@ def verify_installed(directory: Path, package: Path, role: str, node: str):
 
 
 def verify_bundle_files(bundle: Path, package: Path, role: str, directory: Path):
-    manifest = validate_bundle(bundle, package, roles=(role,))
     directory = ordinary_path(directory)
-    with zipfile.ZipFile(bundle / manifest['bundles'][role]['archive']) as archive:
+    with bundle_session(bundle, package, roles=(role,)) as verified:
+        archive = verified.archive(role)
         remaining = {item.filename.casefold(): item for item in archive.infolist() if not item.is_dir()}
         total = len(remaining)
         checked = 0
@@ -238,7 +346,12 @@ def _rename(source: Path, target: Path):
 
 
 def install_bundle(bundle: Path, package: Path, role: str, directory: Path, node: str):
-    manifest = validate_bundle(bundle, package, roles=(role,))
+    with bundle_session(bundle, package, roles=(role,)) as verified:
+        _install_bundle(verified, package, role, directory, node)
+
+
+def _install_bundle(verified, package, role, directory, node):
+    archive = verified.archive(role)
     directory = ordinary_path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     target = ordinary_path(directory / 'node_modules')
@@ -250,20 +363,15 @@ def install_bundle(bundle: Path, package: Path, role: str, directory: Path, node
             pass
     with tempfile.TemporaryDirectory(prefix='.node-install-', dir=directory) as temporary:
         stage = Path(temporary)
-        archive_path = bundle / manifest['bundles'][role]['archive']
-        with archive_path.open('rb') as stream:
-            if hashlib.file_digest(stream, 'sha256').hexdigest() != manifest['bundles'][role]['sha256']:
-                raise ValueError('Npm archive changed during installation')
-            stream.seek(0)
-            with zipfile.ZipFile(stream) as archive:
-                _members(archive)
+        next_status = time.monotonic() + 10
+        for index, item in enumerate(archive.infolist(), 1):
+            archive.extract(item, stage)
+            if time.monotonic() >= next_status:
+                print(f'Unpacking bundled {role} files: {index}/{len(archive.infolist())}.', flush=True)
                 next_status = time.monotonic() + 10
-                for index, item in enumerate(archive.infolist(), 1):
-                    archive.extract(item, stage)
-                    if time.monotonic() >= next_status:
-                        print(f'Unpacking bundled {role} files: {index}/{len(archive.infolist())}.', flush=True)
-                        next_status = time.monotonic() + 10
+        verified.check_unchanged()
         verify_installed(stage, package, role, node)
+        verified.check_unchanged()
         if previous.exists():
             # A prior completed replacement may have been interrupted during cleanup.
             if previous.is_dir():
