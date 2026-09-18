@@ -1,5 +1,11 @@
 # Release validation
 
+## v0.1.5 candidate
+
+The CLI cleanup passed 492 repository tests and 63 final regression checks. Release preparation passed another 83 packaging and installation tests. The offline Node verifier installed, reused, and repaired the official client and server archives in temporary directories; the dashboard and 17 static assets returned HTTP 200. The project version and dependency lock agree on 0.1.5.
+
+These checks used isolated fixtures and cached official dependencies. They did not perform a new Copilot login, make model calls, or establish connectivity from a second computer. Hosted candidate builds and checks of their final release archives are required before publication.
+
 ## v0.1.3 local candidate
 
 Copilot CLI is now installed separately. The revised package excludes its archive and lockfiles. All 369 tests passed, followed by 80 affected tests after integrating newer master changes. The existing Windows Copilot executable was reused; a separate installation into a disposable npm prefix and repeat reuse also passed. Authentication was excluded from those checks.

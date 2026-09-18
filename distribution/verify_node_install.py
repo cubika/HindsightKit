@@ -79,7 +79,7 @@ def dashboard(directory, node, env):
 
 
 def verify(bundle: Path, package: Path):
-    from hindsightkit import cli, node_bundle
+    from hindsightkit import installer, runtime as runtime_env, node_bundle
     bundle, package = bundle.resolve(strict=True), package.resolve(strict=True)
     manifest = json.loads((bundle / node_bundle.MANIFEST).read_text())
     roles = tuple(manifest['bundles'])
@@ -109,17 +109,17 @@ net.Socket.prototype.connect = function(...args) {
                    APPDATA=str(profile / 'roaming'), NODE_OPTIONS=f'--require="{guard.as_posix()}"',
                    HINDSIGHT_CONFIG=str(profile / 'coding-agent.json'),
                    HINDSIGHT_LOG_FILE=str(profile / 'hooks.log'), NEXT_TELEMETRY_DISABLED='1')
-        with patch.dict(os.environ, env, clear=True), patch.object(cli, 'PACKAGE', package), \
-             patch.object(cli, 'home', return_value=root / 'kit'), patch.object(cli, 'node', return_value=node), \
+        with patch.dict(os.environ, env, clear=True), patch.object(runtime_env, 'PACKAGE', package), \
+             patch.object(runtime_env, 'home', return_value=root / 'kit'), patch.object(runtime_env, 'node', return_value=node), \
              patch.object(node_bundle, 'release_bundle', return_value=bundle), \
              patch('hindsightkit.install_progress.run_install', side_effect=AssertionError('Release invoked npm')):
             for role in roles:
-                cli.install_node_role(role)
-                cli.install_node_role(role)
-                directory = cli.home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
+                installer.install_node_role(role)
+                installer.install_node_role(role)
+                directory = runtime_env.home() / {'client': 'client-runtime', 'server': 'runtime'}[role]
                 target = profile / role
                 target.mkdir()
-                cli.integrate('install-cli', target, target / '.hindsight/coding-agent.json',
+                installer.integrate('install-cli', target, target / '.hindsight/coding-agent.json',
                               'http://127.0.0.1:9', node, sys.executable, runtime_path=directory)
                 hook = target / '.copilot/hooks/hindsight-coding-agents.json'
                 if not hook.is_file():
@@ -128,9 +128,9 @@ net.Socket.prototype.connect = function(...args) {
                     dashboard(directory, node, env)
             # Damage a real transitive dependency and prove retry repairs it from the archive.
             if 'client' in roles:
-                dependency = cli.home() / 'client-runtime/node_modules/jsonc-parser/lib/umd/main.js'
+                dependency = runtime_env.home() / 'client-runtime/node_modules/jsonc-parser/lib/umd/main.js'
                 dependency.unlink()
-                cli.install_node_role('client')
+                installer.install_node_role('client')
                 if not dependency.is_file():
                     raise RuntimeError('Bundled retry did not repair a missing dependency')
     print('Verified bundled npm install, repeat, repair, and entry points without npm downloads.', flush=True)

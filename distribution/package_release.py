@@ -382,6 +382,21 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
                        "Sign in and download the installer as above, then use this final invocation on the other computer:")
     return f"""# HindsightKit {version}
 
+## Changes in this preview
+
+Upgrades preserve the installation role, including client-only, and reuse unchanged dependency downloads.
+Full upgrades refresh this computer's client integrations while keeping any selected remote server.
+
+The command line now separates installation from everyday use. Run the installer to install or upgrade,
+and use the independent {tick}copilot{tick} command to launch Copilot.
+{tick}stop{tick} pauses memory and stops local services until {tick}start{tick}.
+{tick}unshare{tick} disconnects clients and disables direct and relay sharing on a server.
+{tick}check{tick} tests local memory and reports the selected client connection.
+Failed connections restore the previous selection, and sessions cannot upload old transcripts after switching servers.
+Private relay login supports Microsoft and GitHub accounts with device-code sign-in.
+
+## Install
+
 Requires Windows x64, Git, and a GitHub account with Copilot access.
 Setup reuses an existing Copilot CLI. If it is missing, setup installs the official CLI globally
 with npm using your registry and proxy settings. Copilot CLI is not included in the archive.
