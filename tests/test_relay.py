@@ -510,6 +510,76 @@ class RelayConfigurationTests(unittest.TestCase):
 
 
 class RelayWorkerTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows console behavior')
+    def test_background_worker_has_no_console_and_survives_launcher_exit(self):
+        with tempfile.TemporaryDirectory(prefix='hindsightkit relay ') as directory:
+            root, configuration = Path(directory), spec()
+            (root / 'fixture-spec.json').write_text(json.dumps(configuration))
+            script = root / 'relay_fixture.py'
+            script.write_text('''import ctypes, json, os, socketserver, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+role = sys.argv[2]
+if role != "child":
+    from hindsightkit import relay
+configuration = json.loads((root / "fixture-spec.json").read_text())
+if role == "launcher":
+    native_popen = relay.subprocess.Popen
+    def spawn(command, *args, **kwargs):
+        if command[1:3] == ["-m", "hindsightkit.relay"]:
+            command = [command[0], __file__, str(root), "worker"]
+        return native_popen(command, *args, **kwargs)
+    relay.subprocess.Popen = spawn
+    relay.ensure_cli = lambda **kwargs: "synthetic-cli"
+    relay._authenticate = lambda *args, **kwargs: False
+    relay.ensure_running(root, configuration)
+else:
+    (root / (role + "-process.json")).write_text(json.dumps({
+        "pid": os.getpid(), "console": ctypes.windll.kernel32.GetConsoleWindow(),
+        "stdin": os.read(0, 1).decode(),
+    }))
+    if role == "worker":
+        relay._child_command = lambda *args: [sys._base_executable, __file__, str(root), "child"]
+        relay.serve_worker(root, "synthetic-cli", configuration)
+    else:
+        class Echo(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.sendall(self.request.recv(65536))
+        with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo) as server:
+            port, remote = server.server_address[1], configuration["remote_port"]
+            print(f"SSH: Forwarding from 127.0.0.1:{port} to host port {remote}.", flush=True)
+            server.serve_forever()
+''', encoding='utf-8')
+            environment = {**os.environ, 'PYTHONPATH': str(Path(relay.__file__).resolve().parents[1])}
+            try:
+                result = subprocess.run([sys.executable, str(script), str(root), 'launcher'],
+                    env=environment, capture_output=True, text=True, timeout=75,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(relay.status(root)['ready'])
+                for role in ('worker', 'child'):
+                    process = json.loads((root / (role + '-process.json')).read_text())
+                    self.assertEqual(process['console'], 0, role + ' opened a console')
+                    self.assertEqual(process['stdin'], '')
+                with socket.create_connection(('127.0.0.1', configuration['local_port']), timeout=3) as client:
+                    client.sendall(b'relay after launcher exit')
+                    self.assertEqual(client.recv(65536), b'relay after launcher exit')
+            finally:
+                relay.stop(root)
+                # stop() returns when control closes; wait for remaining handles too.
+                info = root / 'worker-process.json'
+                if info.is_file():
+                    import _winapi
+                    try:
+                        handle = _winapi.OpenProcess(0x00100000, False, json.loads(info.read_text())['pid'])
+                    except OSError:
+                        pass
+                    else:
+                        try:
+                            self.assertEqual(_winapi.WaitForSingleObject(handle, 10000), 0)
+                        finally:
+                            _winapi.CloseHandle(handle)
+
     def wait_ready(self, root, timeout=12):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
