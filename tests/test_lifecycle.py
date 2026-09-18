@@ -193,7 +193,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertFalse(shared.exists())
             self.assertTrue(lifecycle.available())
             stop.assert_called_once_with(remote_connections=False)
-            start.assert_called_once_with()
+            start.assert_called_once_with(message='Restarting local Hindsight services to revoke shared access...')
             extension = ApiKeyTenantExtension({'api_key': new_key})
             with self.assertRaises(AuthenticationError):
                 asyncio.run(extension.authenticate(RequestContext(api_key='old-key')))

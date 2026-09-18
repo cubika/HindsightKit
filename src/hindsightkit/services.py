@@ -21,7 +21,7 @@ def profile_config():
     return config, manager.resolve_profile_paths(runtime_env.PROFILE)
 
 
-def start_local():
+def start_local(*, message='Starting Hindsight (first start downloads the embedding model)...'):
     require_local()
     from .postgres import Postgres, require_postgresql, check_external
     config, paths = profile_config()
@@ -32,7 +32,7 @@ def start_local():
         database.validate()
     else:
         asyncio.run(check_external(database_url))
-    print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
+    print(message, flush=True)
     runtime_env.run([runtime_env.executable('hindsight-embed'), '--profile', runtime_env.PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
     from .connector_registry import enabled_connectors

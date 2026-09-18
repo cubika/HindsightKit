@@ -158,7 +158,7 @@ def unshare():
             client['apiToken'] = key
             save_client(path, client)
         if running and not lifecycle.state().get('stopped'):
-            services.start_local()
+            services.start_local(message='Restarting local Hindsight services to revoke shared access...')
         print('Sharing disabled. Previous connection codes were revoked; local memory is preserved.')
     else:
         print('Client disconnected. Run hindsightkit connect to choose a server.')

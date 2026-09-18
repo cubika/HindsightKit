@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: unshare progress message
+
+The focused lifecycle, remote command, and UI run passed 42 tests in 10.1 seconds. The server unshare fixture checked the restart message, key rotation, local client access, and disabled sharing. Connector responses and service operations were mocked; no mailbox, model, or live memory server was accessed.
+
 ## September 18, 2026: device sign-in browser opening
 
 The focused relay, remote command, and lifecycle run passed 68 tests in 11.0 seconds. Tests covered Microsoft and GitHub sign-in pages, manual fallback after browser launch failures, visible terminal output, cached login reuse, and background recovery without opening a browser. Lifecycle fixtures used synthetic connector responses; no mailbox, model, or live memory server was accessed. The installed Dev Tunnels CLI help confirmed the device-code option, and Microsoft's device sign-in URL resolved to its login page. Browser launch and account sign-in were mocked; real desktop login and cross-machine connectivity were not exercised.
