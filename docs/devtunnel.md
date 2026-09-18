@@ -12,6 +12,8 @@ On the computer that stores memory, run:
 hindsightkit share
 ```
 
+`share` and `share --relay` copy the connection code to the Windows clipboard and also display it in the terminal. If copying fails, copy the displayed code manually.
+
 On the coding computer, run:
 
 ```powershell

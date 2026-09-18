@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import ssl
+import subprocess
 import tempfile
 import threading
 from types import ModuleType, SimpleNamespace
@@ -50,6 +51,24 @@ class InvitationTests(unittest.TestCase):
                 remote.decode_invitation(code)
 
 
+class ClipboardTests(unittest.TestCase):
+    def test_copy_passes_only_the_code_over_stdin_with_a_timeout(self):
+        code = remote.encode_invitation({'version': 1, 'url': 'http://memory-host:9077', 'key': 'fixture-key'})
+        with patch.object(remote, 'os', SimpleNamespace(name='nt')), \
+                patch.object(remote.subprocess, 'CREATE_NO_WINDOW', 0, create=True), \
+                patch.object(remote.subprocess, 'run') as run:
+            self.assertTrue(remote.copy_connection_code(code))
+        self.assertEqual(run.call_args.kwargs['input'], code)
+        self.assertNotIn(code, repr(run.call_args.args))
+        self.assertEqual(run.call_args.kwargs['timeout'], 5)
+
+    def test_unsupported_platform_skips_clipboard_process(self):
+        with patch.object(remote, 'os', SimpleNamespace(name='posix')), \
+                patch.object(remote.subprocess, 'run') as run:
+            self.assertFalse(remote.copy_connection_code('hk1.fixture'))
+        run.assert_not_called()
+
+
 class RemoteTests(unittest.TestCase):
     @contextlib.contextmanager
     def environment(self, *, invitation=None, previous=None):
@@ -75,9 +94,11 @@ class RemoteTests(unittest.TestCase):
             prompt = stack.enter_context(patch.object(remote.getpass, 'getpass', return_value=remote.encode_invitation(invitation)))
             setup = stack.enter_context(patch.object(installer, 'setup_client'))
             stop_clients = stack.enter_context(patch.object(remote, 'stop_clients'))
+            clipboard = stack.enter_context(patch.object(remote, 'copy_connection_code', return_value=True))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield SimpleNamespace(root=root, path=path, previous=previous, saved=saved, invitation=invitation,
-                                  relay=relay, prompt=prompt, setup=setup, stop_clients=stop_clients, output=output)
+                                  relay=relay, prompt=prompt, setup=setup, stop_clients=stop_clients,
+                                  clipboard=clipboard, output=output)
 
     def test_direct_success_never_starts_or_creates_relay(self):
         with self.environment() as state, patch.object(connection, 'discover', new_callable=AsyncMock) as discover:
@@ -326,6 +347,8 @@ class RemoteTests(unittest.TestCase):
             self.assertEqual(remote.decode_invitation(code), {'version': 1, 'url': 'http://memory-host:9077', 'key': 'share-secret'})
             self.assertNotIn('share-secret', state.output.getvalue())
             self.assertIn('hidden prompt', state.output.getvalue())
+            state.clipboard.assert_called_once_with(code)
+            self.assertIn('Connection code copied to clipboard.', state.output.getvalue())
 
     def test_share_relay_returns_only_routing_metadata_in_invitation(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
@@ -338,6 +361,33 @@ class RemoteTests(unittest.TestCase):
             code = next(line for line in state.output.getvalue().splitlines() if line.startswith(remote.PREFIX))
             self.assertEqual(remote.decode_invitation(code)['relay'], {'tunnel_id': 'test-tunnel', 'remote_port': 9077})
             self.assertNotIn('share-secret', repr(state.relay.ensure_running.call_args))
+            state.clipboard.assert_called_once_with(code)
+            self.assertIn('Connection code copied to clipboard.', state.output.getvalue())
+
+    def test_share_succeeds_with_manual_copy_when_clipboard_is_unavailable(self):
+        copy = remote.copy_connection_code
+        local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
+        for error in (OSError('clipboard unavailable'),
+                      subprocess.CalledProcessError(1, 'powershell.exe', stderr='private diagnostic'),
+                      subprocess.TimeoutExpired('powershell.exe', 5)):
+            with self.subTest(error=type(error).__name__), self.environment() as state, \
+                    patch.object(runtime_env, 'prepare_env'), patch.object(services, 'require_local'), \
+                    patch.object(services, 'start_local'), \
+                    patch.object(connection, 'server_load', return_value=local), \
+                    patch.object(remote, 'os', SimpleNamespace(name='nt')), \
+                    patch.object(remote.subprocess, 'CREATE_NO_WINDOW', 0, create=True), \
+                    patch.object(remote.subprocess, 'run', side_effect=error), \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                state.clipboard.side_effect = copy
+                self.assertEqual(cli.main(['share']), 0)
+                output = state.output.getvalue()
+                code = next(line for line in output.splitlines() if line.startswith(remote.PREFIX))
+                self.assertEqual(remote.decode_invitation(code)['key'], 'share-secret')
+                self.assertIn('Copy the connection code above manually.', output)
+                self.assertNotIn('Connection code copied to clipboard.', output)
+                self.assertNotIn('share-secret', output)
+                self.assertNotIn('private diagnostic', output)
+                self.assertEqual(stderr.getvalue(), '')
 
     def test_saved_transport_is_checked_before_starting_relay(self):
         transport = {'mode': 'connect', 'tunnel_id': 'saved-tunnel', 'remote_port': 9077, 'local_port': 40123}

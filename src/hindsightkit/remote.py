@@ -9,6 +9,7 @@ import re
 import socket
 import os
 import secrets
+import subprocess
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -180,6 +181,21 @@ def save_client(path, config):
     os.replace(temporary, path)
 
 
+def copy_connection_code(code):
+    if os.name != 'nt':
+        return False
+    try:
+        subprocess.run(
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-Command',
+             "$ErrorActionPreference = 'Stop'; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+            input=code, text=True, encoding='utf-8', capture_output=True, check=True,
+            timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def share(args):
     from . import relay
     if args.relay_provider and not args.relay:
@@ -203,7 +219,12 @@ def share(args):
     lifecycle.start()
     print('On the other computer, run hindsightkit connect and paste this code at its hidden prompt.')
     print('This code grants access to this memory server. Share it privately with your own computer.')
-    print(encode_invitation(invitation))
+    code = encode_invitation(invitation)
+    print(code)
+    if copy_connection_code(code):
+        print('Connection code copied to clipboard.')
+    else:
+        print('Could not copy to clipboard. Copy the connection code above manually.')
     if args.relay:
         print('Remote relay is running in the background. Sign in with the same account on both computers.')
     else:

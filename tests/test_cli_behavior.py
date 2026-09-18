@@ -78,6 +78,7 @@ class CliBehaviorTests(unittest.TestCase):
     def test_successful_share_resumes_the_local_memory_state(self):
         lifecycle.stop()
         with patch.object(services, 'require_local'), patch.object(services, 'start_local'), \
+             patch.object(remote, 'copy_connection_code', return_value=True), \
              patch.object(services, 'profile_config', return_value=({'HINDSIGHT_API_HOST': '0.0.0.0'}, None)), \
              patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'fixture'}):
             remote.share(remote_options())
