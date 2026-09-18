@@ -13,7 +13,7 @@ import unittest
 import zipfile
 from unittest.mock import AsyncMock, patch
 
-from hindsightkit import cli, connection
+from hindsightkit import cli, connection, installer
 
 
 def options(**values):
@@ -125,23 +125,24 @@ class RemoteSetupTests(unittest.TestCase):
                 check=check, request=request, register=register, integrate=integrate,
                 hosts=hosts, cleanup=cleanup, git=git, prompt=prompt, stopped=stopped, packages=packages)
 
-    def test_cli_exposes_server_address_and_removes_old_setup_flags(self):
-        with patch.object(cli, 'prepare_env'), patch.object(cli, 'setup') as setup:
-            self.assertEqual(cli.main(['setup']), 0)
+    def test_installer_exposes_server_address_and_removes_old_setup_flags(self):
+        with patch.object(cli, 'prepare_env'), patch.object(cli, 'setup') as setup, \
+             patch.object(cli, 'run'), patch.object(installer, 'record_mode'):
+            self.assertEqual(installer.main([]), 0)
             self.assertIsNone(setup.call_args.args[0].server)
             self.assertFalse(setup.call_args.args[0].server_only)
             self.assertFalse(setup.call_args.args[0].client_only)
-            self.assertEqual(cli.main(['setup', '--client-only']), 0)
+            self.assertEqual(installer.main(['--client-only']), 0)
             self.assertTrue(setup.call_args.args[0].client_only)
-            self.assertEqual(cli.main(['setup', '--server-only']), 0)
+            self.assertEqual(installer.main(['--server-only']), 0)
             self.assertTrue(setup.call_args.args[0].server_only)
-            self.assertEqual(cli.main(['setup', '--server', 'http://example.invalid:9077']), 0)
+            self.assertEqual(installer.main(['--server', 'http://example.invalid:9077']), 0)
             self.assertEqual(setup.call_args.args[0].server, 'http://example.invalid:9077')
-            self.assertEqual(cli.main(['setup', '--client-only', '--server', 'http://example.invalid:9077']), 0)
+            self.assertEqual(installer.main(['--client-only', '--server', 'http://example.invalid:9077']), 0)
             self.assertTrue(setup.call_args.args[0].client_only)
             for flag in ['--api-url', '--bank', '--device-name', '--share', '--listen', '--local', '--replace-connection']:
                 with self.subTest(flag=flag), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                    cli.main(['setup', flag])
+                    installer.main([flag])
             for name in ['api_url', 'bank', 'device_name', 'share', 'listen', 'local', 'replace_connection']:
                 self.assertFalse(hasattr(setup.call_args.args[0], name))
 

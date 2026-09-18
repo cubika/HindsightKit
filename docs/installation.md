@@ -77,9 +77,9 @@ hindsightkit stop
 
 The default local API address is `http://127.0.0.1:9077` and the dashboard is `http://localhost:19077`. The authenticated API listens on IPv4 interfaces; the database listens only on loopback. PostgreSQL prefers port 15432 and selects an available port during its first setup. No firewall rules are created.
 
-The processes continue after the terminal closes. Start them again after reboot. On a client-only machine, `start` restores a saved managed relay; it does not create a local server. `ui` requires a local server. See [remote connections](devtunnel.md) for relay lifecycle details.
+The processes continue after the terminal closes. Start them again after reboot. `stop` stops local services and pauses memory in this computer's MCP and hooks, including direct clients. They stay paused until `start`. On a client-only machine, `start` resumes the saved connection and relay without creating a local server. `ui` requires a local server; its dashboard starts alongside the API. See [remote connections](devtunnel.md) for disconnecting and sharing.
 
-`check` performs a temporary retain/recall operation. If the machine has both a local server and a remote client, `check` and `clients` target the local server. `status` also checks the selected client endpoint.
+`check` performs a temporary retain/recall operation only on the local server and also reports the selected client connection. On a client-only machine it checks the connection without writing a remote test bank. `clients` targets the local server when installed.
 
 ## File locations
 
@@ -107,7 +107,9 @@ Application versions are separated from persistent settings and memory so upgrad
 
 ## Upgrades and existing configuration
 
-Run the newer release's installer to upgrade. It verifies package hashes, keeps version directories separate, and restarts managed server processes when server setup runs. Reload coding clients afterward. Old version directories are retained; automatic pruning and database downgrades are not implemented.
+Run the newer release's installer to upgrade. It preserves the last successful installation mode: client-only stays client-only even without repeating `-ClientOnly`. It verifies package hashes, keeps version directories separate, and restarts managed server processes when server setup runs. Reload coding clients afterward. Old version directories are retained; automatic pruning and database downgrades are not implemented.
+
+To change roles, explicitly use `-ClientOnly`, `-ServerOnly`, or `-ClientOnly:$false` for full installation in the PowerShell script-block invocation. Installation and configuration are handled by the installer; the public command has no `setup` or `copilot` subcommand. Use the independent `copilot` command to launch Copilot.
 
 Setup preserves existing model settings, memory banks, and unrelated editor configuration. Changed integration files receive a `.hindsightkit-backup` copy once. Conflicting endpoints or disabled-learning settings stop registration. The official coding-agent configuration must be strict JSON; VS Code JSONC comments are preserved.
 

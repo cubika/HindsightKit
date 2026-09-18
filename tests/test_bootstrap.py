@@ -33,6 +33,8 @@ class BootstrapTests(unittest.TestCase):
                         LOCALAPPDATA=str(self.root / 'local app data'),
                         USERPROFILE=str(self.root / 'profile'),
                         HINDSIGHTKIT_HOME=str(self.root / 'settings'),
+                        HINDSIGHT_CONFIG=str(self.root / 'profile/.hindsight/coding-agent.json'),
+                        HINDSIGHTKIT_INSTALL_MODE='',
                         HINDSIGHTKIT_RELEASE_MANIFEST='original-manifest',
                         HINDSIGHTKIT_INSTALL_LOG='original-log',
                         UV_PYTHON_INSTALL_DIR='original-python', UV_PYTHON_PREFERENCE='original-preference',
@@ -47,12 +49,13 @@ class BootstrapTests(unittest.TestCase):
 @{ directory=$PSScriptRoot; serverOnly=[bool]$ServerOnly; clientOnly=[bool]$ClientOnly; server=$Server;
    manifest=$env:HINDSIGHTKIT_RELEASE_MANIFEST; python=$env:UV_PYTHON_INSTALL_DIR;
    preference=$env:UV_PYTHON_PREFERENCE; hkConflict=$env:HINDSIGHTKIT_HK_CONFLICT;
-   installLog=$env:HINDSIGHTKIT_INSTALL_LOG } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
+   installLog=$env:HINDSIGHTKIT_INSTALL_LOG; installMode=$env:HINDSIGHTKIT_INSTALL_MODE } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
 exit 0
 ''',
             'app/pyproject.toml': '[project]\nname="fixture"\n',
             'app/uv.lock': 'version = 1\n',
             'app/src/hindsightkit/cli.py': '# harmless test fixture\n',
+            'app/src/hindsightkit/installer.py': '# harmless installer fixture\n',
             'app/release.json': json.dumps(manifest),
         }
         payload.update(entries or {})
@@ -63,7 +66,7 @@ exit 0
         self.app = self.destination / 'versions' / (version + '-' + digest[:12])
         return digest
 
-    def run_installer(self, digest, args='', *, expected=0, authenticated=False):
+    def run_installer(self, digest, args='', *, expected=0, authenticated=False, client_package=None):
         template = TEMPLATE.read_text(encoding='utf-8')
         for key, value in {'VERSION': self.version, 'RELEASE_URL': self.release_url,
                            'PACKAGE_NAME': 'hindsightkit-windows-x64.zip',
@@ -76,9 +79,11 @@ exit 0
         installer.write_text(template, encoding='utf-8')
         wrapper = self.root / 'invoke.ps1'
         invocation = ('& $script ' + args) if args else "(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'install.ps1') -Raw) | iex"
-        wants_client = '-ClientOnly' in args or '-Server ' in args
+        wants_client = ('-ClientOnly' in args and '-ClientOnly:$false' not in args) or '-Server ' in args
         has_server = (Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env').is_file()
-        self.env['TEST_PACKAGE_NAME'] = 'hindsightkit-client-windows-x64.zip' if wants_client and not has_server else 'hindsightkit-windows-x64.zip'
+        if client_package is None:
+            client_package = wants_client and not has_server
+        self.env['TEST_PACKAGE_NAME'] = 'hindsightkit-client-windows-x64.zip' if client_package else 'hindsightkit-windows-x64.zip'
         self.env['TEST_RELEASE_URL'] = self.release_url + '/' + self.env['TEST_PACKAGE_NAME']
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility
@@ -112,7 +117,8 @@ try {
         $env:UV_PYTHON_INSTALL_DIR -ne 'original-python' -or
         $env:UV_PYTHON_PREFERENCE -ne 'original-preference' -or
         $env:HINDSIGHTKIT_INSTALL_LOG -ne 'original-log' -or
-        $env:HINDSIGHTKIT_HK_CONFLICT -ne 'original-conflict') { throw 'Installer did not restore its environment.' }
+        $env:HINDSIGHTKIT_HK_CONFLICT -ne 'original-conflict' -or
+        $env:HINDSIGHTKIT_INSTALL_MODE) { throw 'Installer did not restore its environment.' }
 } catch { Write-Output $_; exit 1 }
 ''', encoding='utf-8')
         result = subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(wrapper)],
@@ -182,6 +188,44 @@ try {
         self.assertIn('Existing local server detected', result.stdout)
         self.assertNotIn('hindsightkit-client-windows-x64.zip', self.download_log.read_text())
         self.assertEqual(profile.read_text(), 'existing server settings')
+
+    def test_default_upgrade_keeps_unconnected_legacy_client_only(self):
+        stamp = Path(self.env['HINDSIGHTKIT_HOME']) / 'client-runtime/.installed-lock'
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text('verified client runtime')
+        digest = self.package()
+        self.run_installer(digest, client_package=True)
+        receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
+        self.assertTrue(receipt['clientOnly'])
+        self.assertFalse(receipt['server'])
+        self.assertEqual(receipt['installMode'], 'client-only')
+
+    def test_saved_client_mode_wins_over_an_existing_server(self):
+        settings = Path(self.env['HINDSIGHTKIT_HOME'])
+        settings.mkdir()
+        (settings / 'installation.json').write_text(json.dumps({'schema': 1, 'mode': 'client-only'}))
+        profile = Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env'
+        profile.parent.mkdir(parents=True)
+        profile.write_text('existing server')
+        digest = self.package()
+        self.run_installer(digest, client_package=False)
+        self.assertTrue(json.loads(self.log.read_text(encoding='utf-8-sig'))['clientOnly'])
+        self.assertEqual(profile.read_text(), 'existing server')
+
+    def test_explicit_full_install_overrides_saved_client_mode_in_child(self):
+        settings = Path(self.env['HINDSIGHTKIT_HOME'])
+        settings.mkdir()
+        record = settings / 'installation.json'
+        record.write_text(json.dumps({'schema': 1, 'mode': 'client-only'}))
+        before = record.read_bytes()
+        digest = self.package()
+        self.run_installer(digest, '-ClientOnly:$false', client_package=False)
+        receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
+        self.assertFalse(receipt['clientOnly'])
+        self.assertFalse(receipt['serverOnly'])
+        self.assertEqual(receipt['installMode'], 'full')
+        # The bootstrap cannot commit the role before the Python installer succeeds.
+        self.assertEqual(record.read_bytes(), before)
 
     def test_new_version_keeps_old_runtime_and_existing_settings(self):
         digest = self.package()

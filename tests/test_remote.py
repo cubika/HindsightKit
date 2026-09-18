@@ -70,6 +70,7 @@ class RemoteTests(unittest.TestCase):
             stack.enter_context(patch.dict('sys.modules', {'hindsightkit.relay': relay}))
             stack.enter_context(patch.object(hindsightkit, 'relay', relay, create=True))
             stack.enter_context(patch.object(cli, 'home', return_value=root))
+            stack.enter_context(patch.object(cli, 'profile_config', return_value=({}, None)))
             stack.enter_context(patch.object(connection, 'config_path', return_value=path))
             prompt = stack.enter_context(patch.object(remote.getpass, 'getpass', return_value=remote.encode_invitation(invitation)))
             setup = stack.enter_context(patch.object(cli, 'setup_client'))
@@ -301,11 +302,13 @@ class RemoteTests(unittest.TestCase):
              patch.object(connection, 'has_server', return_value=True), \
              patch.object(remote, 'stop', side_effect=RuntimeError('remote stop failed')), \
              patch('hindsightkit.connectors.stop') as stop_connectors, \
+             patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as daemon, \
              patch('hindsightkit.postgres.Postgres') as database, contextlib.redirect_stderr(io.StringIO()) as error:
             database.return_value.url = 'postgresql://local'
             database.return_value.state_path.is_file.return_value = True
             self.assertEqual(cli.main(['stop']), 1)
-            self.assertEqual([call.args[0][-2:] for call in run.call_args_list], [['ui', 'stop'], ['daemon', 'stop']])
+            self.assertEqual([call.args[0][-2:] for call in run.call_args_list], [['ui', 'stop']])
+            daemon.return_value.stop.assert_called_once_with(cli.PROFILE)
             stop_connectors.assert_called_once_with(state.root / 'connectors')
             database.return_value.stop.assert_called_once()
             self.assertIn('remote stop failed', error.getvalue())
@@ -346,7 +349,7 @@ class RemoteTests(unittest.TestCase):
             remote.prepare_client(config)
             state.relay.ensure_running.assert_called_once_with(remote.client_root(transport), transport, interactive=False)
 
-    def test_cli_remote_commands_accept_no_secret_argument_and_setup_stays_separate(self):
+    def test_cli_remote_commands_accept_no_secret_argument_and_setup_is_internal(self):
         with patch.object(cli, 'prepare_env'), patch.object(remote, 'connect') as connect, \
              patch.object(remote, 'share') as share, patch.object(cli, 'setup') as setup:
             self.assertEqual(cli.main(['connect']), 0)
@@ -356,9 +359,9 @@ class RemoteTests(unittest.TestCase):
             self.assertEqual(cli.main(['share', '--relay']), 0)
             self.assertTrue(share.call_args.args[0].relay)
             setup.assert_not_called()
-            self.assertEqual(cli.main(['setup']), 0)
-            setup.assert_called_once()
-            self.assertFalse(setup.call_args.args[0].server_only)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                cli.main(['setup'])
+            setup.assert_not_called()
             for args in (['connect', '--code', 'secret'], ['connect', '--key', 'secret'],
                          ['connect', 'secret'], ['connect', '--local', '--server', 'http://host:9077']):
                 with self.subTest(args=args[:-1]), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

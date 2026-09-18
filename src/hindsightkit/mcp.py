@@ -8,7 +8,7 @@ from urllib.request import url2pathname
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
-from . import connection, memory_control
+from . import connection, lifecycle, memory_control
 from .memory import Memory, Scope, SHARED_BANK, scope_for
 from .routing import resolve
 
@@ -27,6 +27,7 @@ def scope_from_roots(roots) -> Scope:
 
 def serve(context: str, directory: str | None = None):
     config = connection.load()
+    connection_epoch = lifecycle.state().get('connection_epoch', '')
     from .remote import prepare_client
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
@@ -55,6 +56,12 @@ def serve(context: str, directory: str | None = None):
     async def memory(ctx: Context):
         nonlocal scope, root_uris, local_scope, repository
         async with lock:
+            lifecycle.require_memory(connection_epoch=connection_epoch)
+            # A local server can rotate its sharing key without changing scope.
+            if connection.config_path().is_file():
+                current = connection.load()
+                if current.get('apiUrl') == config.get('apiUrl'):
+                    config['apiToken'] = current.get('apiToken')
             if context == 'vscode':
                 capabilities = ctx.session.client_capabilities if ctx is not None else None
                 if capabilities and capabilities.roots:

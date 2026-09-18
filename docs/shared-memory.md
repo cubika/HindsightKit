@@ -51,7 +51,7 @@ The server requires a connection key for its memory API. Default server setup li
 
 Repository routing controls the scope exposed by the managed coding integrations. It is not per-repository authorization for people who hold the server key. The key grants access to the server, and the current setup has no per-device permissions or individual key revocation. Use this arrangement only among computers trusted with that server's memory.
 
-The optional private relay adds Dev Tunnels account authentication. It does not narrow the memory permissions of the server key. Stopping a relay or running `unshare` does not revoke that key or disable direct API access.
+The optional private relay adds Dev Tunnels account authentication. It does not narrow the memory permissions of the server key. On the server, `unshare` revokes existing connection codes and disables direct and relay access while preserving local memory. On a client, it disconnects that client. `stop` pauses this computer's memory integrations and stops its services until `start`.
 
 ## Client activity
 

@@ -27,8 +27,37 @@ function Write-InstallStatus([string]$Message) {
     Add-InstallLog $Message
 }
 
+function Resolve-InstallMode([System.Collections.IDictionary]$Options) {
+    if ($Options['Server'] -or $Options['ClientOnly']) { return 'client-only' }
+    if ($Options['ServerOnly']) { return 'server-only' }
+    if ($Options.ContainsKey('ClientOnly')) { return 'full' }
+    # The release bootstrap has already resolved defaults before selecting an archive.
+    if ($env:HINDSIGHTKIT_INSTALL_MODE -in @('client-only', 'server-only', 'full')) {
+        return $env:HINDSIGHTKIT_INSTALL_MODE
+    }
+    $settings = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
+    $record = Join-Path $settings 'installation.json'
+    if (Test-Path -LiteralPath $record -PathType Leaf) {
+        $installed = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
+        if ($installed.schema -ne 1 -or $installed.mode -notin @('client-only', 'server-only', 'full')) {
+            throw 'Invalid installation mode record. Rerun with -ClientOnly or -ClientOnly:$false to select the installation role.'
+        }
+        return $installed.mode
+    }
+    $profile = Join-Path $env:USERPROFILE '.hindsight/profiles/hindsightkit.env'
+    $config = if ($env:HINDSIGHT_CONFIG) { $env:HINDSIGHT_CONFIG } else { Join-Path $env:USERPROFILE '.hindsight/coding-agent.json' }
+    if (-not (Test-Path -LiteralPath $profile -PathType Leaf) -and
+        ((Test-Path -LiteralPath (Join-Path $settings 'client-runtime/.installed-lock') -PathType Leaf) -or
+         (Test-Path -LiteralPath $config -PathType Leaf))) {
+        return 'client-only'
+    }
+    return 'full'
+}
+
 # Validate before installing dependencies or touching an existing connection.
-$clientOnly = [bool]$Server -or [bool]$ClientOnly
+$installationMode = Resolve-InstallMode $PSBoundParameters
+$clientOnly = $installationMode -eq 'client-only'
+if ($installationMode -eq 'server-only') { $ServerOnly = $true }
 if ($clientOnly -and ($ServerOnly -or $Model -or $ModelDir -or $Port -or $ReasoningEffort)) {
     throw 'Client setup accepts -Server; model and port options belong on the server.'
 }
@@ -249,7 +278,7 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $commandRoot 'node-path.txt'), $selectedNode.Binary, (New-Object Text.UTF8Encoding($false)))
     $stage = if ($clientOnly) { 'Configure client integrations' } else { 'Configure HindsightKit and verify memory' }
     Write-InstallStatus "Starting: $stage"
-    $setupArgs = @('-m', 'hindsightkit.cli', 'setup')
+    $setupArgs = @('-m', 'hindsightkit.installer')
     if ($Model) { $setupArgs += @('--model', $Model) }
     if ($ReasoningEffort) { $setupArgs += @('--reasoning-effort', $ReasoningEffort) }
     if ($ModelDir) { $setupArgs += @('--model-dir', (Resolve-Path -LiteralPath $ModelDir).Path) }
@@ -269,12 +298,8 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
         Invoke-Checked $python $setupArgs -PrivateOutput
     } finally { $env:HINDSIGHTKIT_HK_CONFLICT = $savedHkConflict }
     Write-InstallStatus "Completed: $stage"
-    $stage = 'Verify installed command'
-    Write-InstallStatus "Starting: $stage"
     $commandDirectory = Join-Path $commandRoot 'bin'
     $env:PATH = $commandDirectory + ';' + (($env:PATH -split ';' | Where-Object { $_ -ne $commandDirectory }) -join ';')
-    Invoke-Checked 'hindsightkit' @('--help')
-    Write-InstallStatus "Completed: $stage"
 } catch {
     $summary = "HindsightKit setup failed during ${stage}: $($_.Exception.Message)"
     [Console]::Error.WriteLine($summary)

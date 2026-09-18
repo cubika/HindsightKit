@@ -233,7 +233,7 @@ class Postgres:
     def start(self):
         reject_links(self.data)
         if not self.state_path.is_file() or not self.data.is_dir():
-            raise RuntimeError('Standalone PostgreSQL is not configured. Run hindsightkit setup.')
+            raise RuntimeError('Standalone PostgreSQL is not configured. Rerun the release installer.')
         if not self.running():
             with socket.socket() as listener:
                 try:
@@ -308,7 +308,7 @@ def configured_url(config):
 def require_postgresql(config):
     value = configured_url(config)
     if urlsplit(value).scheme not in ('postgresql', 'postgres'):
-        raise RuntimeError('A PostgreSQL connection is required. Run hindsightkit setup to configure it.')
+        raise RuntimeError('A PostgreSQL connection is required. Rerun the release installer to configure it.')
     return value
 
 

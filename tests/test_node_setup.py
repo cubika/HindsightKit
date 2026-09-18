@@ -37,6 +37,7 @@ class Fixture { static void Main(string[] args) {
     Console.WriteLine("Python 3.12.11");
   } else {
     File.WriteAllText(Environment.GetEnvironmentVariable("TEST_PYTHON_PATH"), Environment.GetEnvironmentVariable("PATH"));
+    File.WriteAllLines(Environment.GetEnvironmentVariable("TEST_PYTHON_ARGS"), args);
   }
 } }
 ''', encoding='utf-8')
@@ -114,6 +115,7 @@ class Fixture { static void Main(string[] args) {
                         saved = state / 'node-path.txt'
                         saved.write_text(str(case / 'stale/node.exe'))
                         requests, trace = case / 'downloads.txt', case / 'python-path.txt'
+                        arguments_trace = case / 'python-args.txt'
                         wrapper = case / 'invoke.ps1'
                         wrapper.write_text('''function Invoke-WebRequest {
     param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
@@ -138,7 +140,8 @@ exit $LASTEXITCODE
                                'HINDSIGHTKIT_RELEASE_MANIFEST': '' if case_name == 'source' else str(app / 'release.json'),
                                'HINDSIGHTKIT_INSTALL_LOG': '', 'TEST_SETUP': str(script),
                                'TEST_DOWNLOADS': str(requests), 'TEST_ARCHIVE': str(archive),
-                               'TEST_CHECKSUM': checksum, 'TEST_PYTHON_PATH': str(trace)}
+                               'TEST_CHECKSUM': checksum, 'TEST_PYTHON_PATH': str(trace),
+                               'TEST_PYTHON_ARGS': str(arguments_trace)}
                         result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                                  '-File', str(wrapper)], env=env,
                                                 capture_output=True, text=True, encoding='utf-8', timeout=30)
@@ -149,6 +152,8 @@ exit $LASTEXITCODE
                             self.assertEqual(len(requests.read_text(encoding='utf-8-sig').splitlines()), 2)
                         self.assertIn('Reusing Node.js' if reused else 'Installed Node.js', result.stdout)
                         self.assertTrue(Path(trace.read_text().split(os.pathsep)[0]).samefile(expected.parent))
+                        self.assertEqual(arguments_trace.read_text().splitlines(),
+                                         ['-m', 'hindsightkit.installer', '--server-only', '--no-open'])
                         with patch.dict(os.environ, env, clear=True), patch.object(cli, 'home', return_value=state):
                             cli.prepare_env()
                             self.assertTrue(Path(os.environ['PATH'].split(os.pathsep)[0]).samefile(expected.parent))

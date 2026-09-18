@@ -88,11 +88,11 @@ class ShortCommandTests(unittest.TestCase):
                                  (os.environ['COMSPEC'], ['/d', '/c'])]:
             for name in ['hindsightkit', 'hk']:
                 with self.subTest(shell=shell, name=name):
-                    result = subprocess.run([shell, *arguments, name + ' setup --help'], env=env,
+                    result = subprocess.run([shell, *arguments, name + ' connect --help'], env=env,
                         capture_output=True, text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('--server', result.stdout)
-                    self.assertIn('--reasoning-effort', result.stdout)
+                    self.assertIn('--local', result.stdout)
 
 
 if __name__ == '__main__':

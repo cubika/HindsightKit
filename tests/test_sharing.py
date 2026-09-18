@@ -70,7 +70,6 @@ class SharingConfigurationTests(unittest.TestCase):
         self.assertEqual(self.path.with_name("hindsightkit.env.hindsightkit-backup").read_bytes(), original)
         self.assertEqual(self.run.call_args_list, [
             call(["fixture-hindsight-embed", "--profile", cli.PROFILE, "ui", "stop"]),
-            call(["fixture-hindsight-embed", "--profile", cli.PROFILE, "daemon", "stop"]),
         ])
         self.assertFalse((self.root / "clients.json").exists())
 

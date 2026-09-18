@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from . import connection
+from . import connection, lifecycle
 
 
 PREFIX = 'hk1.'
@@ -62,6 +62,7 @@ def client_root(transport):
 
 
 def prepare_client(config, *, interactive=False):
+    lifecycle.require_memory()
     transport = config.get('hindsightkit', {}).get('transport')
     if transport:
         from . import relay
@@ -74,12 +75,15 @@ def prepare_client(config, *, interactive=False):
 def resume():
     from .cli import home
     from . import relay
+    current = lifecycle.state()
+    if current.get('stopped'):
+        return
     host = home() / 'remote/host'
     spec = relay.load_spec(host)
     if spec:
         relay.ensure_running(host, spec)
     path = connection.config_path()
-    if path.is_file():
+    if path.is_file() and not current.get('disconnected'):
         prepare_client(json.loads(path.read_text(encoding='utf-8')))
 
 
@@ -87,10 +91,15 @@ def stop():
     from .cli import home
     from . import relay
     root = home() / 'remote'
-    relay.stop(root / 'host')
-    for directory in (root / 'clients').glob('*'):
-        if directory.is_dir():
+    errors = []
+    directories = [root / 'host'] + [item for item in (root / 'clients').glob('*') if item.is_dir()]
+    for directory in directories:
+        try:
             relay.stop(directory)
+        except (RuntimeError, OSError, ValueError) as exc:
+            errors.append(str(exc))
+    if errors:
+        raise RuntimeError('; '.join(errors))
 
 
 def status():
@@ -110,18 +119,75 @@ def status():
 
 
 def unshare():
-    from .cli import home
-    from . import relay
-    root = home() / 'remote/host'
-    relay.stop(root)
-    # Keep the cloud tunnel private and leave deletion under its owner's control.
+    from . import cli
+    from .postgres import private_directory, restrict_access
+    root = cli.home() / 'remote/host'
+    # Remove saved recovery before stopping processes.
     (root / 'spec.json').unlink(missing_ok=True)
-    print('Background relay sharing is disabled. Existing direct connections and server keys are unchanged.')
+    path = connection.config_path()
+    client = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
+    local = connection.server_load() if connection.has_server() else None
+    uses_local = bool(local and client and is_local(client, local))
+    if not uses_local and (client or not local):
+        lifecycle.disconnect()
+    if not uses_local and client:
+        client.pop('apiToken', None)
+        client.get('hindsightkit', {}).pop('transport', None)
+        save_client(path, client)
+    errors = []
+    try:
+        stop()
+    except (RuntimeError, OSError, ValueError) as exc:
+        errors.append(str(exc))
+    if local:
+        from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+        from .memory import SHARED_BANK
+        running = DaemonEmbedManager().is_running(cli.PROFILE)
+        # Revoke old codes even if a relay process failed to stop. The official
+        # API-key extension reads the replacement key on restart.
+        key = cli.secrets.token_urlsafe(32)
+        profile, paths = cli.profile_config()
+        cli.configure_sharing(key, profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=False)
+        key_path = cli.home() / 'server/connection-key.txt'
+        private_directory(key_path.parent)
+        key_path.write_text(key, encoding='utf-8')
+        restrict_access(key_path)
+        restrict_access(paths.config)
+        if uses_local:
+            client['apiToken'] = key
+            save_client(path, client)
+        if running and not lifecycle.state().get('stopped'):
+            cli.start(remote_connections=False)
+        print('Sharing disabled. Previous connection codes were revoked; local memory is preserved.')
+    else:
+        print('Client disconnected. Run hindsightkit connect to choose a server.')
+    if errors:
+        raise RuntimeError('; '.join(errors))
+
+
+def is_local(client, local):
+    target, server = urlsplit(client.get('apiUrl', '')), urlsplit(local['apiUrl'])
+    return (target.scheme == server.scheme and target.port == server.port
+            and target.hostname in {'127.0.0.1', 'localhost', '::1'}
+            and not client.get('hindsightkit', {}).get('transport'))
+
+
+def save_client(path, config):
+    from .postgres import restrict_access
+    temporary = path.with_name(path.name + '.update')
+    temporary.write_text(json.dumps(config), encoding='utf-8')
+    restrict_access(temporary)
+    os.replace(temporary, path)
 
 
 def share(args):
     from . import cli, relay
     cli.require_local()
+    profile, _ = cli.profile_config()
+    if profile.get('HINDSIGHT_API_HOST') == '127.0.0.1':
+        from .memory import SHARED_BANK
+        cli.configure_sharing(profile['HINDSIGHT_API_TENANT_API_KEY'],
+                              profile.get('HINDSIGHT_API_HTTP_MEMORY_BANK', SHARED_BANK), enabled=True)
     cli.start(remote_connections=False)
     config = connection.server_load()
     port = urlsplit(config['apiUrl']).port
@@ -220,6 +286,7 @@ def configure_client(candidate, *, transport=None):
             restrict_access(temporary)
             os.replace(temporary, path)
         raise
+    lifecycle.connected()
 
 
 def stop_clients(*, except_transport=None):

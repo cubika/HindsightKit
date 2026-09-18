@@ -58,6 +58,7 @@ catch { Write-InstallStatus $_.Exception.Message; exit 19 }
 
     def test_release_upgrade_stops_only_running_hindsightkit_profile_services(self):
         with patch('hindsight_embed.daemon_embed_manager.DaemonEmbedManager') as manager, \
+             patch('hindsightkit.remote.stop'), \
              patch('hindsightkit.connectors.stop') as stop_connectors, \
              patch.object(cli, 'run') as run, patch.object(cli, 'executable', return_value='new-release/hindsight-embed'):
             manager.return_value.is_ui_running.return_value = True
@@ -65,16 +66,16 @@ catch { Write-InstallStatus $_.Exception.Message; exit 19 }
             cli.stop_profile_services()
             self.assertEqual([call.args[0] for call in run.call_args_list], [
                 ['new-release/hindsight-embed', '--profile', 'hindsightkit', 'ui', 'stop'],
-                ['new-release/hindsight-embed', '--profile', 'hindsightkit', 'daemon', 'stop'],
             ])
             manager.return_value.is_ui_running.assert_called_once_with('hindsightkit')
-            manager.return_value.is_running.assert_called_once_with('hindsightkit')
+            manager.return_value.stop.assert_called_once_with('hindsightkit')
             stop_connectors.assert_called_once_with(cli.home() / 'connectors')
             manager.return_value.is_ui_running.return_value = False
             manager.return_value.is_running.return_value = False
             run.reset_mock()
             cli.stop_profile_services()
             run.assert_not_called()
+            self.assertEqual(manager.return_value.stop.call_count, 2)
 
     def test_command_path_registration_is_idempotent_and_preserves_others(self):
         directory = Path(tempfile.gettempdir()) / 'HindsightKit command'

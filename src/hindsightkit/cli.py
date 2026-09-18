@@ -20,7 +20,7 @@ import webbrowser
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import connection
+from . import connection, lifecycle
 
 VERSION = '0.10.0'
 DEFAULT_MODEL = 'gpt-6-astra'
@@ -253,7 +253,7 @@ def profile_config():
     manager = ProfileManager()
     config = manager.load_profile_config(PROFILE)
     if not config:
-        raise RuntimeError('HindsightKit is not configured. Run setup first.')
+        raise RuntimeError('HindsightKit is not configured. Run the release installer first.')
     return config, manager.resolve_profile_paths(PROFILE)
 
 
@@ -317,6 +317,7 @@ def start(*, remote_connections=True):
     print('Starting Hindsight (first start downloads the embedding model)...', flush=True)
     run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'start'])
     ui_url = start_ui(paths)
+    lifecycle.start()
     from .connector_registry import enabled_connectors
     if enabled_connectors(home()):
         from .connectors import ensure_running
@@ -356,7 +357,7 @@ def start_ui(paths):
 def launch_ui(paths, ui_url):
     server = home() / 'runtime/node_modules/@vectorize-io/hindsight-control-plane/standalone/server.js'
     if not server.is_file():
-        raise RuntimeError('Hindsight UI is not installed. Run setup first.')
+        raise RuntimeError('Hindsight UI is not installed. Rerun the release installer.')
     with socket.socket() as listener:
         try:
             listener.bind(('127.0.0.1', paths.ui_port))
@@ -452,27 +453,42 @@ async def ensure_bank(api_url: str, bank: str, api_key=None):
         await client.aclose()
 
 
+def client_status():
+    current = lifecycle.state()
+    if current.get('stopped'):
+        print('Client: stopped. Run hindsightkit start to resume memory.')
+        return False
+    if current.get('disconnected'):
+        print('Client: disconnected. Run hindsightkit connect.')
+        return True
+    path = connection.config_path()
+    if not path.is_file():
+        print('Client: not connected. Run hindsightkit connect.')
+        return True
+    config = {}
+    try:
+        config = connection.load()
+        asyncio.run(connection.request(config, 'GET', '/ext/hindsightkit/connection'))
+        print(f'Client: connected to {config["apiUrl"]}')
+        return True
+    except Exception as exc:
+        print(f'Client: unavailable at {config.get("apiUrl", path)}: {exc}')
+        return False
+
+
 def status():
     from .remote import status as remote_status
     remote_status()
-    healthy = True
+    healthy = client_status()
     path = connection.config_path()
-    if path.is_file():
-        config = connection.load()
-        try:
-            asyncio.run(connection.request(config, 'GET', '/ext/hindsightkit/connection'))
-            print(f'Client: connected to {config["apiUrl"]}')
-        except Exception as exc:
-            print(f'Client: unavailable at {config["apiUrl"]}: {exc}')
-            healthy = False
     if not connection.has_server():
         if not path.is_file():
             directory = home() / 'client-runtime'
             if ((directory / '.installed-lock').is_file() and
                     (directory / 'node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js').is_file()):
                 print('Client: installed; not connected. Run hindsightkit connect.')
-                return True
-            raise RuntimeError('Run setup --client-only to install a client, then hindsightkit connect.')
+                return healthy
+            raise RuntimeError('Run the release installer with -ClientOnly, then hindsightkit connect.')
         return healthy
     return server_status() and healthy
 
@@ -485,7 +501,7 @@ def server_status():
     url = configured_url(config)
     managed = database.state_path.is_file() and url == database.url
     print('Database: ' + ('standalone PostgreSQL ' + ('running' if database.running() else 'stopped')
-          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'PostgreSQL not configured; run setup'))
+          if managed else 'external PostgreSQL' if url.startswith(('postgresql://', 'postgres://')) else 'PostgreSQL not configured; rerun the release installer'))
     manager = DaemonEmbedManager()
     healthy = manager.is_running(PROFILE)
     ui = manager.is_ui_running(PROFILE)
@@ -500,11 +516,11 @@ def require_local():
         raise RuntimeError('This is a client installation. Manage services and the dashboard on the server.')
 
 
-def configure_sharing(key, bank):
+def configure_sharing(key, bank, *, enabled=True):
     """Configure the official authentication and HTTP extension without replacing the engine."""
     config, paths = profile_config()
     updates = {
-        'HINDSIGHT_API_HOST': '0.0.0.0',
+        'HINDSIGHT_API_HOST': ('0.0.0.0' if enabled else '127.0.0.1') if enabled is not None else config.get('HINDSIGHT_API_HOST', '0.0.0.0'),
         'HINDSIGHT_API_TENANT_EXTENSION': 'hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension',
         'HINDSIGHT_API_TENANT_API_KEY': key,
         'HINDSIGHT_API_HTTP_EXTENSION': 'hindsightkit.server:ClientsExtension',
@@ -519,7 +535,10 @@ def configure_sharing(key, bank):
         raise RuntimeError('Remove conflicting MCP authentication overrides before shared setup.')
     if any(config.get(name) != value for name, value in updates.items()):
         # Explicit shared setup may restart only this profile to apply listening/auth changes.
-        stop_profile_services()
+        if enabled is False:
+            stop_profile_services(remote_connections=False)
+        else:
+            stop_profile_services()
         backup(paths.config)
         text = paths.config.read_text(encoding='utf-8')
         for name, value in updates.items():
@@ -529,18 +548,21 @@ def configure_sharing(key, bank):
         paths.config.write_text(text, encoding='utf-8')
 
 
-def stop_profile_services():
+def stop_profile_services(*, remote_connections=True):
     """Stop only this installation's official services before replacing their runtime."""
     from .connectors import stop
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
     from .remote import stop as stop_remote
-    stop_remote()
+    if remote_connections:
+        stop_remote()
     stop(home() / 'connectors')
     manager = DaemonEmbedManager()
     if manager.is_ui_running(PROFILE):
         run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
-    if manager.is_running(PROFILE):
-        run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+    # A busy daemon can fail /health while it still accepts authenticated work.
+    # The official stop implementation checks port ownership, not health.
+    if not manager.stop(PROFILE):
+        raise RuntimeError('The local API could not be stopped safely.')
 
 
 def validate_setup_options(args):
@@ -597,6 +619,7 @@ def setup(args):
         require_client_prerequisites()
     if args.server:
         setup_client(args)
+        lifecycle.connected()
     elif getattr(args, 'client_only', False):
         setup_client_only()
     else:
@@ -606,10 +629,11 @@ def setup(args):
                 setup_client(args, local_server=local)
             else:
                 print('Existing client connection preserved. To connect this computer to the local server, run:')
-                print('hindsightkit setup --server ' + local['apiUrl'])
+                print('hindsightkit connect --local')
     from .command import install
     launcher = install(home() / 'bin')
     print(f'Command installed: {launcher}. Open a new terminal to use hindsightkit.')
+    return launcher
 
 
 def api_key(args, previous=None, *, generate=False):
@@ -630,6 +654,7 @@ def setup_server(args):
     from .memory import SHARED_BANK
     from .postgres import setup_database, private_directory, restrict_access
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    existing_profile = connection.has_server()
     configure_profile(args)
     profile, paths = profile_config()
     key = api_key(args, profile.get('HINDSIGHT_API_TENANT_API_KEY'), generate=True)
@@ -647,7 +672,7 @@ def setup_server(args):
     seed_aliases(home() / 'repositories.json', home() / 'sessions', old_config, device,
                  f'http://127.0.0.1:{paths.port}')
     ensure_copilot()
-    configure_sharing(key, bank)
+    configure_sharing(key, bank, enabled=None if existing_profile else True)
     # An existing daemon can still import code from a previous release directory.
     stop_profile_services()
     install_node_packages()
@@ -695,7 +720,7 @@ def setup_client(args, *, local_server=None, transport=None):
     candidate = {'apiUrl': api_url, 'apiToken': key}
     discovered = asyncio.run(connection.request(candidate, 'GET', '/ext/hindsightkit/connection'))
     if discovered.get('protocol') != 1 or discovered.get('routing') != 'repository':
-        raise RuntimeError('The server does not support this client. Run setup on the server first.')
+        raise RuntimeError('The server does not support this client. Rerun its release installer.')
     shared_bank = connection.validate_bank(discovered.get('sharedBank', ''))
     asyncio.run(connection.request(candidate, 'GET', '/v1/default/banks/' + shared_bank + '/stats'))
     info = {'mode': 'client', 'routing': 'repository', 'activity': True,
@@ -781,17 +806,6 @@ def main(argv=None):
     prepare_env()
     parser = argparse.ArgumentParser(description='Local Hindsight memory for Copilot Chat and CLI.')
     sub = parser.add_subparsers(dest='command', required=True)
-    setup_parser = sub.add_parser('setup', help='Install a local server and client, or use --client-only to prepare a client.')
-    setup_parser.add_argument('--port', type=int)
-    setup_parser.add_argument('--model', help=f'Copilot model for new profiles (default: {DEFAULT_MODEL}).')
-    setup_parser.add_argument('--reasoning-effort', choices=['low', 'medium', 'high', 'xhigh', 'max'],
-                              help=f'Reasoning effort for new profiles (default: {DEFAULT_REASONING_EFFORT}).')
-    setup_parser.add_argument('--model-dir', help='Existing official multilingual-e5-small ONNX model directory.')
-    setup_parser.add_argument('--no-open', action='store_true')
-    setup_parser.add_argument('--server', help='Install a client connected to this HTTP(S) server address.')
-    setup_parser.add_argument('--client-only', action='store_true', help='Install client components; connect to a memory server separately.')
-    setup_parser.add_argument('--server-only', action='store_true', help='Install only the server, without editor or Copilot client integration.')
-    setup_parser.add_argument('--api-key-env', help='Read the connection key from this environment variable (optional).')
     for command in ['start', 'stop', 'status', 'check', 'clients', 'ui', 'connectors']:
         sub.add_parser(command)
     memory_parser = sub.add_parser('memory', help='Enable, disable, or inspect memory for this local Git repository.')
@@ -799,23 +813,19 @@ def main(argv=None):
     share_parser = sub.add_parser('share', help='After installation, prepare a connection code for another computer.')
     share_parser.add_argument('--relay', action='store_true', help='Enable a private relay for computers that cannot connect directly.')
     share_parser.add_argument('--address', help='Direct HTTP(S) address that the other computer can reach.')
-    sub.add_parser('unshare', help='Stop and disable the optional remote relay.')
+    sub.add_parser('unshare', help='Disconnect remote clients and disable direct and relay sharing.')
     connect_parser = sub.add_parser('connect', help='Connect this installed client to another computer, or restore local memory.')
     destination = connect_parser.add_mutually_exclusive_group()
     destination.add_argument('--server', help='Direct server address; its key is requested separately.')
     destination.add_argument('--local', action='store_true', help='Use this computer\'s existing local memory server.')
     connect_parser.add_argument('--api-key-env', help='Read the key for --server from an environment variable.')
-    copilot_parser = sub.add_parser('copilot', help='Launch the installed official Copilot CLI.')
-    copilot_parser.add_argument('arguments', nargs=argparse.REMAINDER)
     mcp_parser = sub.add_parser('mcp')
     mcp_parser.add_argument('--context', choices=['cli', 'vscode'], required=True)
     hook_parser = sub.add_parser('hook')
     hook_parser.add_argument('event', choices=['sessionStart', 'userPromptTransformed', 'agentStop'])
     args = parser.parse_args(argv)
     try:
-        if args.command == 'setup':
-            setup(args)
-        elif args.command == 'memory':
+        if args.command == 'memory':
             from .memory_control import command
             command(args.action)
         elif args.command in {'share', 'connect'}:
@@ -835,37 +845,53 @@ def main(argv=None):
                 start()
             else:
                 from .remote import resume
-                if not connection.config_path().is_file():
+                if not connection.config_path().is_file() or lifecycle.state().get('disconnected'):
                     raise RuntimeError('This client is not connected. Run hindsightkit connect first.')
-                resume()
+                lifecycle.start()
+                try:
+                    resume()
+                except Exception:
+                    lifecycle.stop()
+                    raise
         elif args.command == 'stop':
+            lifecycle.stop()
             from .remote import stop as stop_remote
-            remote_error = None
-            try:
-                stop_remote()
-            except (RuntimeError, OSError, ValueError) as exc:
-                remote_error = exc
+            errors = []
+            def attempt(operation):
+                try:
+                    operation()
+                except Exception as exc:
+                    errors.append(str(exc))
+            attempt(stop_remote)
             if not connection.has_server():
-                if remote_error:
-                    raise remote_error
+                if errors:
+                    raise RuntimeError('; '.join(errors))
                 return 0
             require_local()
             from .connectors import stop
-            stop(home() / 'connectors')
-            run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop'])
-            run([executable('hindsight-embed'), '--profile', PROFILE, 'daemon', 'stop'])
+            attempt(lambda: stop(home() / 'connectors'))
+            attempt(lambda: run([executable('hindsight-embed'), '--profile', PROFILE, 'ui', 'stop']))
+            from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+            def stop_api():
+                if not DaemonEmbedManager().stop(PROFILE):
+                    raise RuntimeError('The local API could not be stopped safely.')
+            attempt(stop_api)
             from .postgres import Postgres, configured_url
             config, _ = profile_config()
             database = Postgres(home() / 'postgresql')
             if database.state_path.is_file() and configured_url(config) == database.url:
-                database.stop()
-            if remote_error:
-                raise remote_error
+                attempt(database.stop)
+            if errors:
+                raise RuntimeError('; '.join(errors))
         elif args.command == 'status':
             return 0 if status() else 1
         elif args.command == 'check':
-            config = connection.management()
-            if not connection.client_mode(config):
+            healthy = client_status()
+            if connection.has_server():
+                if lifecycle.state().get('stopped'):
+                    raise RuntimeError('HindsightKit is stopped. Run hindsightkit start before checking local memory.')
+                config = connection.server_load()
+                print(f'Checking local memory at {config["apiUrl"]}...')
                 from .postgres import Postgres, require_postgresql, check_external
                 profile, _ = profile_config()
                 url = require_postgresql(profile)
@@ -874,7 +900,12 @@ def main(argv=None):
                     database.validate()
                 else:
                     asyncio.run(check_external(url))
-            asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
+                asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
+            else:
+                print('Local server: not installed. Only the client connection was checked.')
+                if not connection.config_path().is_file() or lifecycle.state().get('disconnected'):
+                    healthy = False
+            return 0 if healthy else 1
         elif args.command == 'clients':
             clients()
         elif args.command == 'ui':
@@ -893,12 +924,6 @@ def main(argv=None):
                 api_url, ui_url = start()
             url = ensure_running(home() / 'connectors', api_url, ui_url, paths.ui_port + 1)
             webbrowser.open(url)
-        elif args.command == 'copilot':
-            command = copilot_command()
-            if command is None:
-                raise RuntimeError('Run setup to install Copilot CLI.')
-            arguments = args.arguments[1:] if args.arguments[:1] == ['--'] else args.arguments
-            return subprocess.call([str(value) for value in command + arguments])
         return 0
     except Exception as exc:
         print(f'HindsightKit: {exc}', file=sys.stderr)

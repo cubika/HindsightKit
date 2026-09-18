@@ -55,15 +55,17 @@ HindsightKit manages the tunnel and its background processes. The coding client 
 | Command | Effect |
 | --- | --- |
 | `hindsightkit status` | Reports relay state, requests authenticated discovery from the configured client destination, and reports local server health when installed. |
-| `hindsightkit start` | Starts the local server when installed and restores saved relay connections. A client-only installation restores its relay without creating a local server. |
-| `hindsightkit stop` | Stops this computer's managed relay processes and local server components. Saved connections remain available for a later start. |
-| `hindsightkit unshare` | Stops the server's relay and removes its saved sharing configuration. |
+| `hindsightkit start` | Starts the local server when installed and resumes memory and saved relay connections. |
+| `hindsightkit stop` | Stops local services and relays and pauses this computer's memory integrations, including direct clients, until `start`. |
+| `hindsightkit unshare` | Disconnects this computer's remote client. On a server, also disables direct and relay sharing and revokes old connection codes, preserving local memory. |
 
 The relay continues after the terminal closes. Its supervisor restarts an exited tunnel process with a delay between attempts. An interrupted request can still fail; recovery does not replay it.
 
-After reboot, run `hindsightkit start` on the memory server. Client MCP and hooks can also restore their saved relay when they start or run, including after `stop`. No Windows service or login task is installed. Background recovery does not open a login flow. If sign-in has expired, rerun `share --relay` on the server or `connect` on the client interactively.
+After reboot, run `hindsightkit start` on the memory server. Client MCP and hooks can recover a saved relay during normal use, but cannot resume it after an explicit `stop` or `unshare`. No Windows service or login task is installed. Background recovery does not open a login flow. If sign-in has expired, rerun `share --relay` on the server or `connect` on the client interactively.
 
-`unshare` leaves the cloud tunnel, server key, and existing direct access in place. It disables this installation's automatic relay sharing; it does not revoke a connection code. Microsoft expires an unused tunnel after its inactivity period. If that happens, run `share --relay` again and use the new code on the client.
+On a server, `unshare` rotates the server key and restricts the API to loopback. Previously issued codes no longer authenticate, including after a later `share`. The local client keeps access with the new key. A remote client on the same computer is disconnected too. The cloud tunnel remains in its owner's account but its local forwarding is disabled.
+
+On a client, `unshare` forgets the connection key and disables relay recovery. `start` does not reconnect it; use `connect` to choose a server again. After a connection change, restart the Hindsight MCP server. Sessions spanning a stop or disconnect are not saved retroactively; start a new Copilot CLI session for automatic capture.
 
 To switch a coding computer back to its own installed memory server:
 
@@ -77,6 +79,6 @@ This also stops that computer's managed client relays. It requires an existing l
 
 Run `hindsightkit status` on the coding computer to check its selected destination. A relay marked `ready` is not, by itself, a successful memory request; also check the `Client` result. `status` does not start a stopped relay. Use `start` first when needed.
 
-`hindsightkit check` performs a temporary retain/recall test and uses Copilot allowance. It attempts to delete its test bank afterward. On a computer with a local server installed, `check` targets that server even when the coding client points elsewhere. On a client-only installation, it targets the configured remote server. Use an actual client memory query to verify routing from an editor session.
+`hindsightkit check` reports the selected client connection and, when a local server is installed, runs a temporary retain/recall test there using Copilot allowance. It deletes its test bank afterward. A client-only installation checks authenticated discovery without writing remote memory. Use an actual client memory query to verify routing from an editor session.
 
 A recorded test passed synthetic HTTP traffic through the real private relay service on one computer, including port conflicts, process reuse, and restart at the same client address. Test workers and tunnels were removed. This does not establish access from a second computer or through its account and network policies. See [release validation](release-validation.md) for the recorded checks. Microsoft provides Dev Tunnels for development and testing; see its [documentation](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/).

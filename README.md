@@ -27,6 +27,10 @@ hindsightkit ui
 
 Services stay running when the terminal closes. After restarting Windows, run `hindsightkit start`. Use `hindsightkit stop` to stop the local services and managed relay processes. Setup does not create a login task or Windows service.
 
+`stop` also pauses this computer's memory integrations until `start`; direct clients and running MCP sessions honor the pause. `unshare` disconnects a remote client. On a server, it also disables direct and relay sharing and revokes old connection codes while preserving local memory.
+
+Use the release installer for installation and upgrades. It preserves the previous installation mode, including client-only. Launch Copilot with its own `copilot` command.
+
 | Session location | Writes | Reads |
 | --- | --- | --- |
 | A Git repository | That repository's memory | Repository and shared memory |
