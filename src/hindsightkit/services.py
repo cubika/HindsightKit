@@ -217,7 +217,7 @@ def client_status():
         return False
 
 
-def status():
+def status(*, test_memory=False):
     from .remote import status as remote_status
     remote_status()
     healthy = client_status()
@@ -228,10 +228,29 @@ def status():
             if ((directory / '.installed-lock').is_file() and
                     (directory / 'node_modules/@vectorize-io/hindsight-coding-agents/dist/installer.js').is_file()):
                 print('Client: installed; not connected. Run hindsightkit connect.')
-                return healthy
-            raise RuntimeError('Run the release installer with -ClientOnly, then hindsightkit connect.')
+            else:
+                raise RuntimeError('Run the release installer with -ClientOnly, then hindsightkit connect.')
+        if test_memory:
+            print('Memory test: skipped (no local server installed).')
+            healthy = healthy and path.is_file() and not lifecycle.state().get('disconnected')
         return healthy
-    return server_status() and healthy
+    healthy = server_status() and healthy
+    if test_memory:
+        if lifecycle.state().get('stopped'):
+            print('Memory test: skipped. Run hindsightkit start before testing local memory.')
+            return False
+        config = connection.server_load()
+        print(f'Testing local memory at {config["apiUrl"]} (uses Copilot allowance)...')
+        from .postgres import Postgres, require_postgresql, check_external
+        profile, _ = profile_config()
+        url = require_postgresql(profile)
+        database = Postgres(runtime_env.home() / 'postgresql')
+        if database.state_path.is_file() and url == database.url:
+            database.validate()
+        else:
+            asyncio.run(check_external(url))
+        asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
+    return healthy
 
 
 def server_status():
@@ -331,29 +350,6 @@ def stop():
     else:
         from .remote import stop as stop_remote
         stop_remote()
-
-
-def check():
-    healthy = client_status()
-    if connection.has_server():
-        if lifecycle.state().get('stopped'):
-            raise RuntimeError('HindsightKit is stopped. Run hindsightkit start before checking local memory.')
-        config = connection.server_load()
-        print(f'Checking local memory at {config["apiUrl"]}...')
-        from .postgres import Postgres, require_postgresql, check_external
-        profile, _ = profile_config()
-        url = require_postgresql(profile)
-        database = Postgres(runtime_env.home() / 'postgresql')
-        if database.state_path.is_file() and url == database.url:
-            database.validate()
-        else:
-            asyncio.run(check_external(url))
-        asyncio.run(check_memory(config['apiUrl'], config.get('apiToken')))
-    else:
-        print('Local server: not installed. Only the client connection was checked.')
-        if not connection.config_path().is_file() or lifecycle.state().get('disconnected'):
-            healthy = False
-    return healthy
 
 
 def ui():

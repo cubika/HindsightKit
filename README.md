@@ -25,6 +25,8 @@ hindsightkit ui
 
 `status` checks the configured client connection and any local server. `ui` starts the local services if needed and opens the dashboard. The short command `hk` works too, unless that name was already taken on the machine.
 
+Use `hindsightkit status --test-memory` to also test temporary memory on the local server using Copilot allowance. The default status check makes no model calls. Client-only computers skip the memory test.
+
 Services stay running when the terminal closes. After restarting Windows, run `hindsightkit start`. Use `hindsightkit stop` to stop the local services and managed relay processes. Setup does not create a login task or Windows service.
 
 `stop` also pauses this computer's memory integrations until `start`; direct clients and running MCP sessions honor the pause. `unshare` disconnects a remote client. On a server, it also disables direct and relay sharing and revokes old connection codes while preserving local memory.

@@ -279,7 +279,7 @@ def connect(args):
             except (aiohttp.ClientConnectionError, TimeoutError, socket.gaierror) as exc:
                 detail = str(exc).strip() or type(exc).__name__
                 raise RuntimeError('The private relay started, but the memory server could not be reached through it. '
-                                   'Run hindsightkit check on the server. ' + detail) from exc
+                                   'Run hindsightkit status --test-memory on the server. ' + detail) from exc
         except Exception:
             if transport != saved:
                 relay.stop(root)

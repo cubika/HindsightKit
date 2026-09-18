@@ -84,14 +84,14 @@ class CliBehaviorTests(unittest.TestCase):
             remote.share(remote_options())
         self.assertFalse(lifecycle.state()['stopped'])
 
-    def test_check_rejects_incompatible_discovery_without_writing_memory(self):
+    def test_status_rejects_incompatible_discovery_without_writing_memory(self):
         for response in ({}, {'protocol': 2, 'routing': 'repository'},
                          {'protocol': 1, 'routing': 'repository', 'sharedBank': ''}):
             with self.subTest(response=response), patch.object(runtime_env, 'prepare_env'), \
                  patch.object(connection, 'has_server', return_value=False), \
                  patch.object(connection, 'request', new_callable=AsyncMock, return_value=response), \
                  patch.object(services, 'check_memory') as memory:
-                self.assertEqual(cli.main(['check']), 1)
+                self.assertEqual(cli.main(['status', '--test-memory']), 1)
                 memory.assert_not_called()
 
     def test_start_reports_relay_failure_consistently_for_both_roles(self):
@@ -117,9 +117,9 @@ class CliBehaviorTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit):
             cli.main(['--help'])
         help_text = output.getvalue()
-        for internal in ('mcp', 'hook', 'setup', 'copilot'):
+        for internal in ('mcp', 'hook', 'setup', 'copilot', 'check'):
             self.assertNotIn(internal, help_text)
-        self.assertIn('Test local memory', help_text)
+        self.assertIn('Show local services', help_text)
 
     def test_empty_exception_message_still_reports_its_type(self):
         for error in (TimeoutError(), RuntimeError('   ')):

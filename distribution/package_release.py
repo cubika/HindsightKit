@@ -391,7 +391,8 @@ The command line now separates installation from everyday use. Run the installer
 and use the independent {tick}copilot{tick} command to launch Copilot.
 {tick}stop{tick} pauses memory and stops local services until {tick}start{tick}.
 {tick}unshare{tick} disconnects clients and disables direct and relay sharing on a server.
-{tick}check{tick} tests local memory and reports the selected client connection.
+{tick}status{tick} reports local services and the selected client connection.
+Add {tick}--test-memory{tick} to also test local memory using Copilot allowance.
 Failed connections restore the previous selection, and sessions cannot upload old transcripts after switching servers.
 Private relay login supports Microsoft and GitHub accounts with device-code sign-in.
 
