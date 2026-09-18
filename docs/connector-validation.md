@@ -4,6 +4,14 @@
 
 The full unit suite passed 533 tests in 926.5 seconds after moving the WorkIQ adapter into its own package and separating Node and PowerShell resources. Earlier runs exposed stale fixture paths, a relay mock attached to the old parent package, and integration tests writing runtime state outside their temporary directories; these were corrected before the final run. Connector and MCP tests used synthetic responses, with no mailbox or model calls. A built wheel matched all 50 package files byte-for-byte, and an isolated wheel installation passed resource, adapter-import, command-entry, and Node JSONC checks.
 
+## September 18, 2026: Windows login startup
+
+After integrating the startup change into the package layout, 115 affected startup, installer, CLI, and packaging tests passed in 133.1 seconds. The rebuilt wheel included `setup/startup.py` and `scripts/login_task.ps1`; all 52 package files matched source, and the isolated wheel checks passed again.
+
+The repository suite passed 557 tests in 957.0 seconds, including 23 startup tests. Fixtures covered manual pauses, a stop during successful or failed startup, client-only isolation, upgrade opt-out, registration rollback, and hidden launchers with Unicode, spaces, apostrophes, and literal shell syntax in paths. The generated runner propagated success and failure exits in Windows PowerShell 5.1 and PowerShell 7.
+
+A disposable Windows task passed registration, update, actual launcher execution, disabled-task preservation, ownership-conflict checks, removal, and upgrade opt-out. Its saved definition used a user-specific delayed sign-in trigger, a limited interactive principal, retries, battery support, and no execution time limit. The task was removed afterward. A wheel build included both startup files. No Windows reboot or live memory startup was performed; connector and memory tests used isolated fixtures.
+
 ## September 18, 2026: status and memory test consolidation
 
 The integrated status, lifecycle, connection, packaging, and installer run passed 121 tests in 377.7 seconds. After integrating the relay worker update, 82 affected tests passed in 15.1 seconds. Default status checks made no model calls. The optional local-memory test preserved service and connection failure results, skipped stopped or client-only installations, and never wrote a remote test bank. Connector services and memory responses used isolated fixtures; no mailbox or live memory server was accessed.

@@ -88,7 +88,7 @@ HindsightKit manages the tunnel and its background processes. The coding client 
 
 The relay continues after the terminal closes. Its supervisor restarts an exited tunnel process with a delay between attempts. An interrupted request can still fail; recovery does not replay it.
 
-After reboot, run `hindsightkit start` on the memory server. Client MCP and hooks can recover a saved relay during normal use, but cannot resume it after an explicit `stop` or `unshare`. No Windows service or login task is installed. Background recovery does not open a login flow. If sign-in has expired, rerun `share --relay` on the server or `connect` on the client interactively.
+Setup enables automatic startup 30 seconds after Windows sign-in. On the memory server, it starts local services and resumes saved sharing; client-only installations resume their saved client relay. Client MCP and hooks can also recover a saved relay during normal use. An explicit `stop` or `unshare` stays effective across restarts. Use `hindsightkit startup on`, `off`, or `status` to control login startup, and `hindsightkit start` to resume an explicit stop. Background recovery does not open a login flow. If sign-in has expired, rerun `share --relay` on the server or `connect` on the client interactively.
 
 On a server, `unshare` rotates the server key and restricts the API to loopback. Previously issued codes no longer authenticate, including after a later `share`. The local client keeps access with the new key. A remote client on the same computer is disconnected too. The cloud tunnel remains in its owner's account but its local forwarding is disabled.
 

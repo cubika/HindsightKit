@@ -57,6 +57,24 @@ The downloaded `install.ps1` accepts these arguments. When using a release page'
 
 `-ClientOnly` and `-Server` cannot be combined with `-ServerOnly` or server model/port options. `-ApiKeyEnv` during client-only installation requires `-Server`. Client-only preparation without an endpoint keeps connection-key entry for the later `connect` command.
 
+## Automatic startup
+
+Use these commands to inspect, disable, or enable startup after Windows sign-in:
+
+```powershell
+hindsightkit startup status
+hindsightkit startup off
+hindsightkit startup on
+```
+
+Setup registers or updates a task named `HindsightKit-Login-<user SID>-<installation ID>`. Upgrades preserve a disabled setting. The task uses the installed command's absolute path, so it does not depend on the terminal PATH. Client-only installations resume a saved client connection; they do not start a local server, even if one was previously installed.
+
+An explicit `hindsightkit stop` remains effective across Windows restarts. Run `hindsightkit start` to resume services; enabling startup alone does not clear that pause. Disconnected clients stay disconnected. Startup retries a failure up to three times at one-minute intervals. Expired relay credentials still require an interactive `share --relay` or `connect` command.
+
+`startup status` reports the Windows task's enabled state and last result. Output is saved in `%USERPROFILE%\.hindsightkit\startup.log` and `startup-error.log` (or under `HINDSIGHTKIT_HOME`). Use `hindsightkit status` to check the resulting services and client connection. A successful task result can also mean startup was skipped because memory was paused or no client was connected.
+
+There is no uninstall command. Before manually removing an installation, run `hindsightkit startup off` to remove its scheduled task, then `hindsightkit stop`. These commands preserve memory and configuration.
+
 ## Model configuration
 
 Hindsight makes separate model requests through the official Copilot SDK. Changing the model in Copilot Chat or CLI does not change Hindsight's model. New profiles default to `gpt-6-astra` and `xhigh` reasoning; the server account must have access to the chosen model.
@@ -77,7 +95,7 @@ hindsightkit stop
 
 The default local API address is `http://127.0.0.1:9077` and the dashboard is `http://localhost:19077`. The authenticated API listens on IPv4 interfaces; the database listens only on loopback. PostgreSQL prefers port 15432 and selects an available port during its first setup. No firewall rules are created.
 
-The processes continue after the terminal closes. Start them again after reboot. `stop` stops local services and pauses memory in this computer's MCP and hooks, including direct clients. They stay paused until `start`. On a client-only machine, `start` resumes the saved connection and relay without creating a local server. `ui` requires a local server; its dashboard starts alongside the API. See [remote connections](devtunnel.md) for disconnecting and sharing.
+The processes continue after the terminal closes. Setup enables automatic startup 30 seconds after the installing user signs in to Windows. It runs in the background under that user, without administrator privileges or a stored password. It does not start before sign-in. `stop` stops local services and pauses memory in this computer's MCP and hooks, including direct clients. They stay paused until `start`. On a client-only machine, `start` resumes the saved connection and relay without creating a local server. `ui` requires a local server; its dashboard starts alongside the API. See [remote connections](devtunnel.md) for disconnecting and sharing.
 
 `status` reports local services, relays, and the selected client connection without making model calls. Add `--test-memory` to also run a temporary retain/recall test on the local server using Copilot allowance. A client-only machine reports that the memory test is skipped; it never writes a remote test bank. `clients` targets the local server when installed.
 

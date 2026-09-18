@@ -53,7 +53,7 @@ from hindsightkit.setup.node_bundle import package_directory
 from hindsightkit.connectors.registry import CONNECTORS
 assert m.version('hindsightkit') == sys.argv[1]
 assert pathlib.Path(hindsightkit.cli.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())
-for name in ('node/integrate.mjs', 'scripts/install_options.ps1', 'scripts/postgres_install.ps1',
+for name in ('node/integrate.mjs', 'scripts/install_options.ps1', 'scripts/postgres_install.ps1', 'scripts/login_task.ps1',
              'web/catalog.html', 'web/connectors.html', 'web/catalog.js', 'web/connectors.js', 'web/connectors.css'):
     assert (PACKAGE / name).is_file(), name
 for role in ('client', 'server'):

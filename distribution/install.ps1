@@ -365,7 +365,7 @@ function Get-InstallReferences {
         (Join-Path $env:USERPROFILE '.copilot/mcp-config.json'),
         (Join-Path $env:USERPROFILE '.copilot/hooks/hindsight-coding-agents.json'))
     foreach ($relative in @('node-path.txt', 'bin/hindsightkit.exe', 'bin/hk.exe', 'clients.json', 'repositories.json',
-            'remote/host/launch.json')) { $paths += Join-Path $settings $relative }
+            'remote/host/launch.json', 'bin/login-startup.ps1')) { $paths += Join-Path $settings $relative }
     $clients = Join-Path $settings 'remote/clients'
     if (Test-Path -LiteralPath $clients) {
         Assert-InstallDirectory $clients | Out-Null

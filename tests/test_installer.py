@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallerTests(unittest.TestCase):
+    def setUp(self):
+        registration = patch('hindsightkit.setup.startup.install')
+        self.startup = registration.start()
+        self.addCleanup(registration.stop)
+
     def test_success_commits_selected_role_after_installed_command_verification(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -50,7 +55,14 @@ class InstallerTests(unittest.TestCase):
                             self.assertEqual(record.read_bytes(), original)
 
                         run.side_effect = verify_command
+                        self.startup.reset_mock()
+                        def register_startup(launcher):
+                            self.assertEqual(launcher, root / 'bin/hk.cmd')
+                            self.assertEqual(record.read_bytes(), original)
+                            run.assert_called_with([launcher, '--help'], capture=True)
+                        self.startup.side_effect = register_startup
                         self.assertEqual(installer.main(arguments), 0)
+                        self.startup.assert_called_once_with(root / 'bin/hk.cmd')
                         self.assertEqual(json.loads(record.read_text()), {'schema': 1, 'mode': mode})
                         self.assertEqual(list(root.glob('.installation-*')), [])
 
@@ -84,6 +96,22 @@ class InstallerTests(unittest.TestCase):
                  contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(installer.main(['--server-only']), 1)
             self.assertEqual(record.read_bytes(), original)
+            self.startup.assert_not_called()
+
+    def test_failed_startup_registration_preserves_the_last_successful_role(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / 'installation.json'
+            original = b'{"schema": 1, "mode": "client-only"}\n'
+            record.write_bytes(original)
+            self.startup.side_effect = RuntimeError('Task Scheduler unavailable')
+            with patch.object(runtime_env, 'home', return_value=root), patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(installer, 'setup', return_value=root / 'bin/hindsightkit.exe'), \
+                 patch.object(runtime_env, 'run'), contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(installer.main(['--server-only']), 1)
+            self.assertEqual(record.read_bytes(), original)
+            self.assertIn('Task Scheduler unavailable', error.getvalue())
 
     @unittest.skipUnless(os.name == 'nt', 'Windows installation role resolution')
     def test_source_and_published_mode_resolution_match(self):
