@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hindsight_client_api.exceptions import ApiException
 
-from hindsightkit import connection
+from hindsightkit import connection, relay_log
 from hindsightkit.server import Activity, ClientsExtension, Inventory, MAX_DEVICES
 
 
@@ -294,7 +294,8 @@ class ConnectionTests(unittest.TestCase):
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         try:
-            with running(server) as url:
+            with running(server) as url, tempfile.TemporaryDirectory() as directory, \
+                 relay_log.operation(Path(directory), 'fixture.connect'):
                 config = {"apiUrl": url, "apiToken": TOKEN}
                 original = dict(config)
                 for method, path in [("GET", "/ext/hindsightkit/connection"),
@@ -308,6 +309,11 @@ class ConnectionTests(unittest.TestCase):
                     self.assertNotIn(TOKEN, str(error.exception))
                     self.assertIsInstance(error.exception.__cause__, TimeoutError)
                 self.assertEqual(config, original)
+                log = relay_log.path(directory).read_text()
+                records = [json.loads(line) for line in log.splitlines()]
+                for event in ('api.discovery.failed', 'api.registration.failed'):
+                    self.assertTrue(any(item['event'] == event and item['error'] == 'TimeoutError' for item in records))
+                self.assertNotIn(TOKEN, log)
         finally:
             release.set()
 

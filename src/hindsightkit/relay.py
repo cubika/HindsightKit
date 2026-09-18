@@ -26,6 +26,7 @@ import webbrowser
 from filelock import FileLock, Timeout
 
 from .postgres import atomic_json, private_directory, reject_links
+from . import relay_log
 
 DOWNLOAD_URL = 'https://aka.ms/TunnelsCliDownload/win-x64'
 SERVICE = 'hindsightkit-relay-v1'
@@ -70,6 +71,7 @@ class CliError(RuntimeError):
         super().__init__(f'Microsoft devtunnel {command} failed (exit {result.returncode}). '
                          'Check connectivity and run share --relay or connect to sign in again.')
         self.detail = (result.stdout or '') + (result.stderr or '')
+        self.returncode = result.returncode
 
 
 def _json(executable, *arguments):
@@ -216,12 +218,20 @@ def _ports(value):
 
 
 def create_host(root, api_port, *, provider=None):
+    with relay_log.operation(root, 'host.configure'):
+        return _create_host(root, api_port, provider=provider)
+
+
+def _create_host(root, api_port, *, provider=None):
     root = Path(root)
     if type(api_port) is not int or not 1 <= api_port <= 65535:
         raise ValueError('Invalid server port.')
     private_directory(root)
-    executable = ensure_cli()
-    signed_in = _authenticate(executable, True, provider=provider)
+    with relay_log.operation(root, 'cli.verify'):
+        executable = ensure_cli()
+    with relay_log.operation(root, 'account.authenticate'):
+        signed_in = _authenticate(executable, True, provider=provider)
+    relay_log.event(root, 'account.ready', reused=not signed_in)
     with FileLock(str(root / 'setup.lock'), timeout=10):
         spec = load_spec(root)
         if spec and (spec['mode'] != 'host' or not OWNED_ID.fullmatch(spec['tunnel_id'])):
@@ -297,6 +307,7 @@ def status(root):
 def stop(root):
     current = _control(root)
     if current:
+        relay_log.event(root, 'worker.stop_requested')
         if not _control(root, 'stop'):
             raise RuntimeError('Could not authenticate the relay stop request.')
         deadline = time.monotonic() + 10
@@ -309,13 +320,22 @@ def stop(root):
 def ensure_running(root, spec, interactive=False, *, provider=None):
     root, spec = Path(root), validate_spec(spec)
     private_directory(root)
+    with relay_log.operation(root, 'relay.start', mode=spec['mode']):
+        return _ensure_running(root, spec, interactive, provider=provider)
+
+
+def _ensure_running(root, spec, interactive=False, *, provider=None):
+    spawned = None
     with FileLock(str(root / 'start.lock'), timeout=15):
         current = _control(root)
         if current and current.get('spec') != spec:
             raise RuntimeError('A different relay is running in this directory. Stop it before changing the connection.')
         if not current or (interactive and (provider is not None or not current.get('ready'))):
-            executable = ensure_cli(interactive=interactive)
-            signed_in = _authenticate(executable, interactive, provider=provider)
+            with relay_log.operation(root, 'cli.verify'):
+                executable = ensure_cli(interactive=interactive)
+            with relay_log.operation(root, 'account.authenticate'):
+                signed_in = _authenticate(executable, interactive, provider=provider)
+            relay_log.event(root, 'account.ready', reused=not signed_in)
             if current and signed_in:
                 stop(root)
                 current = None
@@ -323,24 +343,37 @@ def ensure_running(root, spec, interactive=False, *, provider=None):
             atomic_json(root / 'spec.json', spec)
             atomic_json(root / 'launch.json', {'executable': executable})
             flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
-            with (root / 'supervisor.log').open('ab') as output:
-                subprocess.Popen([sys.executable, '-m', 'hindsightkit.relay', '--worker', str(root)],
-                                 stdin=subprocess.DEVNULL, stdout=output, stderr=output,
-                                 creationflags=flags, close_fds=True,
-                                 start_new_session=os.name != 'nt')
+            # Workers append structured events themselves; no persistent log handle
+            # remains open to prevent rotation on Windows.
+            child = subprocess.Popen([sys.executable, '-m', 'hindsightkit.relay', '--worker', str(root)],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     creationflags=flags, close_fds=True, start_new_session=os.name != 'nt')
+            spawned = child
+            relay_log.event(root, 'worker.spawned', child_pid=child.pid if type(child.pid) is int else None)
+        else:
+            relay_log.event(root, 'worker.reused')
         deadline = time.monotonic() + READY_TIMEOUT
         while time.monotonic() < deadline:
             current = _control(root)
             if current and current.get('spec') == spec and current.get('ready'):
                 return spec.get('local_port')
+            if spawned is not None:
+                code = spawned.poll()
+                if type(code) is int:
+                    relay_log.event(root, 'worker.exited_before_ready', exit_code=code)
+                    raise RuntimeError(f'The relay worker exited before it was ready (exit {code}). '
+                                       f'See {relay_log.path(root)}.')
             time.sleep(0.2)
-    raise RuntimeError('The private relay is not ready. Check connectivity and sign in with the server account; '
-                       'run share --relay on the server to check its tunnel.')
+    relay_log.event(root, 'relay.ready_timeout', timeout_seconds=READY_TIMEOUT)
+    raise RuntimeError('The private relay is not ready. Run share --relay on the server to check its tunnel. '
+                       f'See {relay_log.path(root)} for the failed stage.')
 
 
 class _State:
-    def __init__(self, spec):
+    def __init__(self, spec, root=None):
         self.spec = spec
+        self.root = root
+        self.reported = set()
         self.lock = threading.Lock()
         self.ready = False
         self.upstream = None
@@ -358,17 +391,42 @@ class _State:
                     pass
             self.sockets.clear()
 
-    def line(self, text):
+    def line(self, text, *, child=None):
         text = text.strip()
         with self.lock:
-            if self.spec['mode'] == 'host':
+            before = self.ready
+            active = not self.stop.is_set() and (child is None or
+                     (self.child is child and child.poll() is None))
+            if active and self.spec['mode'] == 'host':
                 self.ready |= text == 'Ready to accept connections for tunnel: ' + self.spec['tunnel_id']
-            else:
+            elif active:
                 match = FORWARD.fullmatch(text)
                 if match and int(match[2]) == self.spec['remote_port']:
                     port = int(match[1])
                     if 1 <= port <= 65535 and port != self.spec['local_port']:
                         self.upstream, self.ready = port, True
+            became_ready = self.ready and not before
+        if became_ready:
+            self.note('tunnel.ready')
+        # Classify known failures; raw CLI text may contain auth tokens or device codes.
+        for pattern, category in ((r'forbidden|unauthorized|access denied|\b40[13]\b', 'access_denied'),
+                                  (r'not found|does not exist|\b404\b', 'tunnel_not_found'),
+                                  (r'timed? out|timeout', 'timeout'),
+                                  (r'connection refused', 'connection_refused'),
+                                  (r'no such host|name.*resolv|dns', 'dns'),
+                                  (r'certificate|\btls\b|\bssl\b', 'tls'),
+                                  (r'error|failed|exception', 'unclassified')):
+            if re.search(pattern, text, re.I):
+                self.note('tunnel.diagnostic', category=category)
+                break
+
+    def note(self, name, **fields):
+        key = (name, fields.get('category'))
+        with self.lock:
+            if key in self.reported:
+                return
+            self.reported.add(key)
+        relay_log.event(self.root, name, **fields)
 
 
 def _proxy(state):
@@ -377,9 +435,11 @@ def _proxy(state):
             with state.lock:
                 upstream = state.upstream
                 child = state.child
-                if (upstream is None or child is None or child.poll() is not None
-                        or not _listener_owned(upstream, child.pid)):
-                    return
+                usable = (upstream is not None and child is not None and child.poll() is None
+                          and _listener_owned(upstream, child.pid))
+            if not usable:
+                state.note('forward.rejected', category='listener_unavailable_or_not_owned')
+                return
             try:
                 with socket.create_connection(('127.0.0.1', upstream), timeout=5) as target:
                     target.settimeout(None)
@@ -400,7 +460,8 @@ def _proxy(state):
                     finally:
                         with state.lock:
                             state.sockets.difference_update(peers)
-            except OSError:
+            except OSError as exc:
+                state.note('forward.failed', error=exc)
                 return
 
     class Server(socketserver.ThreadingTCPServer):
@@ -449,14 +510,26 @@ def _child_command(executable, spec):
 
 
 def _run_child(state, executable):
+    try:
+        _supervise_child(state, executable)
+    except Exception as exc:
+        relay_log.event(state.root, 'supervisor.failed', error=exc)
+        state.stop.set()
+
+
+def _supervise_child(state, executable):
     delay = 1
     while not state.stop.is_set():
         state.reset()
+        with state.lock:
+            state.reported.clear()
+        relay_log.event(state.root, 'tunnel.starting', mode=state.spec['mode'])
         try:
             child = subprocess.Popen(_child_command(executable, state.spec),
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace', bufsize=1, creationflags=_flags())
-        except OSError:
+        except OSError as exc:
+            relay_log.event(state.root, 'tunnel.spawn_failed', error=exc, retry_seconds=delay)
             if state.stop.wait(delay):
                 break
             delay = min(30, delay * 2)
@@ -464,10 +537,14 @@ def _run_child(state, executable):
         with state.lock:
             state.child = child
         started = time.monotonic()
+        relay_log.event(state.root, 'tunnel.spawned', child_pid=child.pid)
         def read_lines():
-            for line in child.stdout:
-                if child.poll() is None and not state.stop.is_set():
-                    state.line(line)
+            try:
+                for line in child.stdout:
+                    # Drain final lines even if a short-lived child has already exited.
+                    state.line(line, child=child)
+            except Exception as exc:
+                relay_log.event(state.root, 'tunnel.read_failed', error=exc)
 
         reader = threading.Thread(target=read_lines, daemon=True)
         reader.start()
@@ -483,10 +560,15 @@ def _run_child(state, executable):
                 child.wait(timeout=5)
         reader.join(timeout=2)
         child.stdout.close()
+        state.reset()
+        relay_log.event(state.root, 'tunnel.exited', exit_code=child.returncode,
+                        elapsed_seconds=round(time.monotonic() - started, 3), requested=state.stop.is_set())
         with state.lock:
             state.child = None
         if time.monotonic() - started > 30:
             delay = 1
+        if not state.stop.is_set():
+            relay_log.event(state.root, 'tunnel.retry', delay_seconds=delay)
         if state.stop.wait(delay):
             break
         delay = min(30, delay * 2)
@@ -496,7 +578,8 @@ def serve_worker(root, executable, spec):
     root, spec = Path(root), validate_spec(spec)
     private_directory(root)
     with FileLock(str(root / 'worker.lock'), timeout=0):
-        state = _State(spec)
+        state = _State(spec, root)
+        relay_log.event(root, 'worker.started', mode=spec['mode'])
         token, identity = secrets.token_hex(32), uuid.uuid4().hex
 
         class Control(BaseHTTPRequestHandler):
@@ -556,6 +639,7 @@ def serve_worker(root, executable, spec):
                 data = json.loads(receipt.read_text(encoding='utf-8'))
                 if data.get('identity') == identity:
                     receipt.unlink()
+            relay_log.event(root, 'worker.stopped')
 
 
 def main():
@@ -569,9 +653,8 @@ def main():
         serve_worker(root, executable, spec)
     except Timeout:
         return
-    except Exception:
-        # CLI output and authentication data never enter worker logs.
-        print('Relay worker could not start. Check the saved configuration and local port availability.', flush=True)
+    except Exception as exc:
+        relay_log.event(root, 'worker.failed', error=exc)
         raise SystemExit(1)
 
 

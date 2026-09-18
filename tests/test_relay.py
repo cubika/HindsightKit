@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
-from hindsightkit import relay
+from hindsightkit import relay, relay_log
 
 
 def port():
@@ -297,6 +297,57 @@ class RelayConfigurationTests(unittest.TestCase):
                 stop.assert_not_called()
                 process.assert_not_called()
             self.assertEqual(path.read_bytes(), previous)
+            records = [json.loads(line) for line in relay_log.path(root).read_text().splitlines()]
+            self.assertIn('account.authenticate.failed', [item['event'] for item in records])
+            self.assertEqual(records[-1]['event'], 'relay.start.failed')
+            self.assertEqual(records[-1]['error'], 'RuntimeError')
+
+    def test_readiness_timeout_has_a_log_even_when_worker_never_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(relay, '_control', return_value=None), \
+                 patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                 patch.object(relay, '_authenticate', return_value=False), \
+                 patch.object(relay, 'private_directory'), \
+                 patch.object(relay.subprocess, 'Popen', return_value=Mock(pid=123)), \
+                 patch.object(relay, 'READY_TIMEOUT', 0):
+                with self.assertRaisesRegex(RuntimeError, 'supervisor.log'):
+                    relay.ensure_running(root, spec())
+            events = [json.loads(line)['event'] for line in relay_log.path(root).read_text().splitlines()]
+            self.assertIn('account.ready', events)
+            self.assertIn('worker.spawned', events)
+            self.assertIn('relay.ready_timeout', events)
+            self.assertEqual(events[-1], 'relay.start.failed')
+
+    def test_spawn_error_is_recorded_before_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = relay._State(spec(), root)
+            with patch.object(relay.subprocess, 'Popen', side_effect=OSError(2, 'secret path')), \
+                 patch.object(state.stop, 'wait', return_value=True):
+                relay._run_child(state, 'fixture')
+            text = relay_log.path(root).read_text()
+            records = [json.loads(line) for line in text.splitlines()]
+            self.assertEqual(records[-1]['event'], 'tunnel.spawn_failed')
+            self.assertEqual(records[-1]['errno'], 2)
+            self.assertEqual(records[-1]['retry_seconds'], 1)
+            self.assertNotIn('secret path', text)
+
+    def test_early_worker_exit_reports_code_without_waiting_for_readiness_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            process = Mock(pid=123)
+            process.poll.return_value = 7
+            with patch.object(relay, '_control', return_value=None), \
+                 patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                 patch.object(relay, '_authenticate', return_value=False), \
+                 patch.object(relay, 'private_directory'), \
+                 patch.object(relay.subprocess, 'Popen', return_value=process):
+                with self.assertRaisesRegex(RuntimeError, 'exit 7'):
+                    relay.ensure_running(root, spec())
+            records = [json.loads(line) for line in relay_log.path(root).read_text().splitlines()]
+            self.assertTrue(any(item['event'] == 'worker.exited_before_ready'
+                                and item['exit_code'] == 7 for item in records))
 
     def test_unavailable_host_after_new_login_preserves_existing_tunnel_and_worker(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -428,6 +479,25 @@ class RelayConfigurationTests(unittest.TestCase):
         state.reset()
         self.assertIsNone(state.upstream)
 
+    def test_exited_child_output_records_failure_without_restoring_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = relay._State(spec(local_port=19078), root)
+            child = Mock()
+            child.poll.return_value = 1
+            state.child = child
+            state.line('SSH: Forwarding from 127.0.0.1:20000 to host port 19077.', child=child)
+            state.line('ERROR Forbidden Bearer synthetic-secret', child=child)
+            self.assertFalse(state.ready)
+            self.assertIsNone(state.upstream)
+            records = [json.loads(line) for line in relay_log.path(root).read_text().splitlines()]
+            self.assertEqual([item['event'] for item in records], ['tunnel.diagnostic'])
+            self.assertEqual(records[0]['category'], 'access_denied')
+            child.poll.return_value = None
+            state.stop.set()
+            state.line('SSH: Forwarding from 127.0.0.1:20000 to host port 19077.', child=child)
+            self.assertFalse(state.ready)
+
     @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
     def test_forwarded_listener_must_belong_to_expected_process(self):
         with socket.socket() as listener:
@@ -489,11 +559,13 @@ class RelayWorkerTests(unittest.TestCase):
                  f'counter = Path({str(counter)!r})\n'
                  'number = int(counter.read_text()) + 1 if counter.exists() else 1\n'
                  'counter.write_text(str(number))\n'
-                 'if number == 1: raise SystemExit(1)\n')
+                 'if number == 1:\n'
+                 '    print("ERROR Forbidden Authorization: Bearer synthetic-secret hk1.secret", flush=True)\n'
+                 '    raise SystemExit(1)\n')
         script = self.fixture(root, ['Ready to accept connections for tunnel: ' + configuration['tunnel_id']], extra)
         unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
         self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait(timeout=5)))
-        self.run_worker(root, configuration, script)
+        worker = self.run_worker(root, configuration, script)
         self.wait_ready(root)
         self.assertGreaterEqual(int(counter.read_text()), 2)
         receipt = json.loads((root / 'worker.json').read_text())
@@ -504,8 +576,19 @@ class RelayWorkerTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 403)
         self.assertTrue(relay.status(root)['ready'])
         relay.stop(root)
+        worker.join(15)
         self.assertIsNone(unrelated.poll())
         self.assertFalse((root / 'worker.json').exists())
+        text = relay_log.path(root).read_text()
+        records = [json.loads(line) for line in text.splitlines()]
+        events = [item['event'] for item in records]
+        for expected in ('worker.started', 'tunnel.spawned', 'tunnel.ready', 'tunnel.exited',
+                         'tunnel.retry', 'worker.stop_requested', 'worker.stopped'):
+            self.assertIn(expected, events)
+        self.assertTrue(any(item.get('exit_code') == 1 for item in records))
+        self.assertTrue(any(item.get('category') == 'access_denied' for item in records))
+        for secret in ('synthetic-secret', 'hk1.secret', receipt['token']):
+            self.assertNotIn(secret, text)
 
     def test_connect_proxy_reserves_stable_port_and_forwards_bytes(self):
         class Echo(socketserver.BaseRequestHandler):

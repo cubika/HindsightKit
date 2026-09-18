@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 from hindsight_client import Hindsight
+from . import relay_log
 
 
 def config_path() -> Path:
@@ -86,12 +87,17 @@ async def request(config, method, path, *, body=None, timeout=10):
     origin = validate_url(config['apiUrl'])
     headers = {'Authorization': 'Bearer ' + config['apiToken']} if config.get('apiToken') else {}
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
-            async with session.request(method, origin + path,
-                                       headers=headers, json=body, allow_redirects=False) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
-                return await response.json()
+        # Fixed stage names keep bank names, addresses, and credentials out of logs.
+        stage = ('discovery' if path == '/ext/hindsightkit/connection' else
+                 'registration' if path == '/ext/hindsightkit/clients' else 'memory')
+        with relay_log.operation(relay_log.current_root(), 'api.' + stage, timeout_seconds=timeout):
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
+                async with session.request(method, origin + path,
+                                           headers=headers, json=body, allow_redirects=False) as response:
+                    relay_log.event(relay_log.current_root(), 'api.response', status=response.status, stage=stage)
+                    if response.status >= 300:
+                        raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
+                    return await response.json()
     except TimeoutError as exc:
         # Keep the type so direct connection timeouts still trigger relay fallback.
         raise TimeoutError(f'Memory API request timed out after {timeout:g}s: {method} {origin}{path}.') from exc

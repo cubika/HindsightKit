@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import hindsightkit
-from hindsightkit import cli, installer, services, runtime as runtime_env, connection, remote
+from hindsightkit import cli, installer, services, runtime as runtime_env, connection, remote, relay_log
 
 
 def options(**values):
@@ -245,12 +245,30 @@ class RemoteTests(unittest.TestCase):
                 self.assertNotIn('old-key', errors.getvalue())
                 self.assertEqual(state.path.read_bytes(), state.saved)
                 self.assertEqual(lifecycle.path().read_bytes(), stopped)
+                log = relay_log.path(state.relay.ensure_running.call_args.args[0])
+                self.assertIn(str(log), state.output.getvalue())
+                records = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertTrue(any(item['event'] == 'server.discovery.failed'
+                                    and item['error'] == 'TimeoutError' for item in records))
                 state.setup.assert_not_called()
                 state.stop_clients.assert_not_called()
                 if reused:
                     state.relay.stop.assert_not_called()
                 else:
                     state.relay.stop.assert_called_once_with(state.relay.ensure_running.call_args.args[0])
+
+    def test_cleanup_failure_does_not_hide_the_original_connection_error(self):
+        with self.environment() as state, \
+             patch.object(connection, 'discover', new_callable=AsyncMock,
+                          side_effect=[TimeoutError(), RuntimeError('discovery rejected')]):
+            state.relay.stop.side_effect = RuntimeError('stop rejected')
+            with self.assertRaisesRegex(RuntimeError, 'discovery rejected'):
+                remote.connect(options())
+            self.assertEqual(state.path.read_bytes(), state.saved)
+            log = relay_log.path(state.relay.ensure_running.call_args.args[0])
+            records = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(records[-1]['event'], 'connect.cleanup_failed')
+            self.assertIn('server.discovery.failed', [item['event'] for item in records])
 
     def test_local_reset_stops_clients_only_after_local_configuration_succeeds(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}

@@ -104,6 +104,10 @@ This also stops that computer's managed client relays. It requires an existing l
 
 ## Verify the connection
 
+Relay diagnostics are written to `%USERPROFILE%\.hindsightkit\remote\host\supervisor.log` on the server and `remote\clients\<connection-id>\supervisor.log` under the same root on the client. `HINDSIGHTKIT_HOME` overrides that root. A relay connection attempt prints its log path, including when the attempt fails before saving a connection.
+
+Each line is a JSON event with a UTC timestamp. Logs record CLI verification, account reuse or sign-in, worker startup, tunnel readiness, process exits and retries, and API discovery and registration failures. They contain exception types and numeric error codes; raw Dev Tunnels output, connection codes, tokens, and memory contents are excluded. Each log keeps up to 1 MiB plus one rotated `.1` file. This logging is a source change after v0.1.5; that release can leave an empty log.
+
 Run `hindsightkit status` on the coding computer to check its selected destination. A relay marked `ready` is not, by itself, a successful memory request; also check the `Client` result. `status` does not start a stopped relay. Use `start` first when needed.
 
 `hindsightkit check` reports the selected client connection and, when a local server is installed, runs a temporary retain/recall test there using Copilot allowance. It deletes its test bank afterward. A client-only installation checks authenticated discovery without writing remote memory. Use an actual client memory query to verify routing from an editor session.

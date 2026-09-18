@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from . import connection, lifecycle, installer, services
+from . import connection, lifecycle, installer, services, relay_log
 from . import runtime as runtime_env
 
 
@@ -270,28 +270,41 @@ def connect(args):
                 listener.bind(('127.0.0.1', 0))
                 transport['local_port'] = listener.getsockname()[1]
         root = client_root(transport)
+        print(f'Relay log: {relay_log.path(root)}', flush=True)
+        relay_log.event(root, 'direct.unavailable', error=exc)
         try:
             relay.ensure_running(root, transport, interactive=True, provider=args.relay_provider)
             candidate['apiUrl'] = f'http://127.0.0.1:{transport["local_port"]}'
             print('Private relay is ready. Checking the memory server through it...', flush=True)
             try:
-                discovered = asyncio.run(connection.discover(candidate))
+                with relay_log.operation(root, 'server.discovery'):
+                    discovered = asyncio.run(connection.discover(candidate))
             except (aiohttp.ClientConnectionError, TimeoutError, socket.gaierror) as exc:
                 detail = str(exc).strip() or type(exc).__name__
                 raise RuntimeError('The private relay started, but the memory server could not be reached through it. '
                                    'Run hindsightkit check on the server. ' + detail) from exc
-        except Exception:
+        except Exception as exc:
+            relay_log.event(root, 'connect.failed', error=exc)
             if transport != saved:
-                relay.stop(root)
+                stop_failed_candidate(root, relay)
             raise
     # setup_client validates discovery and editor conflicts before saving the new destination.
     try:
-        configure_client(candidate, transport=transport, discovered=discovered)
+        with relay_log.operation(client_root(transport) if transport else None, 'client.configure'):
+            configure_client(candidate, transport=transport, discovered=discovered)
     except Exception:
         if transport and transport != saved:
-            relay.stop(client_root(transport))
+            stop_failed_candidate(client_root(transport), relay)
         raise
     stop_clients(except_transport=transport)
+
+
+def stop_failed_candidate(root, relay):
+    try:
+        relay.stop(root)
+    except Exception as exc:
+        relay_log.event(root, 'connect.cleanup_failed', error=exc)
+        print(f'Relay cleanup failed ({type(exc).__name__}). See {relay_log.path(root)}', flush=True)
 
 
 def configure_client(candidate, *, transport=None, discovered=None):
