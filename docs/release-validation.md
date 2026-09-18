@@ -1,5 +1,13 @@
 # Release validation
 
+## Installation reliability follow-up
+
+A local upgrade finished configuration before spending about 22 minutes cleaning three older releases containing 3,945.2 MiB of files. Cleanup now reports its phase and item counts, uses streaming directory enumeration and indexed ownership lookups, and stops optional work at a 30-second cooperative time budget. Remaining old files and interrupted-cleanup receipts are preserved. One blocked operating-system call can exceed the budget.
+
+All 126 affected bootstrap, Copilot discovery, installer, remote setup, packaging, and progress tests passed. Two additional PowerShell 7 tests verified timeout before deletion and after partial deletion, successful installation, preservation of current and previous versions, and cleanup recovery on retry. A disposable tree with 12,000 files completed its fixture installation in 34.42 seconds with cleanup deferred and the new success receipt intact. These timings describe the fixture, not every filesystem.
+
+On the reporting machine's unchanged PATH, the new discovery code reported WinError 1920 for the WindowsApps Copilot alias and then successfully verified the existing WinGet CLI. It executed only version probes, without changing PATH, installing Copilot, or starting login. Regression cases cover a working first alias, duplicate paths and npm launchers, timeouts, exit errors, wrong-program output, redacted logs, and reuse of the selected command for login. The application wheel built successfully and contains the updated installer.
+
 ## v0.1.6 candidate
 
 The MCP compatibility fix passed eight transport tests and 22 lifecycle and repository-switch tests. A real Copilot 1.0.86-2 runtime connected through discovery fallback and called a fixture tool. Local Hindsight checks passed retain and recall in CLI and VS Code contexts, including workspace roots; disposable banks were removed. The stdio endpoint serves the handshake protocol. These checks do not establish modern-only client support.

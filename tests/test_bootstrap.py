@@ -123,6 +123,7 @@ Import-Module Microsoft.PowerShell.Utility
 function hk { 'unrelated user function' }
 function Get-CimInstance {
     param($ClassName, $Property, $OperationTimeoutSec, $ErrorAction)
+    if ($env:TEST_SLOW_PROCESS_INSPECTION) { Start-Sleep -Seconds 31 }
     if ($env:TEST_PROCESS_FAILURE) { throw 'Synthetic process inspection failure' }
     if ($env:TEST_PROCESS_RECORDS) {
         Get-Content -LiteralPath $env:TEST_PROCESS_RECORDS -Raw | ConvertFrom-Json
@@ -132,6 +133,14 @@ function Get-CimInstance {
 }
 function Remove-Item {
     param($LiteralPath, [switch]$Force, [switch]$Recurse)
+    if ($env:TEST_SLOW_DELETE -and
+        (Get-Item -LiteralPath $LiteralPath -Force).FullName -eq (Get-Item -LiteralPath $env:TEST_SLOW_DELETE -Force).FullName) {
+        $setup = Get-Content -LiteralPath $env:TEST_SETUP_LOG -Raw | ConvertFrom-Json
+        [IO.File]::WriteAllText($env:TEST_PROGRESS_SNAPSHOT, [IO.File]::ReadAllText($setup.installLog))
+        $delay = if ($env:TEST_DELETE_DELAY) { [int]$env:TEST_DELETE_DELAY } else { 11 }
+        Start-Sleep -Seconds $delay
+        $env:TEST_SLOW_DELETE = ''
+    }
     if ($env:TEST_DELETE_FAILURE -and
         (Get-Item -LiteralPath $LiteralPath -Force).FullName -eq (Get-Item -LiteralPath $env:TEST_DELETE_FAILURE -Force).FullName) {
         throw 'Synthetic cleanup interruption'
@@ -335,6 +344,85 @@ try {
         self.assertTrue(result.samefile(path))
         return result
 
+    def assert_cleanup_progress_before_slow_deletion(self):
+        first, _, _ = self.install_version('v0.1.0')
+        previous, _, _ = self.install_version('v0.2.0')
+        snapshot = self.root / 'cleanup-progress.txt'
+        self.env['TEST_SLOW_DELETE'] = str(self.short_path(first / 'setup.ps1'))
+        self.env['TEST_PROGRESS_SNAPSHOT'] = str(snapshot)
+        current, _, result = self.install_version('v0.3.0')
+
+        # Read the log captured while deletion was paused, before the slow work finished.
+        progress = snapshot.read_text(encoding='utf-8-sig')
+        phases = [
+            'Configuration complete. Cleaning up older versions and cached files (30-second time budget)...',
+            'Cleanup: recording successful configuration...',
+            'Cleanup: checking installed versions...',
+            f'Cleanup: checking whether {first.name} is in use...',
+            f'Cleanup: scanning files in {first.name}...',
+            f'Cleanup: checking ownership and file locks in {first.name}...',
+            f'Cleanup: verifying package files in {first.name}...',
+            f'Cleanup: removing old version {first.name}...',
+        ]
+        positions = [progress.index(phase) for phase in phases]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn('installed successfully', progress)
+        self.assertNotIn('Cleanup: removed 1 older version', progress)
+        heartbeat = f'Cleanup: removing old version {first.name}; '
+        self.assertIn(heartbeat, result.stdout)
+        self.assertRegex(result.stdout.split(heartbeat, 1)[1], r'^[1-9][0-9,]* items processed \([1-9][0-9]*s elapsed\)')
+        self.assertLess(result.stdout.index(heartbeat), result.stdout.index('installed successfully'))
+        self.assertIn('Cleanup: checking old downloads...', result.stdout)
+        self.assertIn('Cleanup: checking old logs...', result.stdout)
+        self.assertFalse(first.exists())
+        self.assertTrue(previous.is_dir())
+        self.assertTrue((current / '.install-success.json').is_file())
+
+    def test_cleanup_reports_progress_before_slow_deletion(self):
+        self.assert_cleanup_progress_before_slow_deletion()
+
+    def test_cleanup_reports_progress_in_powershell_7(self):
+        self.shell = shutil.which('pwsh.exe')
+        if not self.shell:
+            self.skipTest('PowerShell 7 is not installed')
+        self.assert_cleanup_progress_before_slow_deletion()
+
+    def test_cleanup_time_budget_keeps_success_and_retries_partial_deletion(self):
+        first, _, _ = self.install_version('v0.1.0')
+        previous, _, _ = self.install_version('v0.2.0')
+        self.env['TEST_SLOW_DELETE'] = str(first / 'setup.ps1')
+        self.env['TEST_DELETE_DELAY'] = '31'
+        self.env['TEST_PROGRESS_SNAPSHOT'] = str(self.root / 'progress.txt')
+        current, digest, result = self.install_version('v0.3.0')
+        self.assertIn('Installation cleanup deferred: The 30-second cleanup time budget was reached', result.stdout)
+        self.assertIn('installed successfully', result.stdout)
+        self.assertTrue((current / '.install-success.json').is_file())
+        self.assertTrue((previous / 'setup.ps1').is_file())
+        self.assertTrue(first.is_dir())
+        self.assertTrue((self.destination / ('.cleanup-' + first.name + '.json')).is_file())
+        del self.env['TEST_SLOW_DELETE']
+        del self.env['TEST_DELETE_DELAY']
+        result = self.run_installer(digest)
+        self.assertNotIn('cleanup deferred', result.stdout)
+        self.assertFalse(first.exists(), result.stdout)
+        self.assertFalse(list(self.destination.glob('.cleanup-*.json')))
+
+    def test_cleanup_time_budget_before_deletion_preserves_old_release(self):
+        first, _, _ = self.install_version('v0.1.0')
+        previous, _, _ = self.install_version('v0.2.0')
+        original = (first / 'setup.ps1').read_bytes()
+        self.env['TEST_SLOW_PROCESS_INSPECTION'] = '1'
+        current, digest, result = self.install_version('v0.3.0')
+        self.assertIn('Installation cleanup deferred: The 30-second cleanup time budget was reached', result.stdout)
+        self.assertIn('installed successfully', result.stdout)
+        self.assertEqual((first / 'setup.ps1').read_bytes(), original)
+        self.assertTrue(previous.is_dir())
+        self.assertTrue((current / '.install-success.json').is_file())
+        self.assertFalse(list(self.destination.glob('.cleanup-*.json')))
+        del self.env['TEST_SLOW_PROCESS_INSPECTION']
+        self.run_installer(digest)
+        self.assertFalse(first.exists())
+
     def test_retention_keeps_two_successful_versions_and_reuses_retries(self):
         first, _, _ = self.install_version('v0.1.0')
         second, _, _ = self.install_version('v0.2.0')
@@ -354,7 +442,10 @@ try {
         first, _, _ = self.install_version('v0.1.0')
         second, _, _ = self.install_version('v0.2.0')
         digest = self.package(version='v0.3.0', entries={'app/setup.ps1': 'exit 1'})
-        self.run_installer(digest, expected=1)
+        result = self.run_installer(digest, expected=1)
+        self.assertNotIn('Configuration complete.', result.stdout)
+        self.assertNotIn('Cleanup:', result.stdout)
+        self.assertNotIn('installed successfully', result.stdout)
         failed = self.app
         self.assertTrue(first.is_dir())
         self.assertTrue(second.is_dir())

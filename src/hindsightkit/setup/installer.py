@@ -83,28 +83,20 @@ async def copilot_authenticated():
 
 
 def ensure_copilot():
-    command = copilot_command()
-    installed = command is None
-    if command is None:
+    found = find_copilot()
+    installed = found is None
+    if found is None:
         from hindsightkit.setup.progress import run_install
         # Copilot is an independent global tool, not a HindsightKit release component.
         with tempfile.TemporaryDirectory(prefix='hindsightkit-copilot-install-') as directory:
             run_install(runtime_env.npm() + ['install', '--global', '@github/copilot@1.0.85', '--no-audit',
                                 '--no-fund', '--loglevel=info', '--foreground-scripts'],
                         cwd=directory, label='official Copilot CLI (separate installation)')
-        command = copilot_command()
-    if command is None:
+        found = find_copilot()
+    if found is None:
         raise RuntimeError('Copilot CLI was not found after installation. Open a new terminal or install it with npm install -g @github/copilot, then rerun setup.')
-    try:
-        result = subprocess.run([str(value) for value in command] + ['--version'], check=True,
-                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
-                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
-        version = result.stdout.strip()
-        if not re.search(r'(?m)^(?:GitHub Copilot CLI )?[0-9]+[.][0-9]+[.][0-9]+', version):
-            raise ValueError('Unrecognized Copilot version output')
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise RuntimeError('The existing Copilot CLI failed its version check. Repair that installation and rerun setup; it was not overwritten.') from exc
-    print(f'{"Installed" if installed else "Reusing"} {version.splitlines()[0]} at {command[-1]}.', flush=True)
+    command, version = found
+    copilot_message(f'{"Installed" if installed else "Reusing"} {version} at {command[-1]}.')
     print('Checking Copilot authentication...', flush=True)
     if asyncio.run(copilot_authenticated()):
         return
@@ -115,23 +107,88 @@ def ensure_copilot():
         raise RuntimeError('Copilot login did not complete. Run copilot login, then rerun setup.')
 
 
-def copilot_command():
-    binary = shutil.which('copilot')
-    if binary:
-        if Path(binary).suffix.lower() in {'.cmd', '.ps1'}:
-            loader = Path(binary).parent / 'node_modules/@github/copilot/npm-loader.js'
-            if loader.is_file():
-                return [runtime_env.node(), loader]
-            raise RuntimeError(f'An existing Copilot launcher at {binary} has no npm entry point. Repair that installation; setup will not overwrite it.')
-        else:
-            return [binary]
+def copilot_message(message):
+    from hindsightkit.setup.progress import redact
+    safe = ' '.join(redact(message).split())
+    print(safe, flush=True)
+    log = os.environ.get('HINDSIGHTKIT_INSTALL_LOG')
+    if log:
+        with Path(log).open('a', encoding='utf-8') as stream:
+            stream.write(safe + '\n')
+
+
+def copilot_candidates():
+    # Windows app aliases can be broken while a later PATH entry works.
+    # Absolute lookups keep which from prepending cwd on every attempt.
+    extensions = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD').split(';') if sys.platform == 'win32' else ['']
+    seen = set()
+    for directory in os.get_exec_path():
+        for extension in extensions:
+            path = os.path.abspath(os.path.join(directory.strip('"'), 'copilot' + extension))
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            binary = shutil.which(path)
+            if binary:
+                yield Path(binary)
     loader = runtime_env.home() / 'copilot/node_modules/@github/copilot/npm-loader.js'
     if loader.is_file():
-        return [runtime_env.node(), loader]
+        yield loader
     # An npm global installation can exist without its prefix being on PATH yet.
     prefix = runtime_env.run(runtime_env.npm() + ['prefix', '--global'], capture=True)
     loader = Path(prefix) / 'node_modules/@github/copilot/npm-loader.js'
-    return [runtime_env.node(), loader] if loader.is_file() else None
+    if loader.is_file():
+        yield loader
+
+
+def find_copilot():
+    from hindsightkit.setup.progress import redact
+    failures = []
+    checked = set()
+    try:
+        for binary in copilot_candidates():
+            try:
+                if binary.suffix.lower() in {'.cmd', '.bat', '.ps1'}:
+                    loader = binary.parent / 'node_modules/@github/copilot/npm-loader.js'
+                    if not loader.is_file():
+                        raise ValueError('npm launcher has no @github/copilot entry point')
+                    command = [runtime_env.node(), str(loader)]
+                elif binary.name == 'npm-loader.js':
+                    command = [runtime_env.node(), str(binary)]
+                else:
+                    command = [str(binary)]
+                key = tuple(os.path.normcase(str(part)) for part in command)
+                if key in checked:
+                    continue
+                checked.add(key)
+                copilot_message(f'Checking Copilot CLI at {command[-1]}...')
+                result = subprocess.run(command + ['--version'], check=True, capture_output=True,
+                    text=True, encoding='utf-8', errors='replace', timeout=30,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+                version = re.search(r'(?m)^GitHub Copilot CLI [0-9]+[.][0-9]+[.][0-9]+(?:[-+][0-9A-Za-z.-]+)?[.]?\s*$', result.stdout)
+                if not version:
+                    raise ValueError('unrecognized --version output: ' + redact(result.stdout)[:400])
+                return command, version[0].strip()
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                if isinstance(exc, subprocess.TimeoutExpired):
+                    detail = 'version check timed out after 30 seconds'
+                elif isinstance(exc, subprocess.CalledProcessError):
+                    output = redact(exc.stderr or exc.stdout or '')[:400]
+                    detail = f'--version exited with code {exc.returncode}' + (': ' + output if output else '')
+                elif isinstance(exc, OSError) and getattr(exc, 'winerror', None):
+                    detail = f'WinError {exc.winerror}: {exc.strerror or exc}'
+                else:
+                    detail = str(exc)
+                detail = ' '.join(redact(f'{binary}: {detail}').split())
+                failures.append(detail)
+                copilot_message('Skipped unusable Copilot entry: ' + detail)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        failures.append('Global Copilot lookup: ' + ' '.join(redact(str(exc)).split()))
+    if failures:
+        raise RuntimeError('No usable GitHub Copilot CLI was found. Checked entries: ' +
+                           '; '.join(failures) + '. Existing installations were not overwritten.')
+    return None
 
 
 def integrate(action, *args, runtime_path=None, data=None):

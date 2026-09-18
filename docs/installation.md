@@ -131,6 +131,8 @@ Run the newer release's installer to upgrade. It preserves the last successful i
 
 After successful setup and its runtime checks, the installer keeps the current release and the previous successful release. It removes older managed versions, including their Python environments, after checking file ownership, running processes, launchers, and configuration references. Referenced versions, modified files, unknown directories, and directories containing links are kept. If process or configuration inspection fails, version cleanup is deferred. Close older HindsightKit sessions and rerun the installer to retry. Cleanup failure does not fail installation.
 
+The installer announces when configuration has completed and reports cleanup phases and item counts. Optional cleanup has a 30-second time budget, checked between operations. When the budget is reached, installation finishes successfully and leaves remaining old files for a later attempt. A single filesystem or process-inspection call can take longer; large releases may remain if their safety checks cannot finish within the budget.
+
 When upgrading from installers without success receipts, the newest legacy copy is kept until another successful version is available. Other legacy copies can be removed after the same checks. Failed setups recorded by the current installer are kept for diagnosis and retries. Keeping a previous program version does not provide database rollback.
 
 Cleanup also removes unreferenced release downloads older than seven days and installation logs older than 30 days. It preserves archives needed by retained versions and recent interrupted downloads. The installer reports the number of versions and cache/log files removed and their total file size; hard-linked files may share disk space. Persistent memory, database files, models, settings, the shared uv cache, managed Python, and portable runtime tools are outside this cleanup. Running the same release installer again reuses its version directory.
@@ -162,6 +164,8 @@ The log contains stage messages and dependency-command output, not a complete te
 If this computer only connects to another server, use the release's `-ClientOnly` command, or pass `-Server` with the server address. A fresh client downloads the smaller package and skips the local dashboard, database, and embedding model. An existing local server keeps its management dependencies.
 
 Release installation uses pinned Python wheels and Hindsight npm components from separate release archives. Copilot CLI is separate: setup checks and reuses an existing installation; if missing, it installs the official CLI globally through npm. That step requires network access and uses the user's npm registry, proxy, and CA settings. Existing Copilot installations are not upgraded or overwritten.
+
+Setup checks Copilot entries in PATH order. If a Windows application alias cannot start, it reports that path and error, then tries the next entry. A working first entry is reused. Version-check diagnostics are redacted and saved in the installation log; login output stays private. If all detected entries fail, setup preserves them and stops instead of installing over them.
 
 Setup reuses x64 Node.js 22+ with npm from PATH. Otherwise it reuses the current installation's portable Node.js or downloads the pinned official runtime. It skips runtimes inside another HindsightKit checkout or release directory.
 
