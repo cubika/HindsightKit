@@ -1,19 +1,11 @@
 """Optional WorkIQ adapter: prerequisites, settings and native mail recall."""
-from copy import deepcopy
 import asyncio
-import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 
-DEFAULT = {'config': {'folder_ids': [], 'lookback_days': 30, 'interval_minutes': 30, 'enabled': False,
-                       'model': '', 'reasoning_effort': '', 'parallel_threads': 8,
-                       'prefilter_enabled': True, 'prefilter_model': 'gpt-5.6-terra', 'prefilter_reasoning_effort': 'low'},
-           'account': None, 'folders': [], 'warnings': [], 'failures': [],
-           'run': {'state': 'idle', 'scanned': 0, 'imported': 0, 'skipped': 0, 'prefiltered': 0,
-                   'prefilter_checked': 0, 'prefilter_uncertain': 0, 'failed': 0,
-                   'pending': 0, 'outcomes': 0, 'updated': 0, 'withdrawn': 0, 'last_success': None, 'next_run': None, 'error': None}}
+from .mail_ledger import saved_status
+
 EULA_ERROR = ('workiq_eula_required. WorkIQ requires license acceptance before mail access. '
               'Review the WorkIQ terms before resuming.')
 
@@ -49,31 +41,6 @@ async def _accept_workiq_eula():
         raise ValueError('WorkIQ could not accept the license. Check the WorkIQ installation and try again.') from None
     if code != 0:
         raise ValueError('WorkIQ could not accept the license. Try again or accept it in the terminal.')
-
-
-def saved_status(directory):
-    value = deepcopy(DEFAULT)
-    path = Path(directory) / 'sync.sqlite3'
-    if path.is_file():
-        try:
-            db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=2)
-            try:
-                for key, data in db.execute('SELECT key,value FROM settings'):
-                    if key in value:
-                        value[key] = {**value[key], **json.loads(data)} if key == 'config' else json.loads(data)
-                tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                if 'threads' in tables:
-                    value['run']['pending'] = db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
-                    value['run']['outcomes'] = db.execute('SELECT COUNT(*) FROM threads WHERE has_outcome=1').fetchone()[0]
-                    value['failures'] = [{'subject':row[0], 'reason':row[1]} for row in db.execute("SELECT subject,error FROM threads WHERE error IS NOT NULL LIMIT 10")]
-                if 'discovery_errors' in tables:
-                    value['failures'] += [{'subject': 'Unidentified thread', 'reason':row[1]}
-                                         for row in db.execute('SELECT id,error FROM discovery_errors LIMIT 10')]
-            finally:
-                db.close()
-        except (sqlite3.Error, KeyError, TypeError) as exc:
-            raise ValueError('Unable to read email sync settings.') from exc
-    return value
 
 
 class Adapter:

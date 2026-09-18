@@ -143,3 +143,11 @@ The v0.1.3 installation changes, integrated with the current mail connector chan
 Removing the bundled Copilot CLI passed 369 repository tests; after integrating newer master changes, the 80 affected mail source and sync tests also passed. All connector checks used fixtures.
 
 The v0.1.4 repository-memory switch candidate passed all 397 tests. Connector checks used fixtures without mailbox reads or model calls.
+
+## September 18, 2026: mail ledger and session refactor
+
+The repository suite passed all 503 tests with `PYTHONPATH` set to the checkout's `src` directory. The local virtual environment otherwise imported an older installed package. The 16 connector registry tests also passed after removing an unused test import. After integrating the newer device sign-in change, all 254 affected mail, connector registry, relay, remote setup, and lifecycle tests passed. Checks used synthetic data and made no mailbox reads or model calls.
+
+Regression cases verified index creation after migration of an older ledger, preservation of discovery errors, folder filtering and thread deduplication, matching active and saved status, the ten-item failure limit, and read-only snapshots. Existing publication recovery and cancellation tests passed. New session-creation timeout and cancellation tests verified runtime cleanup and the prefilter's uncertain result on timeout.
+
+An in-memory SQLite benchmark used 100,000 synthetic sources across 10,000 threads and 200 thread lookups per round. The median of three rounds was 1.86 ms with the production indexes and 1,140.86 ms after dropping the thread index. The query plan changed from an indexed search to a table scan. These measurements cover the local lookup only; they do not measure mailbox or model throughput.

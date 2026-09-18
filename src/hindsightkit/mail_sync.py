@@ -13,6 +13,8 @@ import uuid
 
 from filelock import FileLock
 
+from . import mail_ledger
+
 MAIL_BANK = 'hindsightkit-mail'
 PAGE_SIZE = 25
 MAX_OUTCOME = 6000
@@ -21,8 +23,6 @@ MAX_PREPARED = 16
 MAX_SOURCES = 100000
 MAX_THREADS = 10000
 OVERLAP = timedelta(hours=6)
-IMPORT_DEFAULTS = dict(model='', reasoning_effort='', parallel_threads=8,
-                       prefilter_enabled=True, prefilter_model='gpt-5.6-terra', prefilter_reasoning_effort='low')
 
 
 def _now():
@@ -59,35 +59,15 @@ class MailSync:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._writer = FileLock(self.data_dir / 'writer.lock', timeout=0)
         self._writer.acquire()
-        self.db = sqlite3.connect(self.data_dir / 'sync.sqlite3')
-        self.db.row_factory = sqlite3.Row
-        tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for table in ('messages', 'jobs', 'evidence', 'receipts'):
-            if table in tables and self.db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0]:
+        try:
+            self.db = sqlite3.connect(self.data_dir / 'sync.sqlite3')
+            self.db.row_factory = sqlite3.Row
+            mail_ledger.initialize(self.db)
+        except BaseException:
+            if getattr(self, 'db', None) is not None:
                 self.db.close()
-                self._writer.release()
-                raise ValueError('This ledger contains legacy message imports. Use an empty thread-outcome ledger.')
-        for table in ('messages', 'jobs', 'evidence', 'receipts'):
-            if table in tables:
-                self.db.execute('DROP TABLE ' + table)
-        self.db.executescript('''
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=FULL;
-            PRAGMA secure_delete=ON;
-            CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY, version TEXT NOT NULL, thread TEXT NOT NULL,
-                folder TEXT NOT NULL, metadata TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS threads (
-                id TEXT PRIMARY KEY, conversation TEXT NOT NULL, subject TEXT NOT NULL,
-                revision INTEGER NOT NULL DEFAULT 0, applied_revision INTEGER NOT NULL DEFAULT 0,
-                input_hash TEXT, outcome_hash TEXT, has_outcome INTEGER NOT NULL DEFAULT 0,
-                state TEXT NOT NULL DEFAULT 'dirty', target_revision INTEGER,
-                operation_id TEXT, payload TEXT, error TEXT);
-            CREATE TABLE IF NOT EXISTS discovery_errors (id TEXT PRIMARY KEY, folder TEXT, error TEXT, thread TEXT);
-        ''')
-        if 'thread' not in {row['name'] for row in self.db.execute('PRAGMA table_info(discovery_errors)')}:
-            self.db.execute('ALTER TABLE discovery_errors ADD COLUMN thread TEXT')
+            self._writer.release()
+            raise
         self.api_url, self.bank = api_url, bank
         self.source, self.client, self.builder = source, client, builder
         self.prefilter = prefilter
@@ -101,20 +81,11 @@ class MailSync:
         self._prefilter_metrics_baseline = {}
         self._run_started = None
         self.poll_seconds, self.operation_timeout = 2, 1800
-        if self._get('config') is None:
-            self._put('config', dict(folder_ids=[], lookback_days=30, interval_minutes=30, enabled=False))
-        self._put('config', {**IMPORT_DEFAULTS, **self._get('config')})
-        run = {**self._new_run(), **self._get('run', {})}
+        self._put('config', {**mail_ledger.new_config(), **self._get('config', {})})
+        run = {**mail_ledger.new_run(), **self._get('run', {})}
         if run['state'] in {'running', 'queued'}:
             run['state'] = 'paused'
         self._put('run', run)
-
-    @staticmethod
-    def _new_run():
-        return dict(state='idle', scanned=0, imported=0, updated=0, withdrawn=0, outcomes=0,
-                    skipped=0, prefiltered=0, prefilter_checked=0, prefilter_uncertain=0,
-                    failed=0, pending=0, last_success=None, next_run=None,
-                    error=None, consolidation='disabled for thread outcomes')
 
     def _get(self, key, default=None):
         row = self.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
@@ -137,9 +108,8 @@ class MailSync:
         self._put('run', run)
 
     def status(self):
-        run = self._get('run')
-        run['outcomes'] = self.db.execute('SELECT COUNT(*) FROM threads WHERE has_outcome=1').fetchone()[0]
-        run['pending'] = self.db.execute("SELECT COUNT(*) FROM threads WHERE state!='idle'").fetchone()[0]
+        value = mail_ledger.status(self.db)
+        run = value['run']
         run['active_threads'] = self._active_threads
         timing = dict(self._metrics)
         timing.update({key: round(value - self._model_metrics_baseline.get(key, 0), 3)
@@ -149,23 +119,7 @@ class MailSync:
         if self._run_started is not None:
             timing['elapsed_seconds'] = round(time.monotonic() - self._run_started, 3)
         run['timing'] = timing
-        selected = set(self._get('config')['folder_ids'])
-        selected_threads = self._selected_threads()
-        failures_by_thread = {row['id'] for row in self.db.execute("SELECT id FROM threads WHERE error IS NOT NULL")
-                              if row['id'] in selected_threads}
-        unidentified = 0
-        for row in self.db.execute('SELECT folder,thread FROM discovery_errors'):
-            if row['folder'] in selected:
-                if row['thread']:
-                    failures_by_thread.add(row['thread'])
-                else:
-                    unidentified += 1
-        run['failed'] = len(failures_by_thread) + unidentified
-        failures = [dict(subject=row['subject'], reason=row['error']) for row in self.db.execute(
-            'SELECT subject,error FROM threads WHERE error IS NOT NULL LIMIT 10')]
-        failures.extend(dict(subject='Unidentified thread', reason=row['error']) for row in self.db.execute('SELECT error FROM discovery_errors LIMIT 10'))
-        return dict(config=self._get('config'), account=self._get('account'), failures=failures[:10],
-                    folders=self._get('folders', []), warnings=self._get('warnings', []), run=run)
+        return value
 
     async def _open_source(self):
         if not self._source_open:
@@ -422,9 +376,7 @@ class MailSync:
                             (key, version, thread, item['parentFolderId'], _json(safe)))
 
     def _selected_threads(self):
-        selected = set(self._get('config')['folder_ids'])
-        return {row['thread'] for row in self.db.execute('SELECT thread,folder FROM sources UNION SELECT thread,folder FROM discovery_errors')
-                if row['thread'] and row['folder'] in selected}
+        return mail_ledger.selected_threads(self.db, self._get('config')['folder_ids'])
 
     def _require_complete_discovery(self, identity):
         selected = set(self._get('config')['folder_ids'])
@@ -495,7 +447,7 @@ class MailSync:
         self._run_started = time.monotonic()
         try:
             if not self._get('window'):
-                self._put('run', {**self._new_run(), 'last_success': self._get('run')['last_success']})
+                self._put('run', {**mail_ledger.new_run(), 'last_success': self._get('run')['last_success']})
             self._run_update(state='running', error=None)
             await self.discover()
             self._validate_scope()

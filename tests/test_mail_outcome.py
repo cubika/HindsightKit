@@ -331,6 +331,47 @@ class BuilderTests(unittest.IsolatedAsyncioTestCase):
         with patch('hindsightkit.mail_outcome.shutil.copyfile'),self.assertRaisesRegex(OutcomeError,'format_invalid'):
             await OutcomeBuilder(self.profile,client_factory=factory).build([message()])
 
+    async def test_session_creation_timeout_stops_runtime_before_inference(self):
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                await asyncio.Event().wait()
+        client = WaitingClient([])
+        def factory(**kwargs):
+            client.config = kwargs
+            return client
+        builder = OutcomeBuilder(self.profile, timeout=0.02, client_factory=factory)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            with self.assertRaisesRegex(OutcomeError, 'outcome_model_failed'):
+                await asyncio.wait_for(builder.build([message()]), 2)
+        self.assertEqual(client.cleanup, ['stop'])
+        self.assertFalse(builder._clients)
+        self.assertFalse(Path(client.config['base_directory']).exists())
+        self.assertEqual(builder.metrics['inference_count'], 0)
+
+    async def test_session_creation_cancellation_forces_cleanup(self):
+        creating = asyncio.Event()
+        class WaitingClient(FakeClient):
+            async def create_session(self, **kwargs):
+                creating.set()
+                await asyncio.Event().wait()
+        client = WaitingClient([])
+        def factory(**kwargs):
+            client.config = kwargs
+            return client
+        builder = OutcomeBuilder(self.profile, client_factory=factory)
+        with patch('hindsightkit.mail_outcome.shutil.copyfile'):
+            task = asyncio.create_task(builder.build([message()]))
+            await asyncio.wait_for(creating.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertEqual(client.cleanup, ['force_stop'])
+        self.assertFalse(builder._clients)
+        self.assertFalse(Path(client.config['base_directory']).exists())
+        self.assertEqual(builder.metrics['runtime_start_count'], 1)
+        self.assertEqual(builder.metrics['inference_count'], 0)
+        self.assertEqual(builder.metrics['runtime_stop_count'], 1)
+
     async def test_repository_review_skips_without_model(self):
         def factory(**kwargs):
             self.fail('Review must not call the model')
