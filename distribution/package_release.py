@@ -208,12 +208,12 @@ def python_bundle_module():
     return module
 
 
-def validate_node_bundle(bundle_directory: Path, package_directory: Path) -> dict:
+def validate_node_bundle(bundle_directory: Path, package_directory: Path, *, roles=("client", "server")) -> dict:
     spec = importlib.util.spec_from_file_location(
         "hindsightkit_node_bundle", Path(__file__).resolve().parents[1] / "src/hindsightkit/node_bundle.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.validate_bundle(bundle_directory, package_directory)
+    return module.validate_bundle(bundle_directory, package_directory, roles=roles)
 
 
 def node_files(root: Path, package_directory: Path, needles: tuple[bytes, ...]):
@@ -311,6 +311,22 @@ def write_archive(destination: Path, files, extra=None, *, progress_label=None):
     return inspect_file(destination)
 
 
+def dependency_wheels(files):
+    return {name: value for name, value in files.items()
+            if name.startswith("app/python/wheels/")
+            and not PurePosixPath(name).name.lower().startswith("hindsightkit-")}
+
+
+def write_component(output: Path, name: str, files) -> dict:
+    temporary = output / ("hindsightkit-" + name + ".zip")
+    digest = write_archive(temporary, files)
+    asset = f"hindsightkit-{name}-{digest}.zip"
+    temporary.rename(output / asset)
+    return {"name": name, "asset": asset, "sha256": digest,
+            "files": {path.removeprefix("app/"): checksum
+                      for path, (_, checksum) in sorted(files.items())}}
+
+
 def installation_notes(version: str, release_url: str, repository: str, visibility: str) -> str:
     installer = release_url + "/install.ps1"
     tick = chr(96)
@@ -355,9 +371,9 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
 """
     python_downloads = ("Python, Node.js dependencies, and the embedding model download during setup."
                         if version == "v0.1.0" else
-                        "Pinned Python packages are bundled in the application archive; "
+                        "Pinned Python packages are bundled in dependency component archives; "
                         "setup installs them without contacting PyPI.\n"
-                        "The archive also contains the locked Hindsight npm components. "
+                        "Separate Node component archives contain the locked Hindsight npm components. "
                         "Setup verifies and extracts these files without contacting npm.\n"
                         "The Python interpreter still downloads. Setup reuses suitable Node.js 22+ from PATH "
                         "or downloads the official portable runtime. "
@@ -424,15 +440,17 @@ For a client without a local database or model, replace the example address with
 {download_issue}
 ## Downloads
 
-The installer verifies the application and PostgreSQL archives with SHA256.
-New clients download {tick}{CLIENT_APP_NAME}{tick}, which contains the Hindsight client dependencies.
-The default installation uses {tick}{APP_NAME}{tick}. Computers with an existing local server
-keep the full package so their server can still be managed.
+The installer verifies the application, dependency, and PostgreSQL archives with SHA256.
+New clients download {tick}{CLIENT_APP_NAME}{tick} and the client dependency components.
+The default installation uses {tick}{APP_NAME}{tick} and the client and server components.
+Upgrades reuse verified dependency downloads when their contents have not changed.
+When dependencies change, the installer downloads the affected components automatically.
+Computers with an existing local server keep the server components so their server can still be managed.
 PostgreSQL includes pgvector and its required C++ runtime DLLs; no C++ compiler is needed.
 {python_downloads}
 
 Assets come from [this release]({release_url.replace('/download/', '/tag/')}) and use the fixed {tick}{version}{tick} tag.
-{tick}SHA256SUMS{tick} covers the three ZIP packages, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
+{tick}SHA256SUMS{tick} covers every ZIP package, {tick}install.ps1{tick}, {tick}QUICKSTART.md{tick},
 and {tick}release-notes.md{tick}. It does not include itself or GitHub's source archives.
 """
 
@@ -475,8 +493,8 @@ def package_release(*, version: str, repository: str, server_url: str,
             application["app/" + relative] = (path, inspect_file(path, needles))
     bundled_python, python_summary = python_files(python_directory, source_root, needles)
     bundled_node, node_manifest = node_files(node_directory, source_root / "src/hindsightkit", needles)
-    full_application = {**application, **bundled_python, **bundled_node}
-    if len({name.lower() for name in full_application}) != len(full_application):
+    all_files = {**application, **bundled_python, **bundled_node}
+    if len({name.lower() for name in all_files}) != len(all_files):
         raise ValueError("Duplicate Windows path in application package")
     postgres = postgres_files(postgres_directory, needles)
     template_path = ordinary_path(source_root / "distribution/install.ps1")
@@ -497,10 +515,25 @@ def package_release(*, version: str, repository: str, server_url: str,
         client_node_manifest = {**node_manifest, "bundles": {"client": node_manifest["bundles"]["client"]}}
         client_node = {"app/node/" + item["archive"]: bundled_node["app/node/" + item["archive"]]
                        for item in client_node_manifest["bundles"].values()}
+        python_dependencies = dependency_wheels(bundled_python)
+        client_dependencies = dependency_wheels(client_python)
+        server_dependencies = {name: value for name, value in python_dependencies.items()
+                               if name not in client_dependencies}
+        full_application = {name: value for name, value in all_files.items()
+                            if name not in python_dependencies
+                            and name not in {"app/node/client.zip", "app/node/server.zip"}}
+        client_application = {**application, **{name: value for name, value in client_python.items()
+                                               if name not in client_dependencies}}
         output.mkdir(parents=True, exist_ok=True)
+        components = [write_component(output, "python-client", client_dependencies),
+                      write_component(output, "python-server", server_dependencies),
+                      write_component(output, "node-client", client_node),
+                      write_component(output, "node-server",
+                                      {"app/node/server.zip": bundled_node["app/node/server.zip"]})]
         pg_hash = write_archive(output / POSTGRES_NAME, postgres)
         release = {"schema": 1, "version": version, "repository": repository, "release_url": release_url,
                    "requires_auth": requires_auth, "package_role": "full",
+                   "components": components,
                    "python": python_summary,
                    "node": {"platform": node_manifest["platform"], "components": sorted(node_manifest["bundles"])},
                    "postgres": {"url": release_url + "/" + POSTGRES_NAME, "sha256": pg_hash,
@@ -508,8 +541,9 @@ def package_release(*, version: str, repository: str, server_url: str,
         app_hash = write_archive(output / APP_NAME, full_application,
                                  {"app/release.json": json.dumps(release, indent=2) + "\n"})
         client_release = {**release, "package_role": "client", "python": client_summary,
+                          "components": [item for item in components if item["name"].endswith("-client")],
                           "node": {"platform": node_manifest["platform"], "components": ["client"]}}
-        client_hash = write_archive(output / CLIENT_APP_NAME, {**application, **client_python, **client_node},
+        client_hash = write_archive(output / CLIENT_APP_NAME, client_application,
                                     {"app/release.json": json.dumps(client_release, indent=2) + "\n",
                                      "app/node/node-bundle.json": json.dumps(client_node_manifest, indent=2) + "\n"})
     substitutions["@@PACKAGE_SHA256@@"] = app_hash

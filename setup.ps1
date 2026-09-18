@@ -144,14 +144,28 @@ if ($clientOnly) {
     Write-InstallStatus 'Client-only installation: no local dashboard, database, or model will be installed or started.'
     if ($hadServer) { Write-InstallStatus 'Existing local server detected: preserving its management dependencies and data. Client setup will not reconfigure it.' }
 }
-$toolsDirectory = Join-Path $PSScriptRoot '.runtime/tools'
+$toolsDirectory = if ($releaseInstall -and $env:HINDSIGHTKIT_INSTALL_CACHE) {
+    Join-Path $env:HINDSIGHTKIT_INSTALL_CACHE 'tools'
+} else { Join-Path $PSScriptRoot '.runtime/tools' }
 New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
 
     $stage = 'Prepare uv'
     Write-InstallStatus "Starting: $stage"
+    $uvVersion = '0.12.15'
+    $uvDirectory = Join-Path $toolsDirectory ("uv-" + $uvVersion)
     $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    if (-not $uvCommand -and (Test-Path -LiteralPath $uvDirectory -PathType Container)) {
+        $cachedUv = Get-ChildItem -LiteralPath $uvDirectory -Filter uv.exe -Recurse -File | Select-Object -First 1
+        if ($cachedUv) {
+            try {
+                $cachedUvVersion = Invoke-Checked $cachedUv.FullName @('--version') -Capture
+                if ($cachedUvVersion -match ('^uv ' + [regex]::Escape($uvVersion) + '(?: |$)')) {
+                    $uvCommand = [pscustomobject]@{ Source = $cachedUv.FullName }
+                }
+            } catch { Write-InstallStatus 'Cached uv is incomplete; downloading it again.' }
+        }
+    }
     if (-not $uvCommand) {
-        $uvVersion = '0.12.15'
         $uvArchive = Join-Path $toolsDirectory 'uv.zip'
         $uvUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/uv-x86_64-pc-windows-msvc.zip"
         Write-InstallStatus "Downloading uv $uvVersion to $uvArchive"
@@ -159,8 +173,8 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
         Invoke-WebRequest -Uri ($uvUrl + '.sha256') -UseBasicParsing -OutFile ($uvArchive + '.sha256')
         $expected = ((Get-Content -Raw -LiteralPath ($uvArchive + '.sha256')).Trim() -split '\s+')[0]
         if ((Get-FileHash -LiteralPath $uvArchive -Algorithm SHA256).Hash -ne $expected) { throw 'uv checksum mismatch.' }
-        Expand-Archive -LiteralPath $uvArchive -DestinationPath (Join-Path $toolsDirectory 'uv') -Force
-        $uvBinary = (Get-ChildItem -LiteralPath (Join-Path $toolsDirectory 'uv') -Filter uv.exe -Recurse | Select-Object -First 1).FullName
+        Expand-Archive -LiteralPath $uvArchive -DestinationPath $uvDirectory -Force
+        $uvBinary = (Get-ChildItem -LiteralPath $uvDirectory -Filter uv.exe -Recurse | Select-Object -First 1).FullName
         $uvAction = 'Installed'
     } else { $uvBinary = $uvCommand.Source; $uvAction = 'Reusing' }
     $actualUvVersion = Invoke-Checked $uvBinary @('--version') -Capture
@@ -207,7 +221,9 @@ New-Item -ItemType Directory -Path $toolsDirectory -Force | Out-Null
     $env:PATH = (Split-Path -Parent $selectedNode.Binary) + ';' + $env:PATH
     Write-InstallStatus 'Completed: Prepare Node.js'
 
-    $env:UV_CACHE_DIR = Join-Path $PSScriptRoot '.runtime/uv-cache'
+    $env:UV_CACHE_DIR = if ($releaseInstall -and $env:HINDSIGHTKIT_INSTALL_CACHE) {
+        Join-Path $env:HINDSIGHTKIT_INSTALL_CACHE 'uv'
+    } else { Join-Path $PSScriptRoot '.runtime/uv-cache' }
     $env:PYTHONUTF8 = '1'
     # A new release has an empty venv; retain local server management dependencies.
     $python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'

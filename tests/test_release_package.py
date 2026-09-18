@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("package_release", ROOT / "distribution/package_release.py")
 package = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(package)
+VERIFY_SPEC = importlib.util.spec_from_file_location("verify_release_components", ROOT / "distribution/verify_release_components.py")
+verify_release = importlib.util.module_from_spec(VERIFY_SPEC)
+with patch.dict(sys.modules, {"package_release": package}):
+    VERIFY_SPEC.loader.exec_module(verify_release)
 
 
 def write(root, name, content="fixture"):
@@ -99,13 +103,17 @@ class ReleasePackageTests(unittest.TestCase):
         return manifest
 
     def python_bundle(self, directory, source):
-        wheel = directory / "wheels/hindsightkit-0.1.1-py3-none-any.whl"
+        builder = package.python_bundle_module()
+        version, profiles = builder.source_metadata(source)
+        for previous in (directory / "wheels").glob("hindsightkit-*.whl"):
+            previous.unlink()
+        wheel = directory / f"wheels/hindsightkit-{version}-py3-none-any.whl"
         wheel.parent.mkdir(parents=True, exist_ok=True)
-        dist_info = "hindsightkit-0.1.1.dist-info"
+        dist_info = f"hindsightkit-{version}.dist-info"
         content = {
             **{path.relative_to(source / "src").as_posix(): path.read_bytes()
                for path in (source / "src/hindsightkit").rglob("*") if path.is_file()},
-            dist_info + "/METADATA": b"Metadata-Version: 2.4\nName: hindsightkit\nVersion: 0.1.1\nRequires-Python: >=3.12,<3.13\nProvides-Extra: server\n\n",
+            dist_info + "/METADATA": (f"Metadata-Version: 2.4\nName: hindsightkit\nVersion: {version}\nRequires-Python: >=3.12,<3.13\nProvides-Extra: server\n\n").encode(),
             dist_info + "/WHEEL": b"Wheel-Version: 1.0\nGenerator: release-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             dist_info + "/licenses/LICENSE": b"Test fixture license retained byte for byte.\n",
         }
@@ -119,15 +127,48 @@ class ReleasePackageTests(unittest.TestCase):
                 info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
                 info.external_attr = 0o100644 << 16
                 archive.writestr(info, payload)
-        requirement = f"hindsightkit==0.1.1 --hash=sha256:{package.inspect_file(wheel)}\n"
+        wheels = {builder.wheel_identity(path): package.inspect_file(path)
+                  for path in wheel.parent.glob("*.whl")}
         for role in ("client", "server"):
+            requirement = "".join(f"{name}=={version} --hash=sha256:{wheels[name, version]}\n"
+                                  for name, version in sorted(profiles[role]))
             write(directory, f"requirements-{role}.txt", requirement)
         manifest = {"schema": 1, "python": "3.12", "platform": "windows-x64", "profile": "full",
-                    "project_version": "0.1.1", "lock_sha256": package.inspect_file(source / "uv.lock"),
+                    "project_version": version, "lock_sha256": package.inspect_file(source / "uv.lock"),
                     "files": {path.relative_to(directory).as_posix(): package.inspect_file(path)
-                              for path in directory.rglob("*") if path.is_file()}}
+                              for path in directory.rglob("*") if path.is_file() and path.name != "python-bundle.json"}}
         write(directory, "python-bundle.json", json.dumps(manifest, sort_keys=True))
         return manifest
+
+    def dependency(self, args, name, *, role="client", content="fixture"):
+        source, pool = args["source_root"], args["python_directory"]
+        stem = name.replace("-", "_")
+        wheel = pool / f"wheels/{stem}-1.0.0-py3-none-any.whl"
+        files = {f"{stem}/__init__.py": content,
+                 f"{stem}-1.0.0.dist-info/METADATA": f"Metadata-Version: 2.4\nName: {name}\nVersion: 1.0.0\n",
+                 f"{stem}-1.0.0.dist-info/WHEEL": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                 f"{stem}-1.0.0.dist-info/RECORD": "",
+                 f"{stem}-1.0.0.dist-info/licenses/LICENSE": "Original fixture license.\n"}
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for relative, payload in sorted(files.items()):
+                info = zipfile.ZipInfo(relative, (1980, 1, 1, 0, 0, 0))
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, payload)
+        digest = package.inspect_file(wheel)
+        lock_path = source / "uv.lock"
+        lock = lock_path.read_text()
+        if f'name = "{name}"\nversion = "1.0.0"' in lock:
+            lock = re.sub(r'(url = "https://files.pythonhosted.org/' + re.escape(wheel.name) +
+                          r'", hash = "sha256:)[a-f0-9]+', r'\g<1>' + digest, lock)
+        else:
+            group = "dependencies" if role == "client" else "server"
+            lock = lock.replace(group + " = []", group + f' = [{{name = "{name}"}}]', 1)
+            lock += (f'\n[[package]]\nname = "{name}"\nversion = "1.0.0"\n'
+                     'source = {registry = "https://pypi.org/simple"}\n'
+                     f'wheels = [{{url = "https://files.pythonhosted.org/{wheel.name}", hash = "sha256:{digest}"}}]\n')
+        lock_path.write_text(lock)
+        self.python_bundle(pool, source)
+        return wheel
 
     def manifest(self, postgres, **overrides):
         manifest = {"schema": 1, "postgres_version": package.POSTGRES_VERSION,
@@ -154,7 +195,7 @@ class ReleasePackageTests(unittest.TestCase):
                 release = package.package_release(**args)
             self.assertEqual({path.name for path in output.iterdir()}, {
                 package.APP_NAME, package.CLIENT_APP_NAME, package.POSTGRES_NAME, "install.ps1", "QUICKSTART.md",
-                "release-notes.md", "SHA256SUMS"})
+                "release-notes.md", "SHA256SUMS", *(item["asset"] for item in release["components"])})
             with zipfile.ZipFile(output / package.APP_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"app/" + name for name in package.APP_FILES} | {
                     "app/src/hindsightkit/__init__.py",
@@ -163,12 +204,15 @@ class ReleasePackageTests(unittest.TestCase):
                     "app/docs/install.md", "app/release.json", "app/python/python-bundle.json",
                     "app/python/requirements-client.txt", "app/python/requirements-server.txt",
                     "app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl",
-                    "app/node/node-bundle.json", "app/node/client.zip", "app/node/server.zip"})
+                    "app/node/node-bundle.json"})
                 self.assertEqual(json.loads(archive.read("app/release.json")), release)
                 self.assertEqual(release["package_role"], "full")
+                self.assertEqual(release["schema"], 1)
+                self.assertEqual({item["name"] for item in release["components"]},
+                                 {"python-client", "python-server", "node-client", "node-server"})
                 self.assertTrue(all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist()))
-                for path in args["node_directory"].iterdir():
-                    self.assertEqual(archive.read("app/node/" + path.name), path.read_bytes())
+                self.assertEqual(archive.read("app/node/node-bundle.json"),
+                                 (args["node_directory"] / "node-bundle.json").read_bytes())
                 for path in args["python_directory"].rglob("*"):
                     if path.is_file():
                         self.assertEqual(archive.read("app/python/" + path.relative_to(args["python_directory"]).as_posix()),
@@ -180,14 +224,25 @@ class ReleasePackageTests(unittest.TestCase):
                 client_node = json.loads(archive.read("app/node/node-bundle.json"))
                 self.assertEqual(set(client_node["bundles"]), {"client"})
                 self.assertEqual(client_release["node"]["components"], ["client"])
-                self.assertEqual(archive.read("app/node/client.zip"),
-                                 (args["node_directory"] / "client.zip").read_bytes())
+                self.assertNotIn("app/node/client.zip", archive.namelist())
+                self.assertEqual({item["name"] for item in client_release["components"]},
+                                 {"python-client", "node-client"})
                 self.assertNotIn("app/node/copilot.zip", archive.namelist())
                 self.assertFalse(any(name.startswith("app/src/hindsightkit/copilot/") for name in archive.namelist()))
                 self.assertNotIn("app/python/requirements-server.txt", archive.namelist())
                 self.assertEqual(json.loads(archive.read("app/python/python-bundle.json"))["profile"], "client")
                 self.assertEqual(archive.read("app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"),
                                  (args["python_directory"] / "wheels/hindsightkit-0.1.1-py3-none-any.whl").read_bytes())
+            for component in release["components"]:
+                asset = output / component["asset"]
+                self.assertEqual(component["sha256"], package.inspect_file(asset))
+                self.assertEqual(asset.name, f'hindsightkit-{component["name"]}-{component["sha256"]}.zip')
+                with zipfile.ZipFile(asset) as archive:
+                    self.assertEqual(set(archive.namelist()), {"app/" + name for name in component["files"]})
+                    for name, digest in component["files"].items():
+                        self.assertEqual(hashlib.sha256(archive.read("app/" + name)).hexdigest(), digest)
+                        self.assertEqual(archive.read("app/" + name),
+                                         (args["node_directory"] / Path(name).name).read_bytes())
             with zipfile.ZipFile(output / package.POSTGRES_NAME) as archive:
                 self.assertEqual(set(archive.namelist()), {"pgsql/" + name for name in package.REQUIRED_POSTGRES}
                                  | {"pgsql/" + package.POSTGRES_MANIFEST})
@@ -222,6 +277,8 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertIn("local server also downloads the embedding model", notes)
             self.assertNotIn("Known v0.1.0 download issue", notes)
             self.assertIn("It does not include itself or GitHub's source archives", notes)
+            self.assertIn("every ZIP package", notes)
+            self.assertIn("downloads the affected components automatically", notes)
             checksums = dict(line.split("  ", 1)[::-1] for line in (output / "SHA256SUMS").read_text().splitlines())
             self.assertEqual(set(checksums), {path.name for path in output.iterdir()} - {"SHA256SUMS"})
             for name, checksum in checksums.items():
@@ -232,10 +289,18 @@ class ReleasePackageTests(unittest.TestCase):
             root = Path(directory)
             args = self.fixture(root)
             original_readme = (args["source_root"] / "README.md").read_bytes()
-            package.package_release(**args)
+            original_release = package.package_release(**args)
             second = {**args, "output": root / "restricted", "repository": "restricted-owner/HindsightKit",
                       "server_url": "https://git.example.test", "visibility": "internal"}
             release = package.package_release(**second)
+            self.assertEqual(original_release["components"], release["components"])
+            for component in release["components"]:
+                self.assertEqual((args["output"] / component["asset"]).read_bytes(),
+                                 (second["output"] / component["asset"]).read_bytes())
+                with zipfile.ZipFile(second["output"] / component["asset"]) as archive:
+                    self.assertNotIn("app/release.json", archive.namelist())
+                    self.assertFalse(any(name.endswith(("python-bundle.json", "node-bundle.json"))
+                                         for name in archive.namelist()))
             self.assertIs(release["requires_auth"], True)
             self.assertEqual((args["source_root"] / "README.md").read_bytes(), original_readme)
             self.assertEqual((args["output"] / package.POSTGRES_NAME).read_bytes(),
@@ -286,18 +351,23 @@ class ReleasePackageTests(unittest.TestCase):
             manifest["files"] = {path.relative_to(pool).as_posix(): package.inspect_file(path)
                                  for path in pool.rglob("*") if path.is_file() and path != manifest_path}
             write(pool, "python-bundle.json", json.dumps(manifest))
-            package.package_release(**args)
+            release = package.package_release(**args)
             with zipfile.ZipFile(args["output"] / package.APP_NAME) as full, \
                     zipfile.ZipFile(args["output"] / package.CLIENT_APP_NAME) as client:
                 full_wheels = {name for name in full.namelist() if name.endswith(".whl")}
                 client_wheels = {name for name in client.namelist() if name.endswith(".whl")}
-                self.assertEqual(full_wheels - client_wheels, {"app/python/wheels/" + server.name})
+                self.assertEqual(full_wheels, client_wheels)
+                self.assertEqual(full_wheels, {"app/python/wheels/hindsightkit-0.1.1-py3-none-any.whl"})
                 self.assertEqual(json.loads(full.read("app/release.json"))["python"]["packages"], 2)
                 self.assertEqual(json.loads(client.read("app/release.json"))["python"]["packages"], 1)
                 self.assertNotIn("hindsight-api-slim", client.read("app/python/requirements-client.txt").decode())
                 self.assertNotIn("app/python/requirements-server.txt", client.namelist())
                 self.assertEqual(full.read(next(iter(client_wheels))), client.read(next(iter(client_wheels))))
-                self.assertEqual(full.read("app/python/wheels/" + server.name), server.read_bytes())
+                self.assertNotIn("app/python/wheels/" + server.name, full.namelist())
+            component = next(item for item in release["components"] if item["name"] == "python-server")
+            with zipfile.ZipFile(args["output"] / component["asset"]) as archive:
+                self.assertEqual(archive.read("app/python/wheels/" + server.name), server.read_bytes())
+                self.assertEqual(set(archive.namelist()), {"app/python/wheels/" + server.name})
             self.assertLess((args["output"] / package.CLIENT_APP_NAME).stat().st_size,
                             (args["output"] / package.APP_NAME).stat().st_size)
 
@@ -308,6 +378,122 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertIn("TLS HandshakeFailure", notes)
         self.assertIn("Keep TLS certificate verification enabled", notes)
         self.assertNotIn("without contacting PyPI", notes)
+
+    def test_application_source_and_version_updates_reuse_identical_dependency_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.fixture(root)
+            self.dependency(args, "client-fixture")
+            self.dependency(args, "server-fixture", role="server")
+            first = package.package_release(**args)
+            source = args["source_root"]
+            write(source, "src/hindsightkit/__init__.py", "UPDATED = True\n")
+            self.python_bundle(args["python_directory"], source)
+            updated_args = {**args, "output": root / "updated-source"}
+            updated = package.package_release(**updated_args)
+            self.assertEqual(first["components"], updated["components"])
+            for name in ("pyproject.toml", "uv.lock"):
+                path = source / name
+                path.write_text(path.read_text().replace('version = "0.1.1"', 'version = "0.1.2"'))
+            self.python_bundle(args["python_directory"], source)
+            version_args = {**args, "version": "v0.1.2", "output": root / "updated-version"}
+            version = package.package_release(**version_args)
+            self.assertEqual(first["components"], version["components"])
+            for component in first["components"]:
+                self.assertEqual((args["output"] / component["asset"]).read_bytes(),
+                                 (version_args["output"] / component["asset"]).read_bytes())
+            for name in (package.APP_NAME, package.CLIENT_APP_NAME):
+                self.assertNotEqual(package.inspect_file(args["output"] / name),
+                                    package.inspect_file(updated_args["output"] / name))
+                self.assertNotEqual(package.inspect_file(updated_args["output"] / name),
+                                    package.inspect_file(version_args["output"] / name))
+
+    def test_dependency_change_replaces_only_its_python_component(self):
+        for role in ("client", "server"):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = self.fixture(root)
+                self.dependency(args, "client-fixture")
+                self.dependency(args, "server-fixture", role="server")
+                first = package.package_release(**args)
+                self.dependency(args, role + "-fixture", role=role, content="UPDATED = True\n")
+                second = package.package_release(**{**args, "output": root / "changed"})
+                first_assets = {item["name"]: item["sha256"] for item in first["components"]}
+                second_assets = {item["name"]: item["sha256"] for item in second["components"]}
+                self.assertEqual({name for name in first_assets if first_assets[name] != second_assets[name]},
+                                 {"python-" + role})
+
+    def test_split_assets_compose_complete_validated_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.fixture(root)
+            self.dependency(args, "client-fixture")
+            server = self.dependency(args, "server-fixture", role="server")
+            package.package_release(**args)
+            for application, role in ((package.APP_NAME, "full"), (package.CLIENT_APP_NAME, "client")):
+                output = root / role
+                release = verify_release.verify(release_directory=args["output"], application=application, output=output)
+                self.assertEqual(release["package_role"], role)
+                self.assertEqual((output / "app/node/server.zip").exists(), role == "full")
+                self.assertEqual((output / "app/python/wheels" / server.name).exists(), role == "full")
+                self.assertTrue((output / "app/python/wheels/client_fixture-1.0.0-py3-none-any.whl").is_file())
+                self.assertEqual((output / "app/node/client.zip").read_bytes(),
+                                 (args["node_directory"] / "client.zip").read_bytes())
+            result = subprocess.run([sys.executable, str(ROOT / "distribution/verify_release_components.py"),
+                "--release-directory", str(args["output"]), "--application", package.CLIENT_APP_NAME,
+                "--output", str(root / "cli-client")], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout),
+                             {"version": args["version"], "role": "client", "components": 2, "verified": True})
+
+    def test_component_manifest_rejects_unsafe_or_application_paths(self):
+        valid = {"name": "python-client", "asset": "hindsightkit-python-client-" + "a" * 64 + ".zip",
+                 "sha256": "a" * 64, "files": {"python/wheels/example-1.0-py3-none-any.whl": "b" * 64}}
+        for change in ({"asset": "../component.zip"}, {"sha256": "x" * 64},
+                       {"files": {"../escape": "b" * 64}},
+                       {"files": {"python/wheels/hindsightkit-1.0-py3-none-any.whl": "b" * 64}},
+                       {"files": {"python/python-bundle.json": "b" * 64}},
+                       {"files": {"python/wheels/example-1.0-py3-none-any.whl": "invalid"}}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                verify_release.component_files({**valid, **change})
+
+    def test_component_extraction_rejects_missing_extra_tampered_and_unsafe_files(self):
+        expected = {"app/node/client.zip": hashlib.sha256(b"fixture").hexdigest()}
+        variants = ({}, {"app/node/client.zip": "fixture", "app/extra.txt": "extra"},
+                    {"app/node/client.zip": "tampered"}, {"app/../escape": "fixture"},
+                    {"app/node/client.zip": "fixture", "app/NODE/client.zip": "fixture"})
+        for contents in variants:
+            with self.subTest(contents=contents), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive_path = root / "component.zip"
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    for name, value in contents.items():
+                        archive.writestr(name, value)
+                with self.assertRaises(ValueError):
+                    verify_release.extract(archive_path, root / "output", set(), expected)
+
+    def test_split_verifier_rejects_changed_assets_and_bundle_source_mismatch(self):
+        for change in ("component", "source"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = self.fixture(root)
+                release = package.package_release(**args)
+                if change == "component":
+                    (args["output"] / release["components"][0]["asset"]).write_bytes(b"tampered")
+                else:
+                    path = args["output"] / package.APP_NAME
+                    with zipfile.ZipFile(path) as archive:
+                        contents = {name: archive.read(name) for name in archive.namelist()}
+                    contents["app/src/hindsightkit/__init__.py"] = b"STALE = True\n"
+                    with zipfile.ZipFile(path, "w") as archive:
+                        for name, content in contents.items():
+                            archive.writestr(name, content)
+                    checksums = args["output"] / "SHA256SUMS"
+                    checksums.write_text("".join(f"{package.inspect_file(path)}  {path.name}\n"
+                                                for path in sorted(args["output"].iterdir()) if path != checksums))
+                with self.assertRaisesRegex(ValueError, "SHA256|stale source"):
+                    verify_release.verify(release_directory=args["output"], application=package.APP_NAME,
+                                          output=root / "verified")
 
     def test_missing_tampered_or_private_python_bundle_is_rejected_before_output(self):
         changes = (lambda root: (root / "python-bundle.json").unlink(),

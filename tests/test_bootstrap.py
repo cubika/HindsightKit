@@ -25,9 +25,12 @@ class BootstrapTests(unittest.TestCase):
         self.log = self.root / 'setup.json'
         self.download_log = self.root / 'downloads.txt'
         self.hash_log = self.root / 'hashes.txt'
+        self.assets = self.root / 'assets'
+        self.assets.mkdir()
         self.shell = shutil.which('powershell.exe')
         self.env = {key: value for key, value in os.environ.items() if key.lower() != 'psmodulepath'}
         self.env.update(TEST_ARCHIVE=str(self.archive), TEST_SETUP_LOG=str(self.log),
+                        TEST_ASSETS=str(self.assets),
                         TEST_HASH_LOG=str(self.hash_log),
                         TEST_DOWNLOAD_LOG=str(self.download_log), TEST_INSTALL_DIR=str(self.destination),
                         LOCALAPPDATA=str(self.root / 'local app data'),
@@ -35,18 +38,40 @@ class BootstrapTests(unittest.TestCase):
                         HINDSIGHTKIT_HOME=str(self.root / 'settings'),
                         HINDSIGHTKIT_RELEASE_MANIFEST='original-manifest',
                         HINDSIGHTKIT_INSTALL_LOG='original-log',
+                        HINDSIGHTKIT_INSTALL_CACHE='original-cache',
                         UV_PYTHON_INSTALL_DIR='original-python', UV_PYTHON_PREFERENCE='original-preference',
                         HINDSIGHTKIT_HK_CONFLICT='original-conflict')
 
-    def package(self, entries=None, version='v0.1.0'):
+    def package(self, entries=None, version='v0.1.0', dependencies=None, profile='full'):
         self.version = version
         self.release_url = RELEASE_URL.replace('v0.1.0', version)
-        manifest = {'schema': 1, 'version': version, 'release_url': self.release_url}
+        dependencies = dependencies if dependencies is not None else {
+            'python-client': {'python/wheels/client-1.0-py3-none-any.whl': b'client dependency'},
+            'python-server': {'python/wheels/server-1.0-py3-none-any.whl': b'server dependency'},
+            'node-client': {'node/client.zip': b'client node archive'},
+            'node-server': {'node/server.zip': b'server node archive'},
+        }
+        self.components = []
+        for name, files in dependencies.items():
+            if profile == 'client' and name.endswith('-server'):
+                continue
+            component_archive = self.assets / 'component.zip'
+            with zipfile.ZipFile(component_archive, 'w') as archive:
+                for relative, content in sorted(files.items()):
+                    archive.writestr(zipfile.ZipInfo('app/' + relative), content)
+            digest = hashlib.sha256(component_archive.read_bytes()).hexdigest()
+            asset = 'hindsightkit-' + name + '-' + digest + '.zip'
+            component_archive.replace(self.assets / asset)
+            self.components.append({'name': name, 'asset': asset, 'sha256': digest,
+                                    'files': {relative: hashlib.sha256(content).hexdigest() for relative, content in files.items()}})
+        manifest = {'schema': 1, 'version': version, 'release_url': self.release_url,
+                    'package_role': profile, 'components': self.components}
         payload = {
             'app/setup.ps1': '''param([switch]$ServerOnly, [switch]$ClientOnly, [string]$Server, [switch]$NoOpen)
 @{ directory=$PSScriptRoot; serverOnly=[bool]$ServerOnly; clientOnly=[bool]$ClientOnly; server=$Server;
    manifest=$env:HINDSIGHTKIT_RELEASE_MANIFEST; python=$env:UV_PYTHON_INSTALL_DIR;
    preference=$env:UV_PYTHON_PREFERENCE; hkConflict=$env:HINDSIGHTKIT_HK_CONFLICT;
+   cache=$env:HINDSIGHTKIT_INSTALL_CACHE;
    installLog=$env:HINDSIGHTKIT_INSTALL_LOG } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_SETUP_LOG
 exit 0
 ''',
@@ -80,25 +105,39 @@ exit 0
         has_server = (Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env').is_file()
         self.env['TEST_PACKAGE_NAME'] = 'hindsightkit-client-windows-x64.zip' if wants_client and not has_server else 'hindsightkit-windows-x64.zip'
         self.env['TEST_RELEASE_URL'] = self.release_url + '/' + self.env['TEST_PACKAGE_NAME']
+        self.env['TEST_RELEASE_BASE'] = self.release_url + '/'
+        self.env['TEST_VERSION'] = self.version
         wrapper.write_text('''$ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility
 function hk { 'unrelated user function' }
+function Copy-TestAsset($Name, $Destination) {
+    if ($Name -eq $env:TEST_FAIL_ASSET) {
+        [IO.File]::WriteAllText($Destination, 'interrupted partial download')
+        throw 'Synthetic interrupted download'
+    }
+    if ($Name -eq $env:TEST_PACKAGE_NAME) { $source = $env:TEST_ARCHIVE }
+    else {
+        if ($Name -notmatch '^hindsightkit-(python|node)-(client|server)-[a-f0-9]{64}[.]zip$') { throw 'Unexpected asset' }
+        $source = Join-Path $env:TEST_ASSETS $Name
+    }
+    Copy-Item -LiteralPath $source -Destination $Destination
+}
 function gh {
-    $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', $env:TEST_PACKAGE_NAME, '--output')
+    $expected = @('release', 'download', $env:TEST_VERSION, '--repo', 'github.com/example/HindsightKit', '--pattern', $args[6], '--output')
     if ($args.Count -ne 10) { throw 'Unexpected authenticated arguments.' }
     for ($index=0; $index -lt $expected.Count; $index++) {
         if ($args[$index] -ne $expected[$index]) { throw 'Unexpected authenticated download target.' }
     }
     if ($args[9] -ne '--clobber') { throw 'Missing overwrite option for interrupted download.' }
-    Add-Content -LiteralPath $env:TEST_DOWNLOAD_LOG -Value 'authenticated'
-    Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $args[8]
+    Add-Content -LiteralPath $env:TEST_DOWNLOAD_LOG -Value ('authenticated:' + $args[6])
+    Copy-TestAsset $args[6] $args[8]
     $global:LASTEXITCODE = 0
 }
 function Invoke-WebRequest {
     param($Uri, $OutFile, [switch]$UseBasicParsing, $TimeoutSec)
-    if ($Uri -ne $env:TEST_RELEASE_URL) { throw 'Unexpected download destination.' }
+    if (-not $Uri.StartsWith($env:TEST_RELEASE_BASE, [StringComparison]::Ordinal)) { throw 'Unexpected download destination.' }
     Add-Content -LiteralPath $env:TEST_DOWNLOAD_LOG -Value $Uri
-    Copy-Item -LiteralPath $env:TEST_ARCHIVE -Destination $OutFile
+    Copy-TestAsset $Uri.Substring($env:TEST_RELEASE_BASE.Length) $OutFile
 }
 function Get-FileHash {
     param([string]$LiteralPath, [string]$Algorithm)
@@ -112,6 +151,7 @@ try {
         $env:UV_PYTHON_INSTALL_DIR -ne 'original-python' -or
         $env:UV_PYTHON_PREFERENCE -ne 'original-preference' -or
         $env:HINDSIGHTKIT_INSTALL_LOG -ne 'original-log' -or
+        $env:HINDSIGHTKIT_INSTALL_CACHE -ne 'original-cache' -or
         $env:HINDSIGHTKIT_HK_CONFLICT -ne 'original-conflict') { throw 'Installer did not restore its environment.' }
 } catch { Write-Output $_; exit 1 }
 ''', encoding='utf-8')
@@ -129,7 +169,9 @@ try {
         digest = self.package()
         self.env['TEST_VERSION'] = self.version
         self.run_installer(digest, authenticated=True)
-        self.assertEqual(self.download_log.read_text().strip(), 'authenticated')
+        downloads = self.download_log.read_text().splitlines()
+        self.assertEqual(downloads, ['authenticated:hindsightkit-windows-x64.zip'] +
+                         ['authenticated:' + component['asset'] for component in self.components])
 
     def test_pipe_install_uses_managed_directory_and_reuses_same_version(self):
         digest = self.package()
@@ -142,6 +184,7 @@ try {
         # The fixture records this target but does not install Python there.
         self.assertEqual(Path(receipt['python']).resolve(), (self.destination / 'python').resolve())
         self.assertEqual(receipt['preference'], 'only-managed')
+        self.assertEqual(Path(receipt['cache']).resolve(), (self.destination / 'cache').resolve())
         self.assertEqual(receipt['hkConflict'], 'Function hk')
         log = Path(receipt['installLog'])
         self.assertTrue(log.is_file())
@@ -152,7 +195,7 @@ try {
         self.run_installer(digest)
         retry_hashes = self.hash_log.read_text(encoding='utf-8-sig').splitlines()[len(fresh_hashes):]
         self.assertEqual(sum(Path(path).name == 'setup.ps1' for path in retry_hashes), 1)
-        self.assertEqual(len(self.download_log.read_text().splitlines()), 1)
+        self.assertEqual(len(self.download_log.read_text().splitlines()), 5)
         self.assertEqual((self.app / 'keep.txt').read_text(), 'existing runtime')
         self.assertFalse(list(self.destination.glob('.install-*')))
 
@@ -164,13 +207,15 @@ try {
         self.assertEqual(json.loads(self.log.read_text(encoding='utf-8-sig'))['server'], 'http://memory-host:9077')
 
     def test_client_only_selects_client_archive_and_no_server_address(self):
-        digest = self.package()
+        digest = self.package(profile='client')
         self.run_installer(digest, '-ClientOnly')
         receipt = json.loads(self.log.read_text(encoding='utf-8-sig'))
         self.assertTrue(receipt['clientOnly'])
         self.assertFalse(receipt['serverOnly'])
         self.assertFalse(receipt['server'])
         self.assertIn('hindsightkit-client-windows-x64.zip', self.download_log.read_text())
+        self.assertEqual(len(self.download_log.read_text().splitlines()), 3)
+        self.assertFalse((self.app / 'node/server.zip').exists())
 
     def test_existing_local_server_keeps_full_management_package_without_server_setup(self):
         profile = Path(self.env['USERPROFILE']) / '.hindsight/profiles/hindsightkit.env'
@@ -195,7 +240,7 @@ try {
         self.assertTrue(old_app.is_dir())
         self.assertTrue(self.app.is_dir())
         self.assertEqual((settings / 'retained.txt').read_text(), 'existing memory settings')
-        self.assertEqual(len(self.download_log.read_text().splitlines()), 2)
+        self.assertEqual(len(self.download_log.read_text().splitlines()), 6)
 
     def test_checksum_failure_never_executes_setup(self):
         self.package()
@@ -203,6 +248,121 @@ try {
         self.assertIn('SHA256 mismatch', result.stdout)
         self.assertFalse(self.log.exists())
         self.assertFalse(list(self.destination.glob('.install-*')))
+
+    def test_upgrade_downloads_only_changed_component_and_keeps_old_files(self):
+        digest = self.package()
+        self.run_installer(digest)
+        old_app = self.app
+        dependencies = {
+            'python-client': {'python/wheels/client-1.0-py3-none-any.whl': b'client dependency'},
+            'python-server': {'python/wheels/server-2.0-py3-none-any.whl': b'changed server dependency'},
+            'node-client': {'node/client.zip': b'client node archive'},
+            'node-server': {'node/server.zip': b'server node archive'},
+        }
+        digest = self.package(version='v0.2.0', dependencies=dependencies)
+        self.run_installer(digest)
+        downloads = self.download_log.read_text().splitlines()
+        self.assertEqual(len(downloads), 7)
+        self.assertTrue(downloads[-1].endswith(self.components[1]['asset']))
+        self.assertEqual((old_app / 'python/wheels/server-1.0-py3-none-any.whl').read_bytes(), b'server dependency')
+        self.assertEqual((self.app / 'python/wheels/server-2.0-py3-none-any.whl').read_bytes(), b'changed server dependency')
+
+    def test_interrupted_upgrade_keeps_old_version_and_verified_downloads(self):
+        digest = self.package()
+        self.run_installer(digest)
+        old_app = self.app
+        old_setup_receipt = self.log.read_bytes()
+        dependencies = {
+            'python-client': {'python/wheels/client-2.0-py3-none-any.whl': b'new client'},
+            'python-server': {'python/wheels/server-2.0-py3-none-any.whl': b'new server'},
+            'node-client': {'node/client.zip': b'client node archive'},
+            'node-server': {'node/server.zip': b'server node archive'},
+        }
+        digest = self.package(version='v0.2.0', dependencies=dependencies)
+        self.env['TEST_FAIL_ASSET'] = self.components[1]['asset']
+        self.run_installer(digest, expected=1)
+        self.assertEqual(self.log.read_bytes(), old_setup_receipt)
+        self.assertTrue(old_app.is_dir())
+        self.assertFalse(self.app.exists())
+        self.assertFalse(list(self.destination.glob('.install-*')))
+        cache = self.destination / 'downloads'
+        self.assertTrue((cache / (digest + '.zip')).is_file())
+        self.assertTrue((cache / (self.components[0]['sha256'] + '.zip')).is_file())
+        previous_requests = len(self.download_log.read_text().splitlines())
+        del self.env['TEST_FAIL_ASSET']
+        self.run_installer(digest)
+        retry_requests = self.download_log.read_text().splitlines()[previous_requests:]
+        self.assertEqual(len(retry_requests), 1)
+        self.assertTrue(retry_requests[0].endswith(self.components[1]['asset']))
+
+    def test_damaged_cache_is_redownloaded_and_never_used(self):
+        digest = self.package()
+        self.run_installer(digest)
+        damaged = self.components[0]
+        (self.destination / 'downloads' / (damaged['sha256'] + '.zip')).write_bytes(b'corrupt')
+        digest = self.package(version='v0.2.0')
+        self.run_installer(digest)
+        self.assertEqual(len(self.download_log.read_text().splitlines()), 7)
+        self.assertEqual((self.app / 'python/wheels/client-1.0-py3-none-any.whl').read_bytes(), b'client dependency')
+
+    def test_component_with_wrong_files_is_rejected_before_setup(self):
+        self.package()
+        component = self.components[0]
+        asset = self.assets / component['asset']
+        with zipfile.ZipFile(asset, 'w') as archive:
+            archive.writestr('app/setup.ps1', 'unexpected override')
+        component['sha256'] = hashlib.sha256(asset.read_bytes()).hexdigest()
+        replacement = 'hindsightkit-' + component['name'] + '-' + component['sha256'] + '.zip'
+        asset.replace(self.assets / replacement)
+        component['asset'] = replacement
+        manifest = {'schema': 1, 'version': self.version, 'release_url': self.release_url,
+                    'package_role': 'full', 'components': self.components}
+        with zipfile.ZipFile(self.archive) as archive:
+            contents = {info.filename: archive.read(info) for info in archive.infolist()}
+        contents['app/release.json'] = json.dumps(manifest).encode()
+        with zipfile.ZipFile(self.archive, 'w') as archive:
+            for name, content in contents.items():
+                archive.writestr(name, content)
+        digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        result = self.run_installer(digest, expected=1)
+        self.assertIn('Unexpected component file', result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_empty_python_components_are_supported(self):
+        digest = self.package(dependencies={
+            'python-client': {}, 'python-server': {},
+            'node-client': {'node/client.zip': b'client'},
+            'node-server': {'node/server.zip': b'server'},
+        })
+        self.run_installer(digest)
+        self.assertTrue(self.log.is_file())
+
+    def test_cached_archive_is_locked_from_verification_through_extraction(self):
+        digest = self.package()
+        self.run_installer(digest)
+        harness = self.root / 'locked-archive.ps1'
+        harness.write_text('''$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:TEST_TEMPLATE, [ref]$tokens, [ref]$errors)
+foreach ($function in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    Invoke-Expression $function.Extent.Text
+}
+$stream = Open-VerifiedAsset $env:TEST_INSTALL_DIR 'fixture.zip' $env:TEST_DIGEST
+try {
+    $blocked = $false
+    try { [IO.File]::WriteAllText($stream.Name, 'replace verified contents') } catch [IO.IOException] { $blocked = $true }
+    if (-not $blocked) { throw 'Verified archive allowed a writer' }
+    Expand-InstallFiles $stream $env:TEST_DESTINATION | Out-Null
+} finally { $stream.Dispose() }
+$writer = [IO.File]::Open($stream.Name, [IO.FileMode]::Open, [IO.FileAccess]::Write)
+$writer.Dispose()
+''', encoding='utf-8')
+        destination = self.root / 'locked-extraction'
+        result = subprocess.run([self.shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(harness)],
+            env={**self.env, 'TEST_TEMPLATE': str(TEMPLATE), 'TEST_DIGEST': digest,
+                 'TEST_DESTINATION': str(destination)}, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((destination / 'setup.ps1').is_file())
 
     def test_archive_traversal_is_rejected(self):
         digest = self.package({'app/../../escaped.txt': 'unexpected'})
@@ -227,7 +387,8 @@ foreach ($function in $ast.FindAll({ param($n) $n -is [Management.Automation.Lan
     Invoke-Expression $function.Extent.Text
 }
 New-Item -ItemType Junction -Path $env:TEST_LINK -Target $env:TEST_TARGET | Out-Null
-Expand-InstallPackage $env:TEST_ARCHIVE $env:TEST_DESTINATION
+$stream = [IO.File]::OpenRead($env:TEST_ARCHIVE)
+try { Expand-InstallPackage $stream $env:TEST_DESTINATION } finally { $stream.Dispose() }
 ''', encoding='utf-8')
         junction = destination / 'linked'
         try:
