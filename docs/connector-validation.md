@@ -2,7 +2,7 @@
 
 ## September 18, 2026: status and memory test consolidation
 
-The integrated status, lifecycle, connection, packaging, and installer run passed 121 tests in 377.7 seconds. Default status checks made no model calls. The optional local-memory test preserved service and connection failure results, skipped stopped or client-only installations, and never wrote a remote test bank. Connector services and memory responses used isolated fixtures; no mailbox or live memory server was accessed.
+The integrated status, lifecycle, connection, packaging, and installer run passed 121 tests in 377.7 seconds. After integrating the relay worker update, 82 affected tests passed in 15.1 seconds. Default status checks made no model calls. The optional local-memory test preserved service and connection failure results, skipped stopped or client-only installations, and never wrote a remote test bank. Connector services and memory responses used isolated fixtures; no mailbox or live memory server was accessed.
 
 ## September 18, 2026: unshare progress message
 
