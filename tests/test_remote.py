@@ -224,6 +224,34 @@ class RemoteTests(unittest.TestCase):
             state.setup.assert_not_called()
             self.assertEqual(state.path.read_bytes(), state.saved)
 
+    def test_relay_api_timeout_identifies_the_stage_and_preserves_stopped_client(self):
+        from hindsightkit import lifecycle
+        for reused in (False, True):
+            transport = {'mode': 'connect', 'tunnel_id': 'new-tunnel', 'remote_port': 9077, 'local_port': 43210}
+            previous = {'apiUrl': 'http://127.0.0.1:43210', 'apiToken': 'old-key',
+                        'hindsightkit': {'mode': 'client', 'transport': transport}} if reused else None
+            with self.subTest(reused=reused), self.environment(previous=previous) as state, \
+                 patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(connection, 'discover', new_callable=AsyncMock,
+                              side_effect=[TimeoutError(), TimeoutError()]), \
+                 contextlib.redirect_stderr(io.StringIO()) as errors:
+                lifecycle.stop()
+                stopped = lifecycle.path().read_bytes()
+                self.assertEqual(cli.main(['connect']), 1)
+                self.assertIn('Private relay is ready. Checking the memory server', state.output.getvalue())
+                self.assertIn('private relay started, but the memory server could not be reached', errors.getvalue())
+                self.assertIn('TimeoutError', errors.getvalue())
+                self.assertNotIn('new-key', errors.getvalue())
+                self.assertNotIn('old-key', errors.getvalue())
+                self.assertEqual(state.path.read_bytes(), state.saved)
+                self.assertEqual(lifecycle.path().read_bytes(), stopped)
+                state.setup.assert_not_called()
+                state.stop_clients.assert_not_called()
+                if reused:
+                    state.relay.stop.assert_not_called()
+                else:
+                    state.relay.stop.assert_called_once_with(state.relay.ensure_running.call_args.args[0])
+
     def test_local_reset_stops_clients_only_after_local_configuration_succeeds(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}
         with self.environment() as state, patch.object(services, 'require_local') as require, \

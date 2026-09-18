@@ -278,6 +278,39 @@ class ConnectionTests(unittest.TestCase):
                 asyncio.run(connection.request({"apiUrl": url, "apiToken": TOKEN}, "GET", "/redirect"))
         self.assertEqual([item["path"] for item in server.requests], ["/redirect"])
 
+    def test_request_timeout_reports_destination_and_operation_without_credentials(self):
+        received = threading.Event()
+        release = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.set()
+                release.wait(3)
+
+            do_POST = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        try:
+            with running(server) as url:
+                config = {"apiUrl": url, "apiToken": TOKEN}
+                original = dict(config)
+                for method, path in [("GET", "/ext/hindsightkit/connection"),
+                                     ("POST", "/ext/hindsightkit/clients")]:
+                    received.clear()
+                    with self.subTest(method=method), self.assertRaises(TimeoutError) as error:
+                        asyncio.run(connection.request(config, method, path, timeout=0.1))
+                    self.assertTrue(received.is_set())
+                    self.assertIn("timed out after 0.1s", str(error.exception))
+                    self.assertIn(method + " " + url + path, str(error.exception))
+                    self.assertNotIn(TOKEN, str(error.exception))
+                    self.assertIsInstance(error.exception.__cause__, TimeoutError)
+                self.assertEqual(config, original)
+        finally:
+            release.set()
+
     def test_origins_accept_ip_dns_and_forwarded_ports_and_reject_ambiguous_urls(self):
         for value in ["http://192.0.2.10:9077", "https://memory.example.invalid", "http://127.0.0.1:18077/",
                       "http://[::1]:9077"]:

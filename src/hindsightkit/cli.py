@@ -67,7 +67,8 @@ def main(argv=None):
             getattr(services, args.command)()
         return 0
     except Exception as exc:
-        print(f'HindsightKit: {exc}', file=sys.stderr)
+        detail = str(exc).strip() or type(exc).__name__
+        print(f'HindsightKit: {detail}', file=sys.stderr)
         return 1
 
 

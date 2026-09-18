@@ -273,7 +273,13 @@ def connect(args):
         try:
             relay.ensure_running(root, transport, interactive=True, provider=args.relay_provider)
             candidate['apiUrl'] = f'http://127.0.0.1:{transport["local_port"]}'
-            discovered = asyncio.run(connection.discover(candidate))
+            print('Private relay is ready. Checking the memory server through it...', flush=True)
+            try:
+                discovered = asyncio.run(connection.discover(candidate))
+            except (aiohttp.ClientConnectionError, TimeoutError, socket.gaierror) as exc:
+                detail = str(exc).strip() or type(exc).__name__
+                raise RuntimeError('The private relay started, but the memory server could not be reached through it. '
+                                   'Run hindsightkit check on the server. ' + detail) from exc
         except Exception:
             if transport != saved:
                 relay.stop(root)

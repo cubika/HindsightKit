@@ -83,13 +83,18 @@ def sdk(config: dict, **options) -> Hindsight:
 
 
 async def request(config, method, path, *, body=None, timeout=10):
+    origin = validate_url(config['apiUrl'])
     headers = {'Authorization': 'Bearer ' + config['apiToken']} if config.get('apiToken') else {}
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
-        async with session.request(method, validate_url(config['apiUrl']) + path,
-                                   headers=headers, json=body, allow_redirects=False) as response:
-            if response.status >= 300:
-                raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
-            return await response.json()
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
+            async with session.request(method, origin + path,
+                                       headers=headers, json=body, allow_redirects=False) as response:
+                if response.status >= 300:
+                    raise RuntimeError(f'Memory API returned HTTP {response.status} for {path}.')
+                return await response.json()
+    except TimeoutError as exc:
+        # Keep the type so direct connection timeouts still trigger relay fallback.
+        raise TimeoutError(f'Memory API request timed out after {timeout:g}s: {method} {origin}{path}.') from exc
 
 
 async def discover(config):

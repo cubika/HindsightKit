@@ -121,6 +121,14 @@ class CliBehaviorTests(unittest.TestCase):
             self.assertNotIn(internal, help_text)
         self.assertIn('Test local memory', help_text)
 
+    def test_empty_exception_message_still_reports_its_type(self):
+        for error in (TimeoutError(), RuntimeError('   ')):
+            with self.subTest(error=type(error).__name__), patch.object(runtime_env, 'prepare_env'), \
+                 patch.object(remote, 'connect', side_effect=error), \
+                 contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertEqual(cli.main(['connect']), 1)
+                self.assertEqual(output.getvalue().strip(), 'HindsightKit: ' + type(error).__name__)
+
 
 if __name__ == '__main__':
     unittest.main()
