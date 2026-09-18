@@ -322,7 +322,8 @@ def ensure_running(root, spec, interactive=False, *, provider=None):
         if not current:
             atomic_json(root / 'spec.json', spec)
             atomic_json(root / 'launch.json', {'executable': executable})
-            flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
+            # DETACHED_PROCESS lets the Windows venv launcher open a new console.
+            flags = (_flags() | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
             with (root / 'supervisor.log').open('ab') as output:
                 subprocess.Popen([sys.executable, '-m', 'hindsightkit.relay', '--worker', str(root)],
                                  stdin=subprocess.DEVNULL, stdout=output, stderr=output,
