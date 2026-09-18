@@ -384,17 +384,17 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
 
 ## Changes in this preview
 
-Upgrades preserve the installation role, including client-only, and reuse unchanged dependency downloads.
-Full upgrades refresh this computer's client integrations while keeping any selected remote server.
+MCP clients can fall back from a modern discovery probe to the {tick}2025-11-25{tick} initialization
+handshake on the same connection. This fixes the {tick}-32022{tick} initialization error and preserves
+VS Code workspace routing. Restart the Hindsight MCP server or open a new Copilot session after upgrading.
+The stdio endpoint uses the handshake protocol; clients that require only the modern protocol are unsupported.
 
-The command line now separates installation from everyday use. Run the installer to install or upgrade,
-and use the independent {tick}copilot{tick} command to launch Copilot.
-{tick}stop{tick} pauses memory and stops local services until {tick}start{tick}.
-{tick}unshare{tick} disconnects clients and disables direct and relay sharing on a server.
-{tick}status{tick} reports local services and the selected client connection.
-Add {tick}--test-memory{tick} to also test local memory using Copilot allowance.
-Failed connections restore the previous selection, and sessions cannot upload old transcripts after switching servers.
-Private relay login supports Microsoft and GitHub accounts with device-code sign-in.
+{tick}status{tick} reports local services and the selected client connection. Add {tick}--test-memory{tick}
+to test local memory using Copilot allowance. Connection failures now identify timeouts and relay API errors.
+Private relay workers run without a visible console and record bounded, redacted diagnostic logs.
+Device sign-in opens the browser, and {tick}share{tick} copies connection codes to the Windows clipboard.
+Successful upgrades clean up obsolete managed installations while preserving active paths and user data.
+Mail indexing and model-session cleanup have also been updated.
 
 ## Install
 

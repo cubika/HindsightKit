@@ -1,5 +1,11 @@
 # Release validation
 
+## v0.1.6 candidate
+
+The MCP compatibility fix passed eight transport tests and 22 lifecycle and repository-switch tests. A real Copilot 1.0.86-2 runtime connected through discovery fallback and called a fixture tool. Local Hindsight checks passed retain and recall in CLI and VS Code contexts, including workspace roots; disposable banks were removed. The stdio endpoint serves the handshake protocol. These checks do not establish modern-only client support.
+
+The full local suite ran 532 tests. Seven installation checks initially encountered the installed interpreter's release manifest or sandbox restrictions; all seven passed after isolating the interpreter, settings, and client runtime. The application wheel and dependency lock were verified. Hosted candidate tests and final archive checks are required before publication.
+
 ## v0.1.5 candidate
 
 The CLI cleanup passed 492 repository tests and 63 final regression checks. Release preparation passed another 83 packaging and installation tests. The offline Node verifier installed, reused, and repaired the official client and server archives in temporary directories; the dashboard and 17 static assets returned HTTP 200. The project version and dependency lock agree on 0.1.5.
