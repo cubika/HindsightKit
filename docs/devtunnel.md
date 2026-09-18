@@ -46,7 +46,21 @@ hindsightkit share --relay
 
 Run `hindsightkit connect` on the coding computer and paste the new code. The client tries the direct address first and uses the relay after a network connection failure. An incorrect key, incompatible server, or TLS certificate error stops the connection attempt. Those failures do not trigger relay fallback.
 
-The first relay use downloads Microsoft's signed Dev Tunnels CLI if it is missing and requests login if needed. Sign in with the same Dev Tunnels account on both computers. This login is separate from Copilot authentication. The tunnel is private to that account; HindsightKit does not enable anonymous access. The network must allow the [Dev Tunnels outbound domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
+The first relay use downloads Microsoft's signed Dev Tunnels CLI if it is missing and requests login if needed. The terminal displays a URL and a device code. Open that URL in a browser, enter the code, and sign in with the same Dev Tunnels account used on the memory server. Keep the terminal open until login finishes; the request times out after 10 minutes. This login is separate from Copilot authentication. The tunnel is private to that account; HindsightKit does not enable anonymous access. The network must allow the [Dev Tunnels outbound domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
+
+If an installed version waits at the sign-in message without opening a browser, press Ctrl+C and run the [Dev Tunnels device-code login](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands#manage-user-credentials) directly:
+
+```powershell
+devtunnel user login --use-device-code-auth
+```
+
+If `devtunnel` is not on PATH, use HindsightKit's downloaded copy:
+
+```powershell
+& "$env:USERPROFILE\.hindsightkit\tools\devtunnel.exe" user login --use-device-code-auth
+```
+
+For a custom `HINDSIGHTKIT_HOME`, use its `tools\devtunnel.exe`. If the server uses GitHub login, add `--github` and use the same GitHub account. After login succeeds, rerun `hindsightkit connect` on the client or `hindsightkit share --relay` on the server.
 
 HindsightKit manages the tunnel and its background processes. The coding client keeps a stable loopback address even when the CLI selects a different forwarding port. The relay forwards the memory API; PostgreSQL and the dashboard are not forwarded.
 

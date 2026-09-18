@@ -72,11 +72,46 @@ class RelayConfigurationTests(unittest.TestCase):
                 relay._authenticate('devtunnel.exe', False)
             run.assert_not_called()
 
-    def test_login_runs_only_for_interactive_request(self):
+    def test_interactive_login_shows_device_code_in_the_calling_terminal(self):
         with patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'}, {'status': 'Logged in'}]), \
+                patch.object(relay, '_flags', return_value=0x08000000), \
                 patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
             relay._authenticate('devtunnel.exe', True)
-            self.assertEqual(run.call_args.args[0], ['devtunnel.exe', 'user', 'login'])
+            self.assertEqual(run.call_args.args[0],
+                             ['devtunnel.exe', 'user', 'login', '--use-device-code-auth'])
+            self.assertEqual(run.call_args.kwargs.get('creationflags', 0), 0)
+            self.assertFalse(run.call_args.kwargs.get('capture_output', False))
+            for stream in ('stdin', 'stdout', 'stderr'):
+                self.assertIsNone(run.call_args.kwargs.get(stream))
+
+    def test_existing_login_is_preserved_without_opening_another_flow(self):
+        with patch.object(relay, '_json', return_value={'status': 'Logged in'}), \
+                patch.object(relay.subprocess, 'run') as run:
+            relay._authenticate('devtunnel.exe', True)
+            run.assert_not_called()
+
+    def test_device_login_timeout_explains_how_to_retry(self):
+        with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
+                patch.object(relay.subprocess, 'run',
+                             side_effect=subprocess.TimeoutExpired('devtunnel', 600)):
+            with self.assertRaisesRegex(RuntimeError, 'sign-in timed out.*connect'):
+                relay._authenticate('devtunnel.exe', True)
+            status.assert_called_once()
+
+    def test_failed_device_login_explains_how_to_retry(self):
+        with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
+                patch.object(relay.subprocess, 'run', return_value=Mock(returncode=1)):
+            with self.assertRaisesRegex(RuntimeError, 'sign-in did not complete.*connect'):
+                relay._authenticate('devtunnel.exe', True)
+            status.assert_called_once()
+
+    def test_successful_login_exit_still_requires_authenticated_status(self):
+        with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
+                patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+            with self.assertRaisesRegex(RuntimeError, 'sign-in expired'):
+                relay._authenticate('devtunnel.exe', True)
+            self.assertEqual(status.call_count, 2)
+            run.assert_called_once()
 
     def test_nonzero_logged_out_status_can_authenticate_interactively(self):
         error = relay.CliError('user show', Mock(returncode=1, stdout='Not logged in', stderr=''))

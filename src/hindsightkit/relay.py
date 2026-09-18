@@ -146,9 +146,18 @@ def _authenticate(executable, interactive):
     if not interactive:
         raise RuntimeError('Relay sign-in expired. Run share --relay or connect to sign in again.')
     print('Sign in to Microsoft dev tunnels. Use the same account on both computers.', flush=True)
-    result = subprocess.run([str(executable), 'user', 'login'], timeout=600, creationflags=_flags())
+    print('Open the URL shown below in your browser and enter the device code. '
+          'Keep this terminal open; sign-in can take up to 10 minutes. Press Ctrl+C to cancel.', flush=True)
+    # Interactive login must inherit the terminal so its URL and code stay visible.
+    try:
+        result = subprocess.run([str(executable), 'user', 'login', '--use-device-code-auth'],
+                                timeout=600, creationflags=0)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Microsoft dev tunnels sign-in timed out. Check network access to Microsoft sign-in '
+                           'and Dev Tunnels, then rerun share --relay or connect for a new device code.') from exc
     if result.returncode:
-        raise RuntimeError('Microsoft dev tunnels sign-in did not complete.')
+        raise RuntimeError('Microsoft dev tunnels sign-in did not complete. Check the login message above, '
+                           'then rerun share --relay or connect.')
     _authenticate(executable, False)
 
 

@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: relay sign-in regression
+
+The repository suite passed all 427 tests in 529.3 seconds after the relay login changed to device-code authentication. Connector fixtures passed without mailbox reads, model calls, or changes to imported memory. Relay checks covered terminal inheritance, login failure and timeout guidance, saved authentication, and background recovery. Microsoft's installed CLI help confirmed the device-code option; account sign-in and access from a second computer were not exercised.
+
 ## September 17, 2026: repository memory switch
 
 Synthetic MCP dispatch checks verified that `memory off` blocks `recall_mail` along with the core memory tools before transport startup, bank discovery, or SDK calls. Re-enabling the same MCP process restored access. Existing mail tests now use MCP dispatch so they exercise this guard. The focused `test_m*.py` run passed 163 tests. After integrating the mail batching revert from master, the final `python -m unittest discover -s tests -v` run passed all 397 tests in 396.2 seconds, including connector fixtures. No mailbox, live memory bank, or model was accessed.
