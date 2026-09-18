@@ -128,7 +128,8 @@ class RemoteSetupTests(unittest.TestCase):
 
     def test_installer_exposes_server_address_and_removes_old_setup_flags(self):
         with patch.object(runtime_env, 'prepare_env'), patch.object(installer, 'setup') as setup, \
-             patch.object(runtime_env, 'run'), patch.object(installer, 'record_mode'):
+             patch.object(runtime_env, 'run'), patch.object(installer, 'record_mode'), \
+             patch('hindsightkit.startup.install'):
             self.assertEqual(installer.main([]), 0)
             self.assertIsNone(setup.call_args.args[0].server)
             self.assertFalse(setup.call_args.args[0].server_only)

@@ -24,6 +24,8 @@ def main(argv=None):
                                         help='Also write and recall temporary local memory (uses Copilot allowance).')
     memory_parser = sub.add_parser('memory', help='Enable, disable, or inspect memory for this local Git repository.')
     memory_parser.add_argument('action', choices=['on', 'off', 'status'])
+    startup_parser = sub.add_parser('startup', help='Enable, disable, or inspect automatic startup after Windows sign-in.')
+    startup_parser.add_argument('action', choices=['on', 'off', 'status'])
     share_parser = sub.add_parser('share', help='After installation, prepare a connection code for another computer.')
     share_parser.add_argument('--relay', action='store_true', help='Enable a private relay for computers that cannot connect directly.')
     share_parser.add_argument('--address', help='Direct HTTP(S) address that the other computer can reach.')
@@ -37,18 +39,21 @@ def main(argv=None):
         remote_parser.add_argument('--relay-provider', choices=['microsoft', 'github'],
                                    help='Account type for private relay login; prompts when sign-in is needed.')
     # Installed integrations keep their private entry points out of user help.
-    if argv[:1] in (['mcp'], ['hook']):
+    if argv[:1] in (['mcp'], ['hook'], ['startup-run']):
         internal = argparse.ArgumentParser()
-        internal.add_argument('command', choices=['mcp', 'hook'])
+        internal.add_argument('command', choices=['mcp', 'hook', 'startup-run'])
         if argv[0] == 'mcp':
             internal.add_argument('--context', choices=['cli', 'vscode'], required=True)
-        else:
+        elif argv[0] == 'hook':
             internal.add_argument('event', choices=['sessionStart', 'userPromptTransformed', 'agentStop'])
         parser = internal
     args = parser.parse_args(argv)
     try:
         runtime_env.prepare_env()
-        if args.command == 'memory':
+        if args.command in {'startup', 'startup-run'}:
+            from . import startup
+            startup.run() if args.command == 'startup-run' else startup.command(args.action)
+        elif args.command == 'memory':
             from .memory_control import command
             command(args.action)
         elif args.command in {'share', 'connect'}:

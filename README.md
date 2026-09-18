@@ -27,7 +27,7 @@ hindsightkit ui
 
 Use `hindsightkit status --test-memory` to also test temporary memory on the local server using Copilot allowance. The default status check makes no model calls. Client-only computers skip the memory test.
 
-Services stay running when the terminal closes. After restarting Windows, run `hindsightkit start`. Use `hindsightkit stop` to stop the local services and managed relay processes. Setup does not create a login task or Windows service.
+Services stay running when the terminal closes. Setup registers a task to resume them 30 seconds after you sign in to Windows. An explicit `hindsightkit stop` keeps them paused across restarts until you run `hindsightkit start`. Use `hindsightkit startup on`, `off`, or `status` to control login startup. See [installation and maintenance](docs/installation.md) for details.
 
 `stop` also pauses this computer's memory integrations until `start`; direct clients and running MCP sessions honor the pause. `unshare` disconnects a remote client. On a server, it also disables direct and relay sharing and revokes old connection codes while preserving local memory.
 

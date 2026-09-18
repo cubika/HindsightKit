@@ -486,6 +486,8 @@ def main(argv=None):
             launcher = setup(args)
             print('Checking installed command...', flush=True)
             runtime_env.run([launcher, '--help'], capture=True)
+            from .startup import install as install_startup
+            install_startup(launcher)
             record_mode(args)
         return 0
     except Exception as exc:

@@ -21,6 +21,9 @@ class CliBehaviorTests(unittest.TestCase):
         self.environment = setup_fixture.RemoteSetupTests().client_environment(self.root)
         self.state = self.environment.__enter__()
         self.addCleanup(self.environment.__exit__, None, None, None)
+        registration = patch('hindsightkit.startup.install')
+        self.startup = registration.start()
+        self.addCleanup(registration.stop)
         self.previous = {'apiUrl': 'https://old.invalid', 'apiToken': 'saved-key',
                          'hindsightkit': {'mode': 'client', 'routing': 'repository', 'deviceId': '11111111-1111-1111-1111-111111111111'}}
         self.state.path.write_text(json.dumps(self.previous))
@@ -117,7 +120,7 @@ class CliBehaviorTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit):
             cli.main(['--help'])
         help_text = output.getvalue()
-        for internal in ('mcp', 'hook', 'setup', 'copilot', 'check'):
+        for internal in ('mcp', 'hook', 'setup', 'copilot', 'check', 'startup-run'):
             self.assertNotIn(internal, help_text)
         self.assertIn('Show local services', help_text)
 

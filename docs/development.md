@@ -17,7 +17,7 @@ Install the locked Node integration packages before running the suite so those c
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
 
-Running `.\setup.ps1` performs real setup against the current user's Hindsight profile and editor configuration. It starts services, may request Copilot login, and makes a real retain/recall check. Keep this checkout in place while an installation uses it. The release installer is the supported route for users who do not want a checkout dependency.
+Running `.\setup.ps1` performs real setup against the current user's Hindsight profile and editor configuration. It starts services, registers login startup, may request Copilot login, and makes a real retain/recall check. Login startup uses the installed launcher, which points back to this checkout; disable it with `hindsightkit startup off` before removing the checkout. Keep this checkout in place while an installation uses it. The release installer is the supported route for users who do not want a checkout dependency.
 
 Source server setup compiles official pgvector sources using Microsoft's C++ toolchain and the pinned PostgreSQL headers. If the toolchain is missing, setup can install signed Build Tools and Windows may request administrator approval. Release packages include precompiled database components.
 
