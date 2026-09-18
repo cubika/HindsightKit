@@ -18,7 +18,7 @@ from hindsightkit import cli, connection, remote
 
 def options(**values):
     return argparse.Namespace(**dict(dict(local=False, server=None, api_key_env=None,
-                                         relay=False, address=None), **values))
+                                         relay=False, address=None, relay_provider=None), **values))
 
 
 class InvitationTests(unittest.TestCase):
@@ -158,7 +158,8 @@ class RemoteTests(unittest.TestCase):
                 remote.connect(options())
             listener.bind.assert_called_once_with(('127.0.0.1', 0))
             transport = {'mode': 'connect', 'tunnel_id': 'new-tunnel', 'remote_port': 9077, 'local_port': 41234}
-            state.relay.ensure_running.assert_called_once_with(remote.client_root(transport), transport, interactive=True)
+            state.relay.ensure_running.assert_called_once_with(remote.client_root(transport), transport,
+                                                               interactive=True, provider=None)
             self.assertEqual(state.setup.call_args.kwargs['transport'], transport)
             self.assertEqual(state.setup.call_args.kwargs['local_server']['apiUrl'], 'http://127.0.0.1:41234')
             state.stop_clients.assert_called_once_with(except_transport=transport)
@@ -332,7 +333,7 @@ class RemoteTests(unittest.TestCase):
              patch.object(connection, 'server_load', return_value=local):
             remote.share(options(relay=True, address='https://memory.example.com'))
             root = state.root / 'remote/host'
-            state.relay.create_host.assert_called_once_with(root, 9077)
+            state.relay.create_host.assert_called_once_with(root, 9077, provider=None)
             state.relay.ensure_running.assert_called_once_with(root, state.relay.create_host.return_value, interactive=True)
             code = next(line for line in state.output.getvalue().splitlines() if line.startswith(remote.PREFIX))
             self.assertEqual(remote.decode_invitation(code)['relay'], {'tunnel_id': 'test-tunnel', 'remote_port': 9077})
@@ -349,6 +350,39 @@ class RemoteTests(unittest.TestCase):
             remote.prepare_client(config)
             state.relay.ensure_running.assert_called_once_with(remote.client_root(transport), transport, interactive=False)
 
+    def test_selected_provider_reaches_relay_login_on_both_computers(self):
+        local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'share-secret'}
+        for provider in ('microsoft', 'github'):
+            with self.subTest(provider=provider), self.environment() as state, \
+                    patch.object(cli, 'require_local'), patch.object(cli, 'start'), \
+                    patch.object(connection, 'server_load', return_value=local):
+                remote.share(options(relay=True, relay_provider=provider))
+                state.relay.create_host.assert_called_once_with(state.root / 'remote/host', 9077, provider=provider)
+            with self.environment() as state, \
+                    patch.object(remote, 'discover', new_callable=AsyncMock,
+                                 side_effect=[aiohttp.ClientConnectionError(), {}]):
+                remote.connect(options(relay_provider=provider))
+                self.assertEqual(state.relay.ensure_running.call_args.kwargs,
+                                 {'interactive': True, 'provider': provider})
+
+    def test_provider_option_with_direct_success_does_not_start_login(self):
+        with self.environment() as state, patch.object(remote, 'discover', new_callable=AsyncMock):
+            remote.connect(options(relay_provider='github'))
+            state.relay.ensure_running.assert_not_called()
+
+    def test_provider_option_rejects_incompatible_commands_before_side_effects(self):
+        with self.environment() as state, patch.object(cli, 'require_local') as require, \
+                patch.object(cli, 'start') as start:
+            with self.assertRaisesRegex(ValueError, 'requires share --relay'):
+                remote.share(options(relay_provider='github'))
+            for destination in ({'local': True}, {'server': 'http://memory-host:9077'}):
+                with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, 'connection code'):
+                    remote.connect(options(relay_provider='github', **destination))
+            require.assert_not_called()
+            start.assert_not_called()
+            state.prompt.assert_not_called()
+            state.setup.assert_not_called()
+
     def test_cli_remote_commands_accept_no_secret_argument_and_setup_is_internal(self):
         with patch.object(cli, 'prepare_env'), patch.object(remote, 'connect') as connect, \
              patch.object(remote, 'share') as share, patch.object(cli, 'setup') as setup:
@@ -358,12 +392,18 @@ class RemoteTests(unittest.TestCase):
             self.assertTrue(connect.call_args.args[0].local)
             self.assertEqual(cli.main(['share', '--relay']), 0)
             self.assertTrue(share.call_args.args[0].relay)
+            for provider in ('microsoft', 'github'):
+                self.assertEqual(cli.main(['connect', '--relay-provider', provider]), 0)
+                self.assertEqual(connect.call_args.args[0].relay_provider, provider)
+                self.assertEqual(cli.main(['share', '--relay', '--relay-provider', provider]), 0)
+                self.assertEqual(share.call_args.args[0].relay_provider, provider)
             setup.assert_not_called()
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 cli.main(['setup'])
             setup.assert_not_called()
             for args in (['connect', '--code', 'secret'], ['connect', '--key', 'secret'],
-                         ['connect', 'secret'], ['connect', '--local', '--server', 'http://host:9077']):
+                         ['connect', 'secret'], ['connect', '--local', '--server', 'http://host:9077'],
+                         ['connect', '--relay-provider', 'unknown'], ['share', '--relay-provider', 'unknown']):
                 with self.subTest(args=args[:-1]), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     cli.main(args)
 

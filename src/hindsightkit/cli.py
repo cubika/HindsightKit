@@ -818,6 +818,9 @@ def main(argv=None):
     destination.add_argument('--server', help='Direct server address; its key is requested separately.')
     destination.add_argument('--local', action='store_true', help='Use this computer\'s existing local memory server.')
     connect_parser.add_argument('--api-key-env', help='Read the key for --server from an environment variable.')
+    for remote_parser in (share_parser, connect_parser):
+        remote_parser.add_argument('--relay-provider', choices=['microsoft', 'github'],
+                                   help='Account type for private relay login; prompts when sign-in is needed.')
     mcp_parser = sub.add_parser('mcp')
     mcp_parser.add_argument('--context', choices=['cli', 'vscode'], required=True)
     hook_parser = sub.add_parser('hook')

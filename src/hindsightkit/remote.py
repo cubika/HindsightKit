@@ -182,6 +182,8 @@ def save_client(path, config):
 
 def share(args):
     from . import cli, relay
+    if args.relay_provider and not args.relay:
+        raise ValueError('--relay-provider requires share --relay.')
     cli.require_local()
     profile, _ = cli.profile_config()
     if profile.get('HINDSIGHT_API_HOST') == '127.0.0.1':
@@ -195,7 +197,7 @@ def share(args):
     invitation = {'version': 1, 'url': url, 'key': config['apiToken']}
     if args.relay:
         root = cli.home() / 'remote/host'
-        spec = relay.create_host(root, port)
+        spec = relay.create_host(root, port, provider=args.relay_provider)
         relay.ensure_running(root, spec, interactive=True)
         invitation['relay'] = {name: spec[name] for name in ('tunnel_id', 'remote_port')}
     print('On the other computer, run hindsightkit connect and paste this code at its hidden prompt.')
@@ -216,6 +218,8 @@ async def discover(candidate):
 
 def connect(args):
     from . import cli, relay
+    if args.relay_provider and (args.local or args.server):
+        raise ValueError('--relay-provider requires a connection code; omit --local and --server.')
     if args.api_key_env and not args.server:
         raise ValueError('--api-key-env requires --server.')
     if args.local:
@@ -251,7 +255,7 @@ def connect(args):
                 transport['local_port'] = listener.getsockname()[1]
         root = client_root(transport)
         try:
-            relay.ensure_running(root, transport, interactive=True)
+            relay.ensure_running(root, transport, interactive=True, provider=args.relay_provider)
             candidate['apiUrl'] = f'http://127.0.0.1:{transport["local_port"]}'
             asyncio.run(discover(candidate))
         except Exception:

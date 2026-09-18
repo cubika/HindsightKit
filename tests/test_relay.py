@@ -29,6 +29,11 @@ def spec(**changes):
 
 
 class RelayConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        prompt = patch('builtins.input', side_effect=AssertionError('Unexpected account prompt'))
+        self.prompt = prompt.start()
+        self.addCleanup(prompt.stop)
+
     def test_known_cli_welcome_preserves_license_and_parses_json(self):
         banner = ('Welcome to dev tunnels!\nCLI version: 1.0.1972+07cc55c789\n\n'
                   'By using the software, you agree to the terms.\n\n')
@@ -73,16 +78,20 @@ class RelayConfigurationTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_interactive_login_shows_device_code_in_the_calling_terminal(self):
-        with patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'}, {'status': 'Logged in'}]), \
+        self.prompt.side_effect = None
+        self.prompt.return_value = ''
+        with patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
+                          {'status': 'Logged in', 'provider': 'microsoft'}]), \
                 patch.object(relay, '_flags', return_value=0x08000000), \
                 patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
             relay._authenticate('devtunnel.exe', True)
             self.assertEqual(run.call_args.args[0],
-                             ['devtunnel.exe', 'user', 'login', '--use-device-code-auth'])
+                             ['devtunnel.exe', 'user', 'login', '--entra', '--use-device-code-auth'])
             self.assertEqual(run.call_args.kwargs.get('creationflags', 0), 0)
             self.assertFalse(run.call_args.kwargs.get('capture_output', False))
             for stream in ('stdin', 'stdout', 'stderr'):
                 self.assertIsNone(run.call_args.kwargs.get(stream))
+            self.prompt.assert_called_once()
 
     def test_existing_login_is_preserved_without_opening_another_flow(self):
         with patch.object(relay, '_json', return_value={'status': 'Logged in'}), \
@@ -95,30 +104,90 @@ class RelayConfigurationTests(unittest.TestCase):
                 patch.object(relay.subprocess, 'run',
                              side_effect=subprocess.TimeoutExpired('devtunnel', 600)):
             with self.assertRaisesRegex(RuntimeError, 'sign-in timed out.*connect'):
-                relay._authenticate('devtunnel.exe', True)
+                relay._authenticate('devtunnel.exe', True, provider='microsoft')
             status.assert_called_once()
 
     def test_failed_device_login_explains_how_to_retry(self):
         with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
                 patch.object(relay.subprocess, 'run', return_value=Mock(returncode=1)):
             with self.assertRaisesRegex(RuntimeError, 'sign-in did not complete.*connect'):
-                relay._authenticate('devtunnel.exe', True)
+                relay._authenticate('devtunnel.exe', True, provider='microsoft')
             status.assert_called_once()
 
     def test_successful_login_exit_still_requires_authenticated_status(self):
         with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
                 patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
             with self.assertRaisesRegex(RuntimeError, 'sign-in expired'):
-                relay._authenticate('devtunnel.exe', True)
+                relay._authenticate('devtunnel.exe', True, provider='microsoft')
             self.assertEqual(status.call_count, 2)
             run.assert_called_once()
 
     def test_nonzero_logged_out_status_can_authenticate_interactively(self):
         error = relay.CliError('user show', Mock(returncode=1, stdout='Not logged in', stderr=''))
-        with patch.object(relay, '_json', side_effect=[error, {'status': 'Logged in'}]), \
+        with patch.object(relay, '_json', side_effect=[error, {'status': 'Logged in', 'provider': 'github'}]), \
                 patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
-            relay._authenticate('devtunnel.exe', True)
+            relay._authenticate('devtunnel.exe', True, provider='github')
             run.assert_called_once()
+
+    def test_each_provider_logs_in_directly_and_verifies_the_selected_identity_type(self):
+        for provider, flag in (('microsoft', '--entra'), ('github', '--github')):
+            with self.subTest(provider=provider), \
+                    patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
+                                  {'status': 'Logged in', 'provider': provider}]), \
+                    patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+                self.assertTrue(relay._authenticate('devtunnel.exe', True, provider=provider))
+                self.assertEqual(run.call_args.args[0],
+                                 ['devtunnel.exe', 'user', 'login', flag, '--use-device-code-auth'])
+        self.prompt.assert_not_called()
+
+    def test_cached_matching_provider_is_reused_but_explicit_different_provider_logs_in(self):
+        for provider in ('microsoft', 'github'):
+            cached = {'status': 'Logged in', 'provider': provider}
+            with self.subTest(provider=provider), patch.object(relay, '_json', return_value=cached), \
+                    patch.object(relay.subprocess, 'run') as run:
+                self.assertFalse(relay._authenticate('devtunnel.exe', True, provider=provider))
+                run.assert_not_called()
+            other = 'github' if provider == 'microsoft' else 'microsoft'
+            with patch.object(relay, '_json', side_effect=[cached, {'status': 'Logged in', 'provider': other}]), \
+                    patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+                self.assertTrue(relay._authenticate('devtunnel.exe', True, provider=other))
+                self.assertIn(relay.LOGIN_PROVIDERS[other], run.call_args.args[0])
+        self.prompt.assert_not_called()
+
+    def test_wrong_or_missing_provider_after_login_is_not_accepted(self):
+        for reported in ('microsoft', None):
+            with self.subTest(reported=reported), \
+                    patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
+                                  {'status': 'Logged in', 'provider': reported}]), \
+                    patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+                with self.assertRaisesRegex(RuntimeError, 'requested github'):
+                    relay._authenticate('devtunnel.exe', True, provider='github')
+                run.assert_called_once()
+
+    def test_prompt_retries_invalid_choice_and_can_select_github(self):
+        self.prompt.side_effect = ['invalid', '2']
+        with patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
+                          {'status': 'Logged in', 'provider': 'github'}]), \
+                patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+            self.assertTrue(relay._authenticate('devtunnel.exe', True))
+            self.assertIn('--github', run.call_args.args[0])
+        self.assertEqual(self.prompt.call_count, 2)
+
+    def test_closed_input_explains_provider_option_without_starting_login(self):
+        self.prompt.side_effect = EOFError
+        with patch.object(relay, '_json', return_value={'status': 'Not logged in'}), \
+                patch.object(relay.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, '--relay-provider github'):
+                relay._authenticate('devtunnel.exe', True)
+            run.assert_not_called()
+
+    def test_background_cannot_switch_provider_or_prompt(self):
+        with patch.object(relay, '_json', return_value={'status': 'Logged in', 'provider': 'microsoft'}), \
+                patch.object(relay.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'requested github'):
+                relay._authenticate('devtunnel.exe', False, provider='github')
+            run.assert_not_called()
+            self.prompt.assert_not_called()
 
     @unittest.skipUnless(os.name == 'nt', 'Windows signed CLI installation')
     def test_background_missing_cli_never_downloads(self):
@@ -160,6 +229,75 @@ class RelayConfigurationTests(unittest.TestCase):
                 auth.assert_not_called()
                 process.assert_not_called()
 
+    def test_explicit_provider_checks_ready_worker_and_restarts_only_after_new_login(self):
+        for signed_in in (False, True):
+            with self.subTest(signed_in=signed_in), tempfile.TemporaryDirectory() as directory:
+                configuration = spec()
+                current = {'spec': configuration, 'ready': True}
+                with patch.object(relay, '_control', return_value=current), \
+                        patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                        patch.object(relay, '_authenticate', return_value=signed_in) as auth, \
+                        patch.object(relay, 'stop') as stop, patch.object(relay, 'private_directory'), \
+                        patch.object(relay.subprocess, 'Popen') as process:
+                    self.assertEqual(relay.ensure_running(directory, configuration, True, provider='github'),
+                                     configuration['local_port'])
+                    auth.assert_called_once_with('devtunnel.exe', True, provider='github')
+                    self.assertEqual(stop.call_count, int(signed_in))
+                    self.assertEqual(process.call_count, int(signed_in))
+                    if signed_in:
+                        stop.assert_called_once_with(Path(directory))
+                        self.assertEqual(relay.load_spec(directory), configuration)
+
+    def test_failed_provider_login_preserves_the_running_worker_and_saved_spec(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, configuration = Path(directory), spec()
+            path = root / 'spec.json'
+            path.write_text(json.dumps(configuration))
+            previous = path.read_bytes()
+            with patch.object(relay, '_control', return_value={'spec': configuration, 'ready': True}), \
+                    patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                    patch.object(relay, '_authenticate', side_effect=RuntimeError('login failed')), \
+                    patch.object(relay, 'private_directory'), \
+                    patch.object(relay, 'stop') as stop, patch.object(relay.subprocess, 'Popen') as process:
+                with self.assertRaisesRegex(RuntimeError, 'login failed'):
+                    relay.ensure_running(root, configuration, True, provider='github')
+                stop.assert_not_called()
+                process.assert_not_called()
+            self.assertEqual(path.read_bytes(), previous)
+
+    def test_unavailable_host_after_new_login_preserves_existing_tunnel_and_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configuration = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 19077}
+            path = root / 'spec.json'
+            path.write_text(json.dumps(configuration))
+            previous = path.read_bytes()
+            error = relay.CliError('show', Mock(returncode=1, stdout='404 Not found', stderr=''))
+            with patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                    patch.object(relay, '_authenticate', side_effect=[True, False]) as auth, \
+                    patch.object(relay, '_json', side_effect=error) as invoke, patch.object(relay, 'stop') as stop:
+                for _ in range(2):
+                    with self.assertRaisesRegex(RuntimeError, 'saved relay.*original account'):
+                        relay.create_host(root, 19077, provider='github')
+                self.assertEqual(auth.call_count, 2)
+                auth.assert_called_with('devtunnel.exe', True, provider='github')
+                self.assertEqual(invoke.call_count, 2)
+                invoke.assert_called_with('devtunnel.exe', 'show', configuration['tunnel_id'])
+                stop.assert_not_called()
+            self.assertEqual(path.read_bytes(), previous)
+
+    def test_accessible_host_after_login_stops_old_worker_only_after_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configuration = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 19077}
+            (root / 'spec.json').write_text(json.dumps(configuration))
+            with patch.object(relay, 'ensure_cli', return_value='devtunnel.exe'), \
+                    patch.object(relay, '_authenticate', return_value=True), \
+                    patch.object(relay, '_json', side_effect=[{}, {'ports': [{'portNumber': 19077}]}]) as invoke, \
+                    patch.object(relay, 'stop', side_effect=lambda _: self.assertEqual(invoke.call_count, 2)) as stop:
+                self.assertEqual(relay.create_host(root, 19077, provider='github'), configuration)
+                stop.assert_called_once_with(root)
+
     def test_host_creation_is_private_and_retry_reuses_one_tunnel(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -198,7 +336,7 @@ class RelayConfigurationTests(unittest.TestCase):
                 self.assertFalse(any(call.args[1] in {'create', 'delete'} for call in invoke.call_args_list))
             self.assertEqual(relay.load_spec(root), owned)
 
-    def test_only_expired_owned_tunnels_are_replaced(self):
+    def test_forbidden_owned_tunnel_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             owned = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 12345}

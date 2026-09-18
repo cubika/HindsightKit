@@ -33,6 +33,7 @@ TUNNEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]{0,127}')
 OWNED_ID = re.compile(r'hk-[a-f0-9]{32}(?:\.[a-z0-9]+)?')
 FORWARD = re.compile(r'^SSH: Forwarding from 127\.0\.0\.1:(\d+) to host port (\d+)\.$')
 _WELCOME_BANNERS = {}
+LOGIN_PROVIDERS = {'microsoft': '--entra', 'github': '--github'}
 
 
 def validate_spec(spec):
@@ -132,7 +133,25 @@ try {
     return str(binary)
 
 
-def _authenticate(executable, interactive):
+def _choose_provider():
+    print('Choose the same account type on both computers.\n'
+          '  1. Microsoft (personal, work, or school)\n  2. GitHub', flush=True)
+    choices = {'': 'microsoft', '1': 'microsoft', 'microsoft': 'microsoft',
+               '2': 'github', 'github': 'github'}
+    while True:
+        try:
+            answer = input('Account type [1]: ').strip().lower()
+        except EOFError as exc:
+            raise RuntimeError('Choose an account type with --relay-provider microsoft or '
+                               '--relay-provider github, then run share --relay or connect again.') from exc
+        if answer in choices:
+            return choices[answer]
+        print('Enter 1 for Microsoft or 2 for GitHub.', flush=True)
+
+
+def _authenticate(executable, interactive, *, provider=None):
+    if provider is not None and provider not in LOGIN_PROVIDERS:
+        raise ValueError('Relay provider must be microsoft or github.')
     try:
         data = _json(executable, 'user', 'show')
     except CliError as exc:
@@ -142,23 +161,31 @@ def _authenticate(executable, interactive):
     if interactive:
         _show_welcome(executable)
     if isinstance(data, dict) and data.get('status') == 'Logged in':
-        return
+        if provider is None or data.get('provider') == provider:
+            return False
+        if not interactive:
+            raise RuntimeError(f'Relay sign-in did not use the requested {provider} account type. '
+                               f'Run share --relay or connect with --relay-provider {provider} again.')
     if not interactive:
         raise RuntimeError('Relay sign-in expired. Run share --relay or connect to sign in again.')
-    print('Sign in to Microsoft dev tunnels. Use the same account on both computers.', flush=True)
+    provider = provider or _choose_provider()
+    account_type = 'GitHub' if provider == 'github' else 'Microsoft'
+    print(f'Sign in to Dev Tunnels with your {account_type} account. '
+          'Use the same account on both computers.', flush=True)
     print('Open the URL shown below in your browser and enter the device code. '
           'Keep this terminal open; sign-in can take up to 10 minutes. Press Ctrl+C to cancel.', flush=True)
     # Interactive login must inherit the terminal so its URL and code stay visible.
     try:
-        result = subprocess.run([str(executable), 'user', 'login', '--use-device-code-auth'],
+        result = subprocess.run([str(executable), 'user', 'login', LOGIN_PROVIDERS[provider], '--use-device-code-auth'],
                                 timeout=600, creationflags=0)
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError('Microsoft dev tunnels sign-in timed out. Check network access to Microsoft sign-in '
+        raise RuntimeError(f'Dev Tunnels sign-in timed out. Check network access to {account_type} sign-in '
                            'and Dev Tunnels, then rerun share --relay or connect for a new device code.') from exc
     if result.returncode:
         raise RuntimeError('Microsoft dev tunnels sign-in did not complete. Check the login message above, '
                            'then rerun share --relay or connect.')
-    _authenticate(executable, False)
+    _authenticate(executable, False, provider=provider)
+    return True
 
 
 def _show_welcome(executable):
@@ -177,13 +204,13 @@ def _ports(value):
     return []
 
 
-def create_host(root, api_port):
+def create_host(root, api_port, *, provider=None):
     root = Path(root)
     if type(api_port) is not int or not 1 <= api_port <= 65535:
         raise ValueError('Invalid server port.')
     private_directory(root)
     executable = ensure_cli()
-    _authenticate(executable, True)
+    signed_in = _authenticate(executable, True, provider=provider)
     with FileLock(str(root / 'setup.lock'), timeout=10):
         spec = load_spec(root)
         if spec and (spec['mode'] != 'host' or not OWNED_ID.fullmatch(spec['tunnel_id'])):
@@ -194,8 +221,11 @@ def create_host(root, api_port):
             except CliError as exc:
                 if not re.search(r'not found|does not exist|404', exc.detail, re.I):
                     raise
-                stop(root)
-                spec = None
+                # A missing tunnel may belong to a different account. Preserve it
+                # across retries instead of treating an access failure as expiry.
+                raise RuntimeError('The saved relay is unavailable to the signed-in account. '
+                                   'Sign in with its original account, or run unshare and then '
+                                   'share --relay to create a new relay and connection code.') from exc
         if spec is None:
             spec = {'mode': 'host', 'tunnel_id': 'hk-' + uuid.uuid4().hex, 'remote_port': api_port}
             created = _json(executable, 'create', spec['tunnel_id'], '--expiration', '30d',
@@ -219,6 +249,8 @@ def create_host(root, api_port):
             atomic_json(root / 'spec.json', spec)
         if api_port not in ports:
             _json(executable, 'port', 'create', spec['tunnel_id'], '-p', str(api_port), '--protocol', 'http')
+        if signed_in:
+            stop(root)
         _show_welcome(executable)
         return spec
 
@@ -263,19 +295,20 @@ def stop(root):
             raise RuntimeError('The relay worker did not stop. Its process was not forcibly killed.')
 
 
-def ensure_running(root, spec, interactive=False):
+def ensure_running(root, spec, interactive=False, *, provider=None):
     root, spec = Path(root), validate_spec(spec)
     private_directory(root)
     with FileLock(str(root / 'start.lock'), timeout=15):
         current = _control(root)
         if current and current.get('spec') != spec:
             raise RuntimeError('A different relay is running in this directory. Stop it before changing the connection.')
-        if current and interactive and not current.get('ready'):
-            executable = ensure_cli(interactive=True)
-            _authenticate(executable, True)
-        if not current:
+        if not current or (interactive and (provider is not None or not current.get('ready'))):
             executable = ensure_cli(interactive=interactive)
-            _authenticate(executable, interactive)
+            signed_in = _authenticate(executable, interactive, provider=provider)
+            if current and signed_in:
+                stop(root)
+                current = None
+        if not current:
             atomic_json(root / 'spec.json', spec)
             atomic_json(root / 'launch.json', {'executable': executable})
             flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
@@ -291,7 +324,7 @@ def ensure_running(root, spec, interactive=False):
                 return spec.get('local_port')
             time.sleep(0.2)
     raise RuntimeError('The private relay is not ready. Check connectivity and sign in with the server account; '
-                       'run share --relay on the server if its tunnel expired.')
+                       'run share --relay on the server to check its tunnel.')
 
 
 class _State:
