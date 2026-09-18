@@ -394,6 +394,7 @@ to test local memory using Copilot allowance. Connection failures now identify t
 Private relay workers run without a visible console and record bounded, redacted diagnostic logs.
 Device sign-in opens the browser, and {tick}share{tick} copies connection codes to the Windows clipboard.
 Successful upgrades clean up obsolete managed installations while preserving active paths and user data.
+Cleanup recognizes Windows short-path aliases in configuration files, launchers, and running processes.
 Mail indexing and model-session cleanup have also been updated.
 
 ## Install

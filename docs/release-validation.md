@@ -6,6 +6,8 @@ The MCP compatibility fix passed eight transport tests and 22 lifecycle and repo
 
 The full local suite ran 532 tests. Seven installation checks initially encountered the installed interpreter's release manifest or sandbox restrictions; all seven passed after isolating the interpreter, settings, and client runtime. The application wheel and dependency lock were verified. Hosted candidate tests and final archive checks are required before publication.
 
+The first hosted candidate exposed a cleanup defect when Windows represented the same installation with short and long path names. Active references were missed, and a deletion-failure fixture also compared path strings instead of file identity. Cleanup now checks each component's Windows path aliases and leaves a release intact if aliases cannot be inspected. A regression reproduced the deletion before the fix.
+
 ## v0.1.5 candidate
 
 The CLI cleanup passed 492 repository tests and 63 final regression checks. Release preparation passed another 83 packaging and installation tests. The offline Node verifier installed, reused, and repaired the official client and server archives in temporary directories; the dashboard and 17 static assets returned HTTP 200. The project version and dependency lock agree on 0.1.5.

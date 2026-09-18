@@ -324,6 +324,39 @@ function ConvertTo-InstallReference([string]$Value) {
     return ([Environment]::ExpandEnvironmentVariables($decoded).Replace('\', '/') -replace '/+', '/').ToLowerInvariant()
 }
 
+function Get-InstallReferencePattern([string]$Path) {
+    $absolute = Assert-InstallDirectory $Path
+    if (-not ('HindsightKit.NativeInstallPaths' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+using System.Text;
+namespace HindsightKit {
+    public static class NativeInstallPaths {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        public static extern uint GetLongPathNameW(string path, StringBuilder result, uint capacity);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        public static extern uint GetShortPathNameW(string path, StringBuilder result, uint capacity);
+    }
+}
+'@
+    }
+    $long = New-Object Text.StringBuilder 32768
+    $short = New-Object Text.StringBuilder 32768
+    $longLength = [HindsightKit.NativeInstallPaths]::GetLongPathNameW($absolute, $long, $long.Capacity)
+    $shortLength = [HindsightKit.NativeInstallPaths]::GetShortPathNameW($absolute, $short, $short.Capacity)
+    if ($longLength -eq 0 -or $longLength -ge $long.Capacity -or
+        $shortLength -eq 0 -or $shortLength -ge $short.Capacity) { throw 'Cannot inspect installation path aliases.' }
+    $longParts = (ConvertTo-InstallReference $long.ToString()).Split('/')
+    $shortParts = (ConvertTo-InstallReference $short.ToString()).Split('/')
+    if ($longParts.Count -ne $shortParts.Count) { throw 'Cannot compare installation path aliases.' }
+    # A reference can mix short ancestors with long names, or the reverse.
+    $parts = for ($index = 0; $index -lt $longParts.Count; $index++) {
+        $names = @($longParts[$index], $shortParts[$index]) | Select-Object -Unique
+        '(?:' + (($names | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
+    }
+    return $parts -join '/'
+}
+
 function Get-InstallReferences {
     $settings = if ($env:HINDSIGHTKIT_HOME) { $env:HINDSIGHTKIT_HOME } else { Join-Path $env:USERPROFILE '.hindsightkit' }
     $official = Join-Path $env:USERPROFILE '.hindsight'
@@ -396,7 +429,7 @@ function Get-InstallTree([string]$Root, [string]$Path) {
 function Remove-OldInstalledRelease([string]$Root, $Release, $Totals) {
     $path = Assert-InstallChild (Join-Path $Root 'versions') $Release.Path
     $references = (Get-InstallReferences) + [Environment]::NewLine + (Get-InstallProcessReferences)
-    if ($references.Contains((ConvertTo-InstallReference $path))) { throw 'Release is still referenced by a process or configuration.' }
+    if ([regex]::IsMatch($references, (Get-InstallReferencePattern $path))) { throw 'Release is still referenced by a process or configuration.' }
     $items = @(Get-InstallTree $Root $path)
     $control = @('.package-sha256', '.package-files.json', 'release.json', '.install-success.json',
         '.install-success.json.tmp', '.install-started')

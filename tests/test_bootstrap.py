@@ -1,4 +1,5 @@
 """Exercise the published PowerShell entry point without downloads or installation."""
+import ctypes
 import hashlib
 import json
 import os
@@ -131,7 +132,8 @@ function Get-CimInstance {
 }
 function Remove-Item {
     param($LiteralPath, [switch]$Force, [switch]$Recurse)
-    if ($env:TEST_DELETE_FAILURE -and $LiteralPath -eq $env:TEST_DELETE_FAILURE) {
+    if ($env:TEST_DELETE_FAILURE -and
+        (Get-Item -LiteralPath $LiteralPath -Force).FullName -eq (Get-Item -LiteralPath $env:TEST_DELETE_FAILURE -Force).FullName) {
         throw 'Synthetic cleanup interruption'
     }
     Microsoft.PowerShell.Management\\Remove-Item -LiteralPath $LiteralPath -Force:$Force -Recurse:$Recurse
@@ -320,6 +322,19 @@ try {
         self.assertTrue((self.app / '.install-success.json').is_file(), result.stdout)
         return self.app, digest, result
 
+    def short_path(self, path):
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        get_short = kernel.GetShortPathNameW
+        get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_short(str(path), buffer, len(buffer))
+        self.assertGreater(length, 0, ctypes.get_last_error())
+        self.assertLess(length, len(buffer))
+        result = Path(buffer.value)
+        self.assertTrue(result.samefile(path))
+        return result
+
     def test_retention_keeps_two_successful_versions_and_reuses_retries(self):
         first, _, _ = self.install_version('v0.1.0')
         second, _, _ = self.install_version('v0.2.0')
@@ -390,6 +405,47 @@ try {
         self.run_installer(digest)
         self.assertFalse(first.exists())
 
+    def test_retention_preserves_mixed_short_and_long_path_references(self):
+        first, _, _ = self.install_version('v0.1.0')
+        self.install_version('v0.2.0')
+        long_path, short_path = first.resolve(), self.short_path(first)
+        self.assertEqual(len(long_path.parts), len(short_path.parts))
+        if str(long_path).casefold() == str(short_path).casefold():
+            self.skipTest('The fixture volume does not provide 8.3 path aliases')
+        aliases = list(dict.fromkeys([short_path, short_path.parent / long_path.name,
+            long_path.parent / short_path.name,
+            Path(*(short if index % 2 else long for index, (long, short)
+                   in enumerate(zip(long_path.parts, short_path.parts))))]))
+        self.assertTrue(all(path.samefile(first) for path in aliases))
+        digest = self.package(version='v0.3.0')
+        settings = Path(self.env['HINDSIGHTKIT_HOME'])
+        config = settings / 'clients.json'
+        config.parent.mkdir(parents=True, exist_ok=True)
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                config.write_text(json.dumps({'command': str(alias / '.venv/Scripts/python.exe')}))
+                result = self.run_installer(digest)
+                self.assertTrue(first.is_dir(), result.stdout)
+                self.assertIn('still referenced', result.stdout)
+        config.unlink()
+        launcher = settings / 'bin/hk.exe'
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_bytes(b'MZ\x00#!' + str(aliases[-1] / '.venv/Scripts/python.exe').encode() + b'\nPK')
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('still referenced', result.stdout)
+        launcher.unlink()
+        processes = self.root / 'processes.json'
+        self.env['TEST_PROCESS_RECORDS'] = str(processes)
+        processes.write_text(json.dumps([{'Name': 'pythonw.exe', 'ExecutablePath': 'C:/shared/python.exe',
+            'CommandLine': f'"{short_path.parent / long_path.name}/.venv/Scripts/pythonw.exe" -m hindsight_api'}]))
+        result = self.run_installer(digest)
+        self.assertTrue(first.is_dir(), result.stdout)
+        self.assertIn('still referenced', result.stdout)
+        del self.env['TEST_PROCESS_RECORDS']
+        result = self.run_installer(digest)
+        self.assertFalse(first.exists(), result.stdout)
+
     def test_retention_skips_unsafe_or_uninspectable_candidates(self):
         first, _, _ = self.install_version('v0.1.0')
         self.install_version('v0.2.0')
@@ -459,12 +515,12 @@ try {
         first, _, _ = self.install_version('v0.1.0')
         self.install_version('v0.2.0')
         digest = self.package(version='v0.3.0')
-        self.env['TEST_DELETE_FAILURE'] = str(first / 'setup.ps1')
+        self.env['TEST_DELETE_FAILURE'] = str(self.short_path(first / 'setup.ps1'))
         result = self.run_installer(digest)
         self.assertTrue(first.is_dir(), result.stdout)
         self.assertIn('Synthetic cleanup interruption', result.stdout)
         # Next retry finishes the payload but fails after the first ownership file is gone.
-        self.env['TEST_DELETE_FAILURE'] = str(first / '.package-files.json')
+        self.env['TEST_DELETE_FAILURE'] = str(self.short_path(first) / '.package-files.json')
         result = self.run_installer(digest)
         self.assertFalse((first / '.package-sha256').exists(), result.stdout)
         self.assertTrue((first / '.package-files.json').is_file())
