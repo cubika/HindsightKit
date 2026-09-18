@@ -13,13 +13,15 @@ def main(argv=None):
         'start': 'Start local services and resume this client.',
         'stop': 'Stop local services and pause memory on this computer.',
         'status': 'Show local services and the selected client connection.',
-        'check': 'Test local memory and verify the client connection.',
         'clients': 'List devices registered with the memory server.',
         'ui': 'Start local services and open the dashboard.',
         'connectors': 'Open optional connector settings on this server.',
     }
     for command, description in descriptions.items():
-        sub.add_parser(command, help=description, description=description)
+        command_parser = sub.add_parser(command, help=description, description=description)
+        if command == 'status':
+            command_parser.add_argument('--test-memory', action='store_true',
+                                        help='Also write and recall temporary local memory (uses Copilot allowance).')
     memory_parser = sub.add_parser('memory', help='Enable, disable, or inspect memory for this local Git repository.')
     memory_parser.add_argument('action', choices=['on', 'off', 'status'])
     share_parser = sub.add_parser('share', help='After installation, prepare a connection code for another computer.')
@@ -61,8 +63,8 @@ def main(argv=None):
         elif args.command == 'hook':
             from .hooks import run as run_hook
             run_hook(args.event)
-        elif args.command in {'status', 'check'}:
-            return 0 if getattr(services, args.command)() else 1
+        elif args.command == 'status':
+            return 0 if services.status(test_memory=args.test_memory) else 1
         else:
             getattr(services, args.command)()
         return 0

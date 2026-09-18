@@ -242,7 +242,7 @@ class RemoteSetupTests(unittest.TestCase):
                 self.assertTrue(services.status())
                 self.assertIn('installed; not connected', output.getvalue())
                 self.assertEqual(cli.main(['start']), 1)
-                self.assertEqual(cli.main(['check']), 1)
+                self.assertEqual(cli.main(['status', '--test-memory']), 1)
                 self.assertIn('hindsightkit connect', output.getvalue())
                 with self.assertRaisesRegex(RuntimeError, 'not connected'):
                     connection.load()

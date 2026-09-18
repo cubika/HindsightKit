@@ -71,7 +71,7 @@ Local embeddings use ONNX multilingual E5. Ranking uses Hindsight's RRF; no Torc
 hindsightkit status
 hindsightkit start
 hindsightkit ui
-hindsightkit check
+hindsightkit status --test-memory
 hindsightkit stop
 ```
 
@@ -79,7 +79,7 @@ The default local API address is `http://127.0.0.1:9077` and the dashboard is `h
 
 The processes continue after the terminal closes. Start them again after reboot. `stop` stops local services and pauses memory in this computer's MCP and hooks, including direct clients. They stay paused until `start`. On a client-only machine, `start` resumes the saved connection and relay without creating a local server. `ui` requires a local server; its dashboard starts alongside the API. See [remote connections](devtunnel.md) for disconnecting and sharing.
 
-`check` performs a temporary retain/recall operation only on the local server and also reports the selected client connection. On a client-only machine it checks the connection without writing a remote test bank. `clients` targets the local server when installed.
+`status` reports local services, relays, and the selected client connection without making model calls. Add `--test-memory` to also run a temporary retain/recall test on the local server using Copilot allowance. A client-only machine reports that the memory test is skipped; it never writes a remote test bank. `clients` targets the local server when installed.
 
 ## File locations
 

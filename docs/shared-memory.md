@@ -61,7 +61,7 @@ hindsightkit clients
 
 The inventory lists registered machines and integrations, including the last reported use. `Recent` means use within five minutes; it does not count open windows, sessions, or currently online devices. Reconnecting refreshes the hostname and reuses the device identity. The inventory contains no memory content and grants no permissions.
 
-`clients` queries the local server when one is installed. On a client-only computer it queries the configured remote server. The same destination precedence applies to `check`; `status` checks the coding client's selected destination as well as any installed local server.
+`clients` queries the local server when one is installed. On a client-only computer it queries the configured remote server. `status` checks the coding client's selected destination as well as any installed local server. Its optional `--test-memory` test always targets the local server and is skipped on a client-only computer.
 
 ## Existing repository mappings
 

@@ -123,10 +123,11 @@ class LifecycleTests(unittest.TestCase):
                           if json.loads(path.read_text())['_service_epoch'] == lifecycle.state()['capture_epoch'])
             self.assertIsNotNone(record['_service_epoch'])
 
-    def test_check_always_uses_local_memory_and_only_discovers_remote(self):
+    def test_status_memory_test_uses_local_memory_and_only_discovers_remote(self):
         local = {'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}
         with patch.object(connection, 'has_server', return_value=True), \
              patch.object(connection, 'server_load', return_value=local), \
+             patch.object(services, 'server_status', return_value=True) as server_status, \
              patch.object(connection, 'request', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}) as request, \
              patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
              patch('hindsightkit.postgres.Postgres') as database, \
@@ -134,27 +135,77 @@ class LifecycleTests(unittest.TestCase):
              patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
              contextlib.redirect_stdout(io.StringIO()) as output:
             database.return_value.state_path.is_file.return_value = False
-            self.assertEqual(cli.main(['check']), 0)
+            self.assertEqual(cli.main(['status', '--test-memory']), 0)
             memory.assert_awaited_once_with(local['apiUrl'], local['apiToken'])
             request.assert_awaited_once_with(self.config, 'GET', '/ext/hindsightkit/connection', timeout=5)
+            memory.reset_mock()
+            request.side_effect = None
+            server_status.return_value = False
+            self.assertEqual(cli.main(['status', '--test-memory']), 1)
+            memory.assert_awaited_once_with(local['apiUrl'], local['apiToken'])
             self.assertIn(self.config['apiUrl'], output.getvalue())
             self.assertIn(local['apiUrl'], output.getvalue())
             memory.reset_mock()
+            server_status.return_value = True
             request.side_effect = RuntimeError('unreachable')
-            self.assertEqual(cli.main(['check']), 1)
+            self.assertEqual(cli.main(['status', '--test-memory']), 1)
             memory.assert_awaited_once_with(local['apiUrl'], local['apiToken'])
 
-    def test_check_client_only_never_writes_a_remote_test_bank(self):
+    def test_status_memory_test_client_only_never_writes_a_remote_test_bank(self):
         with patch.object(connection, 'has_server', return_value=False), \
              patch.object(connection, 'request', new_callable=AsyncMock, return_value={'protocol': 1, 'routing': 'repository', 'sharedBank': 'fixture'}) as request, \
              patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
-             contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(cli.main(['check']), 0)
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['status', '--test-memory']), 0)
             request.assert_awaited_once()
             memory.assert_not_awaited()
+            self.assertIn('skipped (no local server', output.getvalue())
+
+    def test_status_does_not_call_models_without_explicit_flag(self):
+        for has_server in (False, True):
+            with self.subTest(has_server=has_server), \
+                 patch.object(connection, 'has_server', return_value=has_server), \
+                 patch.object(connection, 'discover', new_callable=AsyncMock), \
+                 patch('hindsightkit.remote.status') as relay_status, \
+                 patch.object(services, 'server_status', return_value=True) as local_status, \
+                 patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(['status']), 0)
+                relay_status.assert_called_once()
+                self.assertEqual(local_status.call_count, int(has_server))
+                memory.assert_not_awaited()
+
+    def test_stopped_status_keeps_service_output_but_skips_memory_test(self):
+        lifecycle.stop()
+        with patch.object(connection, 'has_server', return_value=True), \
+             patch('hindsightkit.remote.status') as relay_status, \
+             patch.object(services, 'server_status', return_value=False) as local_status, \
+             patch.object(services, 'check_memory', new_callable=AsyncMock) as memory, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['status', '--test-memory']), 1)
+            relay_status.assert_called_once()
+            local_status.assert_called_once()
+            memory.assert_not_awaited()
+            self.assertIn('Run hindsightkit start', output.getvalue())
+
+    def test_memory_test_failure_does_not_hide_status_and_has_nonzero_exit(self):
+        with patch.object(connection, 'has_server', return_value=True), \
+             patch.object(connection, 'discover', new_callable=AsyncMock), \
+             patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077'}), \
+             patch.object(services, 'server_status', return_value=True) as local_status, \
+             patch.object(services, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://fixture'}, None)), \
+             patch('hindsightkit.postgres.Postgres') as database, \
+             patch('hindsightkit.postgres.check_external', new_callable=AsyncMock), \
+             patch.object(services, 'check_memory', new_callable=AsyncMock, side_effect=RuntimeError('memory fixture failed')), \
+             contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as error:
+            database.return_value.state_path.is_file.return_value = False
+            self.assertEqual(cli.main(['status', '--test-memory']), 1)
+            local_status.assert_called_once()
+            self.assertIn('Client: connected', output.getvalue())
+            self.assertIn('memory fixture failed', error.getvalue())
 
     def test_removed_public_commands_are_not_accepted(self):
-        for name in ['setup', 'copilot']:
+        for name in ['setup', 'copilot', 'check']:
             with self.subTest(name=name), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 cli.main([name])
 
