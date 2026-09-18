@@ -21,6 +21,7 @@ import time
 from urllib.error import URLError
 from urllib.request import ProxyHandler, Request, build_opener
 import uuid
+import webbrowser
 
 from filelock import FileLock, Timeout
 
@@ -34,6 +35,8 @@ OWNED_ID = re.compile(r'hk-[a-f0-9]{32}(?:\.[a-z0-9]+)?')
 FORWARD = re.compile(r'^SSH: Forwarding from 127\.0\.0\.1:(\d+) to host port (\d+)\.$')
 _WELCOME_BANNERS = {}
 LOGIN_PROVIDERS = {'microsoft': '--entra', 'github': '--github'}
+LOGIN_URLS = {'microsoft': 'https://microsoft.com/devicelogin',
+             'github': 'https://github.com/login/device'}
 
 
 def validate_spec(spec):
@@ -172,8 +175,16 @@ def _authenticate(executable, interactive, *, provider=None):
     account_type = 'GitHub' if provider == 'github' else 'Microsoft'
     print(f'Sign in to Dev Tunnels with your {account_type} account. '
           'Use the same account on both computers.', flush=True)
-    print('Open the URL shown below in your browser and enter the device code. '
+    url = LOGIN_URLS[provider]
+    print(f'Opening {url} in your browser. Enter the device code shown below. '
+          'If the browser does not open, open this URL manually. '
           'Keep this terminal open; sign-in can take up to 10 minutes. Press Ctrl+C to cancel.', flush=True)
+    try:
+        opened = webbrowser.open(url)
+    except (OSError, webbrowser.Error):
+        opened = False
+    if not opened:
+        print(f'Could not open a browser. Open {url} manually and enter the device code shown below.', flush=True)
     # Interactive login must inherit the terminal so its URL and code stay visible.
     try:
         result = subprocess.run([str(executable), 'user', 'login', LOGIN_PROVIDERS[provider], '--use-device-code-auth'],

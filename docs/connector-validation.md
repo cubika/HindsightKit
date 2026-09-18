@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: device sign-in browser opening
+
+The focused relay, remote command, and lifecycle run passed 68 tests in 11.0 seconds. Tests covered Microsoft and GitHub sign-in pages, manual fallback after browser launch failures, visible terminal output, cached login reuse, and background recovery without opening a browser. Lifecycle fixtures used synthetic connector responses; no mailbox, model, or live memory server was accessed. The installed Dev Tunnels CLI help confirmed the device-code option, and Microsoft's device sign-in URL resolved to its login page. Browser launch and account sign-in were mocked; real desktop login and cross-machine connectivity were not exercised.
+
 ## September 18, 2026: command and installation cleanup
 
 The repository suite passed 492 tests in 492.9 seconds after separating the CLI, installer, runtime helpers, and service operations. A final 63-test regression passed after startup rollback and server relay recovery were tightened. Fixtures covered failed connection rollback, remote-client refresh during full upgrades, discovery validation, shared PowerShell rules, and sessions switching A to B and back without uploading old transcripts. MCP tests included optional mail tools; no mailbox or model was accessed. One early test lacked an integration mock and changed managed editor paths; those paths were restored to the installed launcher and checked for temporary-path remnants, and the fixture was corrected.

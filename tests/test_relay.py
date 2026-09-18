@@ -30,6 +30,9 @@ def spec(**changes):
 
 class RelayConfigurationTests(unittest.TestCase):
     def setUp(self):
+        browser = patch.object(relay.webbrowser, 'open', return_value=True)
+        self.browser = browser.start()
+        self.addCleanup(browser.stop)
         prompt = patch('builtins.input', side_effect=AssertionError('Unexpected account prompt'))
         self.prompt = prompt.start()
         self.addCleanup(prompt.stop)
@@ -76,6 +79,7 @@ class RelayConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'sign-in expired'):
                 relay._authenticate('devtunnel.exe', False)
             run.assert_not_called()
+            self.browser.assert_not_called()
 
     def test_interactive_login_shows_device_code_in_the_calling_terminal(self):
         self.prompt.side_effect = None
@@ -91,6 +95,7 @@ class RelayConfigurationTests(unittest.TestCase):
             self.assertFalse(run.call_args.kwargs.get('capture_output', False))
             for stream in ('stdin', 'stdout', 'stderr'):
                 self.assertIsNone(run.call_args.kwargs.get(stream))
+            self.browser.assert_called_once_with('https://microsoft.com/devicelogin')
             self.prompt.assert_called_once()
 
     def test_existing_login_is_preserved_without_opening_another_flow(self):
@@ -98,6 +103,24 @@ class RelayConfigurationTests(unittest.TestCase):
                 patch.object(relay.subprocess, 'run') as run:
             relay._authenticate('devtunnel.exe', True)
             run.assert_not_called()
+            self.browser.assert_not_called()
+
+    def test_browser_failure_keeps_device_login_available_with_manual_url(self):
+        for provider in ('microsoft', 'github'):
+            for failure in (False, OSError('no browser association'), relay.webbrowser.Error('no browser')):
+                with self.subTest(provider=provider, failure=failure), \
+                        patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
+                                      {'status': 'Logged in', 'provider': provider}]), \
+                        patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+                        patch('builtins.print') as output:
+                    self.browser.reset_mock()
+                    self.browser.return_value = False
+                    self.browser.side_effect = failure if isinstance(failure, Exception) else None
+                    self.assertTrue(relay._authenticate('devtunnel.exe', True, provider=provider))
+                    self.browser.assert_called_once_with(relay.LOGIN_URLS[provider])
+                    run.assert_called_once()
+                    messages = '\n'.join(call.args[0] for call in output.call_args_list)
+                    self.assertIn(f'Could not open a browser. Open {relay.LOGIN_URLS[provider]} manually', messages)
 
     def test_device_login_timeout_explains_how_to_retry(self):
         with patch.object(relay, '_json', return_value={'status': 'Not logged in'}) as status, \
@@ -130,11 +153,19 @@ class RelayConfigurationTests(unittest.TestCase):
             run.assert_called_once()
 
     def test_each_provider_logs_in_directly_and_verifies_the_selected_identity_type(self):
-        for provider, flag in (('microsoft', '--entra'), ('github', '--github')):
+        for provider, flag, url in (('microsoft', '--entra', 'https://microsoft.com/devicelogin'),
+                                   ('github', '--github', 'https://github.com/login/device')):
             with self.subTest(provider=provider), \
                     patch.object(relay, '_json', side_effect=[{'status': 'Not logged in'},
                                   {'status': 'Logged in', 'provider': provider}]), \
                     patch.object(relay.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+                self.browser.reset_mock()
+
+                def login(*args, **kwargs):
+                    self.browser.assert_called_once_with(url)
+                    return Mock(returncode=0)
+
+                run.side_effect = login
                 self.assertTrue(relay._authenticate('devtunnel.exe', True, provider=provider))
                 self.assertEqual(run.call_args.args[0],
                                  ['devtunnel.exe', 'user', 'login', flag, '--use-device-code-auth'])
@@ -180,6 +211,7 @@ class RelayConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '--relay-provider github'):
                 relay._authenticate('devtunnel.exe', True)
             run.assert_not_called()
+            self.browser.assert_not_called()
 
     def test_background_cannot_switch_provider_or_prompt(self):
         with patch.object(relay, '_json', return_value={'status': 'Logged in', 'provider': 'microsoft'}), \
@@ -188,6 +220,7 @@ class RelayConfigurationTests(unittest.TestCase):
                 relay._authenticate('devtunnel.exe', False, provider='github')
             run.assert_not_called()
             self.prompt.assert_not_called()
+            self.browser.assert_not_called()
 
     @unittest.skipUnless(os.name == 'nt', 'Windows signed CLI installation')
     def test_background_missing_cli_never_downloads(self):
