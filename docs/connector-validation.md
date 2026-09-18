@@ -1,5 +1,9 @@
 # Connector validation log
 
+## September 18, 2026: status and memory test consolidation
+
+The integrated status, lifecycle, connection, packaging, and installer run passed 121 tests in 377.7 seconds. Default status checks made no model calls. The optional local-memory test preserved service and connection failure results, skipped stopped or client-only installations, and never wrote a remote test bank. Connector services and memory responses used isolated fixtures; no mailbox or live memory server was accessed.
+
 ## September 18, 2026: unshare progress message
 
 The focused lifecycle, remote command, and UI run passed 42 tests in 10.1 seconds. The server unshare fixture checked the restart message, key rotation, local client access, and disabled sharing. Connector responses and service operations were mocked; no mailbox, model, or live memory server was accessed.
