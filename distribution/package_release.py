@@ -384,18 +384,16 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
 
 ## Changes in this preview
 
-MCP clients can fall back from a modern discovery probe to the {tick}2025-11-25{tick} initialization
-handshake on the same connection. This fixes the {tick}-32022{tick} initialization error and preserves
-VS Code workspace routing. Restart the Hindsight MCP server or open a new Copilot session after upgrading.
-The stdio endpoint uses the handshake protocol; clients that require only the modern protocol are unsupported.
+{tick}recall{tick}, {tick}reflect{tick}, and automatic prompt recall now search imported connector
+knowledge alongside repository and shared memory. Questions do not need to name the source.
+The separate {tick}recall_mail{tick} tool has been removed. Reads preserve source evidence,
+report partial failures, and respect fixed-bank restrictions. Pausing synchronization keeps
+imported outcomes searchable. Restart the Hindsight MCP server or open a new Copilot session after upgrading.
 
-{tick}status{tick} reports local services and the selected client connection. Add {tick}--test-memory{tick}
-to test local memory using Copilot allowance. Connection failures now identify timeouts and relay API errors.
-Private relay workers run without a visible console and record bounded, redacted diagnostic logs.
-Device sign-in opens the browser, and {tick}share{tick} copies connection codes to the Windows clipboard.
-Successful upgrades clean up obsolete managed installations while preserving active paths and user data.
-Cleanup recognizes Windows short-path aliases in configuration files, launchers, and running processes.
-Mail indexing and model-session cleanup have also been updated.
+Windows sign-in can resume HindsightKit through a per-user task. Explicit pauses and startup
+opt-out settings are preserved. Installation and service startup report progress and failures,
+and Copilot discovery skips broken launchers when a working CLI is available.
+Optional cleanup of older installations uses a cooperative time limit and retains unfinished work for retry.
 
 ## Install
 

@@ -1,5 +1,11 @@
 # Release validation
 
+## v0.1.7 candidate
+
+Unified retrieval passed 157 memory, connector, routing, lifecycle, installation, and packaging tests in 190.0 seconds. A local HTTP fixture used authenticated discovery and the real Hindsight SDK to check retrieval across repository, shared, and imported memory, including source metadata. These checks used synthetic content and did not access a real mailbox or model. The detailed scope is recorded in [connector validation](connector-validation.md).
+
+This candidate also includes Windows login startup, package layout changes, bounded installation cleanup, and Copilot startup diagnostics. Their earlier local checks are recorded below and in connector validation. The project version and dependency lock identify 0.1.7. Full candidate builds and final archive validation are required before publication.
+
 ## Installation reliability follow-up
 
 A local upgrade finished configuration before spending about 22 minutes cleaning three older releases containing 3,945.2 MiB of files. Cleanup now reports its phase and item counts, uses streaming directory enumeration and indexed ownership lookups, and stops optional work at a 30-second cooperative time budget. Remaining old files and interrupted-cleanup receipts are preserved. One blocked operating-system call can exceed the budget.
@@ -46,7 +52,7 @@ That test mocked Copilot authentication and command registration to keep the use
 
 A separate run executed the actual generated bootstrap with `-ClientOnly` on an existing full installation. The installer selected the full package because the local server profile existed, updated the installed command, and ran no dashboard/server setup stage. Server-profile, client-configuration, and cluster-metadata SHA256 hashes were unchanged, and the run did not change server data. The already running local server components remained healthy afterward. Client setup preserved management dependencies without stopping, uninstalling, or restarting that server.
 
-The final hosted builds passed 323 tests and verified offline installations from both archives. Downloaded release assets matched their checksums; each client archive was about 24.7 MB and contained 87 wheels, with no Hindsight API or embedded server wheel. The application wheel matched the full package. Published anonymous and authenticated installer downloads were verified, and the public client ZIP returned HTTP 200. The v0.1.1 results below describe the earlier server installation and memory-preservation checks.
+The final hosted builds passed 323 tests and verified offline installations from both archives. Downloaded release assets matched their checksums; each client archive was about 24.7 MB and contained 87 wheels, with no Hindsight API or embedded server wheel. The application wheel matched the full package. Published installer and client ZIP downloads were verified. The v0.1.1 results below describe the earlier server installation and memory-preservation checks.
 
 ## v0.1.1, September 17, 2026
 
@@ -68,11 +74,11 @@ Repeating the same generated installer completed with exit code 0. It reported r
 
 After installation, requesting the original v0.1.0 wheel URL still failed with `SSLV3_ALERT_HANDSHAKE_FAILURE`. The successful candidate installs therefore did not depend on that connection recovering.
 
-The local cached archive preserved the candidate's exact packaged bytes and checksum checks. The final tag-triggered builds then passed 303 tests and repeated the client/server offline checks from their final ZIPs. Downloaded release assets passed all SHA256 checks, including the 194 Python wheels and 4,474 PostgreSQL files, and their application source matched the accepted candidate. Public and authenticated installer downloads were checked after publication. These results establish the installation fix on the tested machine and retain the fresh-sign-in and model-download limits described above.
+The local cached archive preserved the candidate's exact packaged bytes and checksum checks. The final tag-triggered builds then passed 303 tests and repeated the client/server offline checks from their final ZIPs. Downloaded release assets passed all SHA256 checks, including the 194 Python wheels and 4,474 PostgreSQL files, and their application source matched the accepted candidate. Installer downloads were checked after publication. These results establish the installation fix on the tested machine and retain the fresh-sign-in and model-download limits described above.
 
 ## v0.1.0, September 17, 2026
 
-The Windows x64 preview was built from product commit `7a5bf66`. Successful hosted builds passed 270 tests, rebuilt the pinned PostgreSQL/pgvector distribution, and checked extensions, restricted permissions, restart, and persistence across repeated setup in disposable databases. Release downloads matched SHA256SUMS, and all 4,474 database file hashes were checked. Anonymous and authenticated installer downloads were verified.
+The Windows x64 preview was built from product commit `7a5bf66`. Successful hosted builds passed 270 tests, rebuilt the pinned PostgreSQL/pgvector distribution, and checked extensions, restricted permissions, restart, and persistence across repeated setup in disposable databases. Release downloads matched SHA256SUMS, and all 4,474 database file hashes were checked. Installer downloads were verified.
 
 Earlier CI attempts found 8.3 short-path comparison failures and an absent `_CL_` variable under PowerShell 7 StrictMode. File checks now compare identity, and compilation uses long paths while handling an empty compiler environment. Regression checks compile with Windows PowerShell and PowerShell 7, long and short paths, and absent or present compiler options. Unpublished draft assets and superseded tags were removed before the successful build.
 
