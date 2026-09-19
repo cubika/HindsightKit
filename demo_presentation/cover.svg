@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title description">
+  <title id="title">HindsightKit</title>
+  <desc id="description">Project memory for GitHub Copilot, across sessions and connected computers. Two coding sessions connect to a persistent Hindsight memory service.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#102332"/>
+      <stop offset="1" stop-color="#122e39"/>
+    </linearGradient>
+    <radialGradient id="halo">
+      <stop stop-color="#7ba995" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#7ba995" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="memory" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#e0ecdd"/>
+      <stop offset="1" stop-color="#a9c9b8"/>
+    </linearGradient>
+    <linearGradient id="session" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#263f4a"/>
+      <stop offset="1" stop-color="#193541"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#a9c9b8" stroke-opacity=".055"/>
+    </pattern>
+    <filter id="shadow" x="-25%" y="-25%" width="160%" height="175%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#06131d" flood-opacity=".3"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#background)"/>
+  <rect x="1056" y="204" width="756" height="700" fill="url(#grid)"/>
+  <ellipse cx="1450" cy="550" rx="520" ry="510" fill="url(#halo)"/>
+  <path d="M112 204H1808M112 907H1808" stroke="#3b535d" stroke-width="1"/>
+
+  <g transform="translate(112 109) scale(1.5)" fill="none" stroke="#a9c9b8" stroke-width="1.6">
+    <rect x="3.5" y="3.5" width="21" height="21" rx="7"/>
+    <rect x="11.5" y="11.5" width="21" height="21" rx="7"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="194" y="149" fill="#edf1e9" font-size="30" font-weight="600">HindsightKit</text>
+    <text x="1808" y="145" text-anchor="end" fill="#a1b5b9" font-size="19" letter-spacing="2.4">PERSISTENT CODING MEMORY</text>
+
+    <path d="M114 324H159" stroke="#a9c9b8" stroke-width="3"/>
+    <text x="178" y="331" fill="#a9c9b8" font-size="18" font-weight="600" letter-spacing="3">CONTEXT THAT CARRIES FORWARD</text>
+    <text x="106" y="481" fill="#f6f5f1" font-size="122" font-weight="700" letter-spacing="-5">HindsightKit<tspan fill="#a9c9b8">.</tspan></text>
+    <text x="112" y="597" fill="#e2e9e4" font-size="52" font-weight="400" letter-spacing="-.8">Project memory for</text>
+    <text x="112" y="665" fill="#a9c9b8" font-size="52" font-weight="600" letter-spacing="-.8">GitHub Copilot.</text>
+    <text x="114" y="767" fill="#a9bcc1" font-size="29">Across sessions and connected computers.</text>
+
+    <g fill="none" stroke="#7fa998" stroke-width="2">
+      <path d="M1300 373V422Q1300 446 1324 446H1360"/>
+      <path d="M1536 622H1684Q1720 622 1720 658V706"/>
+      <path d="M1175 620H1119Q1095 620 1095 596V313Q1095 283 1125 283H1145" stroke="#4d7569" stroke-dasharray="5 9"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="1145" y="244" width="310" height="129" rx="18" fill="url(#session)" stroke="#48616a"/>
+      <path d="M1174 277L1182 285L1174 293M1192 293H1205" fill="none" stroke="#a9c9b8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="1224" y="293" fill="#f0f2eb" font-size="23" font-weight="600">Session 01</text>
+      <text x="1174" y="337" fill="#a4babe" font-size="19">Save useful context</text>
+    </g>
+
+    <rect x="1175" y="405" width="374" height="260" rx="27" fill="#274d4b" stroke="#628d7c"/>
+    <rect x="1203" y="433" width="374" height="260" rx="27" fill="#427463" stroke="#85aa97"/>
+    <g filter="url(#shadow)">
+      <rect x="1231" y="461" width="374" height="260" rx="27" fill="url(#memory)"/>
+      <g transform="translate(1262 491)" fill="none" stroke="#285246" stroke-width="1.6">
+        <rect x="3.5" y="3.5" width="21" height="21" rx="7"/>
+        <rect x="11.5" y="11.5" width="21" height="21" rx="7"/>
+      </g>
+      <text x="1320" y="519" fill="#346353" font-size="17" font-weight="600" letter-spacing="2.5">HINDSIGHT</text>
+      <text x="1264" y="581" fill="#17392f" font-size="34" font-weight="600" letter-spacing="-.7">Project memory</text>
+      <path d="M1265 609H1570" stroke="#8caf9e"/>
+      <text x="1265" y="647" fill="#3c6657" font-size="19">Conventions and experience</text>
+      <text x="1265" y="678" fill="#3c6657" font-size="19">Available for the next task</text>
+    </g>
+
+    <circle cx="1300" cy="399" r="5" fill="#c8dfcc"/>
+    <circle cx="1720" cy="681" r="5" fill="#c8dfcc"/>
+    <g filter="url(#shadow)">
+      <rect x="1484" y="706" width="310" height="129" rx="18" fill="url(#session)" stroke="#678c82"/>
+      <path d="M1513 739L1521 747L1513 755M1531 755H1544" fill="none" stroke="#a9c9b8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="1563" y="755" fill="#f0f2eb" font-size="23" font-weight="600">Session 02</text>
+      <text x="1513" y="799" fill="#a4babe" font-size="19">Recall relevant context</text>
+    </g>
+
+    <text x="114" y="972" fill="#9bb1b6" font-size="22">Built on Hindsight</text>
+    <text x="1808" y="972" text-anchor="end" fill="#9bb1b6" font-size="22">VS Code / Copilot CLI</text>
+  </g>
+</svg>
