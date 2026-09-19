@@ -21,6 +21,16 @@ from hindsightkit.setup import node_bundle
 
 
 class NodeInstallTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix='hk-node-install-')
+        self.addCleanup(directory.cleanup)
+        home = patch.object(runtime_env, 'home', return_value=Path(directory.name))
+        home.start()
+        self.addCleanup(home.stop)
+        environment = patch.dict(os.environ, {'COPILOT_CLI_PATH': ''})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_failed_repair_invalidates_stamp_and_retry_installs_before_reuse(self):
         for client in (False, True):
             with self.subTest(client=client), tempfile.TemporaryDirectory() as temp:

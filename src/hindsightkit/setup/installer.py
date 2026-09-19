@@ -73,7 +73,8 @@ async def copilot_authenticated():
         account = Path.home() / '.copilot/config.json'
         if account.is_file():
             shutil.copyfile(account, Path(temp) / 'config.json')
-        client = CopilotClient(base_directory=temp, working_directory=temp, use_logged_in_user=True)
+        client = CopilotClient(base_directory=temp, working_directory=temp, use_logged_in_user=True,
+                               mode='copilot-cli')
         try:
             await asyncio.wait_for(client.start(), timeout=90)
             auth = await asyncio.wait_for(client.get_auth_status(), timeout=30)
@@ -83,7 +84,8 @@ async def copilot_authenticated():
 
 
 def ensure_copilot():
-    found = find_copilot()
+    explicit = os.environ.get('COPILOT_CLI_PATH')
+    found = find_copilot(candidates=(Path(explicit),)) if explicit else find_copilot()
     installed = found is None
     if found is None:
         from hindsightkit.setup.progress import run_install
@@ -96,6 +98,8 @@ def ensure_copilot():
     if found is None:
         raise RuntimeError('Copilot CLI was not found after installation. Open a new terminal or install it with npm install -g @github/copilot, then rerun setup.')
     command, version = found
+    from hindsightkit.platform.copilot import select
+    select(command)
     copilot_message(f'{"Installed" if installed else "Reusing"} {version} at {command[-1]}.')
     print('Checking Copilot authentication...', flush=True)
     if asyncio.run(copilot_authenticated()):
@@ -142,12 +146,12 @@ def copilot_candidates():
         yield loader
 
 
-def find_copilot():
+def find_copilot(*, candidates=None):
     from hindsightkit.setup.progress import redact
     failures = []
     checked = set()
     try:
-        for binary in copilot_candidates():
+        for binary in copilot_candidates() if candidates is None else candidates:
             try:
                 if binary.suffix.lower() in {'.cmd', '.bat', '.ps1'}:
                     loader = binary.parent / 'node_modules/@github/copilot/npm-loader.js'

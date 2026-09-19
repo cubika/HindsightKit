@@ -12,30 +12,39 @@ from hindsightkit.platform import config as profile_env
 from hindsightkit import connection
 from hindsightkit.platform import lifecycle
 from hindsightkit.platform import runtime as runtime_env
+from hindsightkit.platform.startup import stage, start_api
 
 
-def start_local(*, message='Starting Hindsight (first start downloads the embedding model)...'):
+def start_local(*, message='Starting Hindsight services...'):
     require_local()
     from hindsightkit.setup.postgres import Postgres, require_postgresql, check_external
+    from hindsightkit.platform import copilot
+    print(message, flush=True)
     config, paths = profile_env.profile_config()
     database_url = require_postgresql(config)
     database = Postgres(runtime_env.home() / 'postgresql')
-    if database.state_path.is_file() and database_url == database.url:
-        database.start()
-        database.validate()
-    else:
-        asyncio.run(check_external(database_url))
-    print(message, flush=True)
-    runtime_env.run([runtime_env.executable('hindsight-embed'), '--profile', runtime_env.PROFILE, 'daemon', 'start'])
-    ui_url = start_ui(paths)
+    with stage('Checking PostgreSQL'):
+        if database.state_path.is_file() and database_url == database.url:
+            database.start()
+            database.validate()
+        else:
+            asyncio.run(check_external(database_url))
+    with stage('Checking inference runtime'):
+        copilot.prepare(config)
+    start_api(paths, config)
+    with stage('Starting dashboard', log=paths.ui_log):
+        ui_url = start_ui(paths)
     from hindsightkit.connectors.registry import enabled_connectors
     if enabled_connectors(runtime_env.home()):
         from hindsightkit.connectors.host import ensure_running
         try:
-            ensure_running(runtime_env.home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
+            with stage('Starting optional connectors', log=runtime_env.home() / 'connectors/service.log'):
+                ensure_running(runtime_env.home() / 'connectors', f'http://127.0.0.1:{paths.port}', ui_url, paths.ui_port + 1)
         except RuntimeError as exc:
             print(f'Optional connectors: {exc}', file=sys.stderr)
-    return f'http://127.0.0.1:{paths.port}', ui_url
+    api_url = f'http://127.0.0.1:{paths.port}'
+    print(f'Local services ready. API: {api_url}\nDashboard: {ui_url}', flush=True)
+    return api_url, ui_url
 
 
 @contextmanager
@@ -64,7 +73,9 @@ def start():
     with startup():
         result = start_local() if has_server else None
         lifecycle.start()
-        resume()
+        with stage('Restoring connections'):
+            resume()
+    print('HindsightKit started.', flush=True)
     return result
 
 
