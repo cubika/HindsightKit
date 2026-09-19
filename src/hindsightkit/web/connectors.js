@@ -21,7 +21,7 @@
     queued: "Preparing sync", running: "Syncing", scanning: "Scanning", syncing: "Syncing",
     importing: "Importing", processing: "Processing", stopping: "Pausing",
     paused: "Paused", idle: "Waiting for sync", ready: "Waiting for sync",
-    completed: "Sync complete", complete: "Sync complete", error: "Sync error",
+    completed: "Sync complete", complete: "Sync complete", partial: "Sync partially complete", error: "Sync error",
     failed: "Sync error", account_changed: "Account changed", blocked: "Action needed",
   };
   const reasonLabels = {
@@ -37,6 +37,15 @@
     workiq_body_too_large: "The message exceeds the current size limit.",
     workiq_complete_body_missing: "The full message could not be retrieved.",
     workiq_mail_not_found: "Message not found. It may have been moved or deleted.",
+    workiq_message_unavailable: "Message not found. It may have been moved or deleted.",
+    workiq_thread_incomplete: "The complete thread could not be read. A message may be missing or protected.",
+    workiq_thread_too_large: "The thread exceeds the message count or text size limit. Retrying alone will not change the limit.",
+    workiq_thread_identity_incomplete: "A message is missing a usable identifier. The next sync will scan it again.",
+    workiq_message_identity_missing: "A message is missing a usable identifier. The next sync will scan it again.",
+    outcome_resolution_unproven: "The generated result claimed a resolution without enough supporting evidence.",
+    outcome_publish_invalid: "The generated result did not meet the requirements for publication.",
+    outcome_number_unsupported: "The generated result included numbers not supported by its cited evidence.",
+    outcome_content_label_invalid: "The generated result contained invalid content labels.",
   };
   const numberFormat = new Intl.NumberFormat("en-US");
   const dateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
@@ -153,9 +162,21 @@
   }
 
   function renderErrors() {
-    const message = requestError || connectionError || errorText(snapshot?.run?.error);
+    const message = requestError || connectionError || (isActive() ? "" : errorText(snapshot?.run?.error));
     byId("error-text").textContent = message;
     byId("error-banner").hidden = !message;
+  }
+
+  function renderPartial() {
+    const run = snapshot.run || {};
+    const partial = run.state === "partial" && run.failed > 0 && !run.error;
+    byId("partial-banner").hidden = !partial;
+    if (partial) {
+      const retry = snapshot.config.enabled && snapshot.config.interval_minutes > 0
+        ? "Scheduled sync remains on and will retry these updates."
+        : "Select Sync now to retry these updates.";
+      byId("partial-text").textContent = `${numberFormat.format(run.failed)} updates could not be completed. Successful results are saved. ${retry}`;
+    }
   }
 
   function renderWarnings() {
@@ -171,26 +192,27 @@
 
   function renderFailures() {
     const failures = Array.isArray(snapshot.failures) ? snapshot.failures.filter((item) => item && typeof item === "object").slice(0, 10) : [];
+    const panel = byId("failures-panel");
+    panel.hidden = isActive() || !failures.length;
+    if (panel.hidden) panel.open = false;
     const signature = JSON.stringify(failures);
     if (signature === failureSignature) return;
     failureSignature = signature;
-    const panel = byId("failures-panel");
     const fragment = document.createDocumentFragment();
     for (const failure of failures) {
       const item = document.createElement("li");
       const subject = document.createElement("p");
       subject.className = "failure-subject";
-      subject.textContent = plainText(failure.subject) || "Untitled message";
+      subject.textContent = plainText(failure.subject) || "Untitled thread";
       const reason = document.createElement("p");
       reason.className = "failure-reason";
-      reason.textContent = failureLabels[failure.reason] || "The message could not be read. Try again later.";
+      const code = plainText(failure.reason).split(/[.\s]/, 1)[0];
+      reason.textContent = failureLabels[code] || "This update could not be completed. The next sync will try again.";
       item.append(subject, reason);
       fragment.append(item);
     }
     byId("failures-list").replaceChildren(fragment);
-    byId("failures-count").textContent = `${failures.length} ${failures.length === 1 ? "message" : "messages"}`;
-    panel.hidden = !failures.length;
-    if (!failures.length) panel.open = false;
+    byId("failures-count").textContent = `${failures.length} shown`;
   }
 
   function renderTime(id, value, fallback) {
@@ -223,15 +245,16 @@
     const runState = plainText(run.state);
     const failed = ["error", "failed", "blocked", "account_changed"].includes(runState) || Boolean(run.error);
     let label = stateLabels[runState] || "Waiting for sync";
-    let tone = isActive() ? "active" : failed ? "error" : snapshot.config?.enabled ? "positive" : "neutral";
+    let tone = isActive() ? "active" : failed ? "error" : runState === "partial" ? "warning" : snapshot.config?.enabled ? "positive" : "neutral";
     if (!account) { label = "Not connected"; tone = "neutral"; }
-    else if (!isActive() && !failed && !snapshot.config?.enabled) label = "Paused";
-    else if (!isActive() && !failed && snapshot.config?.interval_minutes === 0) label = "Manual sync";
+    else if (!isActive() && !failed && runState !== "partial" && !snapshot.config?.enabled) label = "Paused";
+    else if (!isActive() && !failed && runState !== "partial" && snapshot.config?.interval_minutes === 0) label = "Manual sync";
     byId("status-label").textContent = label;
     byId("status-badge").dataset.tone = tone;
     for (const key of ["scanned", "imported", "skipped", "failed", "pending"]) {
       const value = key === "imported" ? run.outcomes : run[key];
-      byId(`stat-${key}`).textContent = Number.isFinite(value) && value >= 0 ? numberFormat.format(value) : "0";
+      byId(`stat-${key}`).textContent = key === "failed" && isActive() ? "—"
+        : Number.isFinite(value) && value >= 0 ? numberFormat.format(value) : "0";
     }
     const changes = ["imported", "updated", "withdrawn"].filter((key) => Number.isFinite(run[key]) && run[key] >= 0)
       .map((key) => `${numberFormat.format(run[key])} ${key}`);
@@ -242,7 +265,7 @@
     const uncertain = Number.isFinite(run.prefilter_uncertain) ? run.prefilter_uncertain : 0;
     byId("prefilter-count").textContent = `${numberFormat.format(checked)} threads screened · ${numberFormat.format(prefiltered)} routine threads skipped · ${numberFormat.format(uncertain)} uncertain or failed screens continued to analysis.`;
     byId("prefilter-count").hidden = checked === 0 && prefiltered === 0;
-    byId("stat-failed").classList.toggle("has-failures", run.failed > 0);
+    byId("stat-failed").classList.toggle("has-failures", !isActive() && run.failed > 0);
     renderTime("last-success", run.last_success, "No completed sync yet");
     renderTime("next-run", run.next_run, snapshot.config?.enabled ? (snapshot.config?.interval_minutes === 0 ? "Manual sync" : "Not scheduled yet") : "Paused");
     let hindsightUrl = null;
@@ -258,6 +281,7 @@
     }
     byId("connection-status").textContent = "Local service connected · Updates every 5 seconds";
     renderErrors();
+    renderPartial();
     renderWarnings();
     renderFailures();
     updateControls();

@@ -480,9 +480,34 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_sync()
         self.assertTrue(result['config']['enabled'])
         self.assertIsNotNone(result['run']['next_run'])
+        self.assertEqual(result['run']['state'], 'partial')
+        self.assertIsNone(result['run']['error'])
         self.assertEqual(result['run']['failed'], 2)
         self.assertEqual(result['run']['outcomes'], 1)
         self.assertEqual(len(self.client.docs), 1)
+        accepted_id = next(iter(self.client.docs))
+        accepted = deepcopy(self.client.docs[accepted_id])
+        builds, submissions = len(self.builder.calls), len(self.client.submissions)
+        self.source.thread = original
+        self.source.thread_reads.clear()
+
+        result = await self.run_sync()
+
+        self.assertEqual(result['run']['state'], 'idle')
+        self.assertIsNone(result['run']['error'])
+        self.assertEqual(result['run']['failed'], 0)
+        self.assertEqual(result['run']['pending'], 0)
+        self.assertEqual(result['failures'], [])
+        self.assertTrue(result['config']['enabled'])
+        self.assertIsNotNone(result['run']['next_run'])
+        self.assertEqual(result['run']['imported'], 2)
+        self.assertEqual(result['run']['outcomes'], 3)
+        self.assertEqual(len(self.client.docs), 3)
+        self.assertEqual(self.client.docs[accepted_id], accepted)
+        self.assertEqual({row[0] for row in self.source.thread_reads}, {'discussion', 'too-large'})
+        self.assertEqual(len(self.builder.calls), builds + 2)
+        self.assertEqual(len(self.client.submissions), submissions + 2)
+        self.assertTrue(all(item['document_id'] != accepted_id for item in self.client.submissions[submissions:]))
 
     async def test_eula_discovery_failure_stops_schedule_before_import(self):
         async def discover():
@@ -595,6 +620,8 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.append('new', 'Updated result')
         self.client.mode = 'failed'
         result = await self.run_sync()
+        self.assertEqual(result['run']['state'], 'partial')
+        self.assertIsNone(result['run']['error'])
         self.assertEqual(result['run']['failed'], 1)
         self.assertEqual(next(iter(self.client.docs.values()))['original_text'], 'Initial finding')
         builds = len(self.builder.calls)
@@ -677,6 +704,8 @@ class MailSyncTests(unittest.IsolatedAsyncioTestCase):
         self.append('last', 'Last page result', thread='last')
         result = await self.run_sync()
         self.assertEqual(result['run']['scanned'], 5)
+        self.assertEqual(result['run']['state'], 'partial')
+        self.assertIsNone(result['run']['error'])
         self.assertEqual(result['run']['imported'], 2)
         self.assertEqual(result['run']['failed'], 2)
         self.assertEqual(result['run']['pending'], 2)

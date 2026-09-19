@@ -42,6 +42,8 @@ A verified mailbox identity and conversation ID determine the stable Hindsight d
 
 Updates use official replacement and document APIs. A single writer, durable target revision, and operation UUID protect retries and restarts. The prepared replacement is validated before publication. A failed update leaves the accepted result available, and pending work remains visible for retry. A withdrawal removes the current document and its searchable memory.
 
+The page shows the failure count and details after a run finishes. A partially completed run keeps scheduled sync enabled. The next scheduled run, or **Sync now**, retries incomplete updates and scans for new mail; unchanged successful threads are not analyzed again. **Sync now** does not enable a paused schedule. Retry can recover temporary failures, but it does not remove size limits or make unavailable source content readable. Connection and authorization failures are reported separately and may pause the schedule.
+
 Unchanged source content bypasses composition. A reply with no new finding can also return unchanged after composition without another Hindsight write. The connector keeps no permanent draft history or separate memory document for each reply.
 
 ## Evidence and provenance

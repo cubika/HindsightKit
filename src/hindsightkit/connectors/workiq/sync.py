@@ -476,8 +476,8 @@ class MailSync:
                     else:
                         discovery_failures += 1
             self._put('window', None)
-            self._run_update(state='error' if failed or discovery_failures else 'idle', failed=len(failed) + discovery_failures,
-                error=f'{len(failed) + discovery_failures} thread updates need attention.' if failed or discovery_failures else None,
+            self._run_update(state='partial' if failed or discovery_failures else 'idle', failed=len(failed) + discovery_failures,
+                error=None,
                 last_success=self._get('run')['last_success'] if failed or discovery_failures else _iso(_now()))
         except asyncio.CancelledError:
             self._run_update(state='paused')

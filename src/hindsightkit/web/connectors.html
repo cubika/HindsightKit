@@ -48,7 +48,7 @@
         <span id="status-badge" class="status-badge" data-tone="neutral"><span class="status-dot"></span><span id="status-label">Loading status</span></span>
       </header>
 
-      <div id="error-banner" class="message error-message" role="alert" tabindex="-1" hidden><div><strong>Action needed</strong><p id="error-text"></p></div><button id="retry-button" class="button button-small button-quiet" type="button">Refresh status</button></div>
+      <div id="error-banner" class="message error-message" role="alert" tabindex="-1" hidden><div><strong>Sync interrupted</strong><p id="error-text"></p></div><button id="retry-button" class="button button-small button-quiet" type="button">Refresh status</button></div>
       <div id="warning-banner" class="message warning-message" role="status" hidden><p id="warning-text"></p></div>
       <div id="prerequisite-banner" class="message warning-message" role="status" hidden><div><strong>WorkIQ is required</strong><p id="prerequisite-text"></p></div></div>
       <section id="consent-banner" class="message warning-message consent-message" aria-labelledby="consent-heading" hidden>
@@ -102,12 +102,13 @@
 
       <section class="panel activity-panel" aria-labelledby="activity-heading">
         <div class="panel-heading"><div><h2 id="activity-heading">Sync activity</h2></div><button id="sync-button" class="button button-small button-secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span>Sync now</span></button></div>
+        <div id="partial-banner" class="message warning-message" role="status" hidden><div><strong>Sync finished with some updates incomplete</strong><p id="partial-text"></p><p>Sync now also retries incomplete updates. Threads over the size limit or with unavailable content may fail again.</p></div></div>
         <dl class="stats-grid"><div><dt>Messages scanned</dt><dd id="stat-scanned">—</dd></div><div class="stat-imported"><dt>Thread outcomes</dt><dd id="stat-imported">—</dd></div><div><dt>Skipped threads</dt><dd id="stat-skipped">—</dd></div><div><dt>Failed threads</dt><dd id="stat-failed">—</dd></div><div><dt>Pending threads</dt><dd id="stat-pending">—</dd></div></dl>
         <p id="outcome-changes" class="field-help" hidden></p>
         <p id="prefilter-count" class="field-help" hidden></p>
         <p class="field-help">One current outcome per retained thread. Other counts reflect the latest scan.</p>
         <div class="run-details"><p><span>Last successful sync</span><time id="last-success">No completed sync yet</time></p><p><span>Next sync</span><time id="next-run">—</time></p><a id="hindsight-link" class="text-link" target="_blank" rel="noopener noreferrer" hidden>View thread outcomes<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="sr-only">(opens in a new tab)</span></a></div>
-        <details id="failures-panel" class="mail-failures" hidden><summary>Messages that could not be read<span id="failures-count" class="count-tag"></span></summary><ul id="failures-list"></ul></details>
+        <details id="failures-panel" class="mail-failures" hidden><summary>Updates not completed<span id="failures-count" class="count-tag"></span></summary><ul id="failures-list"></ul></details>
       </section>
 
       <section id="preview-panel" class="panel preview-panel" aria-labelledby="preview-heading" tabindex="-1" hidden>
