@@ -302,10 +302,10 @@ class RemoteTests(unittest.TestCase):
                     'hindsightkit': {'mode': 'client', 'transport': transport}}
         for command in ('share', 'local'):
             with self.subTest(command=command), self.environment(previous=previous) as state, \
-                 patch.object(services, 'require_local'), patch.object(runtime_env, 'run'), \
+                 patch.object(services, 'require_local'), patch.object(services, 'start_api'), \
                  patch.object(services, 'start_ui', return_value='http://localhost:19077'), \
                  patch.object(profile_env, 'profile_config', return_value=({'HINDSIGHT_EMBED_API_DATABASE_URL': 'postgresql://local'},
-                              SimpleNamespace(port=9077, ui_port=19077))), \
+                              SimpleNamespace(port=9077, ui_port=19077, ui_log=state.root / 'ui.log'))), \
                  patch('hindsightkit.setup.postgres.Postgres') as database, \
                  patch('hindsightkit.connectors.registry.enabled_connectors', return_value=[]), \
                  patch.object(connection, 'server_load', return_value={'apiUrl': 'http://127.0.0.1:9077', 'apiToken': 'local-key'}):
