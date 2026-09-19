@@ -4,7 +4,9 @@
 
 Unified retrieval passed 157 memory, connector, routing, lifecycle, installation, and packaging tests in 190.0 seconds. A local HTTP fixture used authenticated discovery and the real Hindsight SDK to check retrieval across repository, shared, and imported memory, including source metadata. These checks used synthetic content and did not access a real mailbox or model. The detailed scope is recorded in [connector validation](connector-validation.md).
 
-This candidate also includes Windows login startup, package layout changes, bounded installation cleanup, and Copilot startup diagnostics. Their earlier local checks are recorded below and in connector validation. The project version and dependency lock identify 0.1.7. Full candidate builds and final archive validation are required before publication.
+This candidate also includes Windows login startup, package layout changes, bounded installation cleanup, and Copilot startup diagnostics. Their earlier local checks are recorded below and in connector validation. The project version and dependency lock identify 0.1.7.
+
+The local suite passed all 610 tests in 846.0 seconds. The first hosted candidate exposed ten assertion failures because its temporary directory used a Windows short-path alias while Copilot selection and the startup runner returned the corresponding long path. The fixtures now compare resolved paths or file identity while retaining exact argument and environment checks. Updated hosted builds and final archive validation are required before publication.
 
 ## Installation reliability follow-up
 

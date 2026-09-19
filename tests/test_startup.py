@@ -372,8 +372,12 @@ class Fixture {
                         error = root / 'startup-error.log'
                         detail = error.read_text(encoding='utf-8-sig') if error.exists() else ''
                         self.assertEqual(result.returncode, expected, result.stdout + result.stderr + detail)
-                        self.assertEqual((root / 'received.txt').read_text(encoding='utf-8').splitlines(),
-                            ['startup-run', str(root), str(config), str(root), '1', 'utf-8', '1'])
+                        received = (root / 'received.txt').read_text(encoding='utf-8').splitlines()
+                        self.assertEqual(received[0], 'startup-run')
+                        self.assertTrue(Path(received[1]).samefile(root))
+                        self.assertEqual(Path(received[2]).resolve(), config.resolve())
+                        self.assertTrue(Path(received[3]).samefile(root))
+                        self.assertEqual(received[4:], ['1', 'utf-8', '1'])
                         self.assertIn('fixture started', (root / 'startup.log').read_text(encoding='utf-8-sig'))
                         self.assertIn('fixture diagnostic', detail)
 

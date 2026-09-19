@@ -38,18 +38,18 @@ class CopilotRuntimeTests(unittest.TestCase):
         binary = self.entry()
         with patch.object(installer, 'find_copilot', return_value=([str(binary)], 'GitHub Copilot CLI 1.0.85')), \
              patch('copilot._cli_download.ensure_runtime_wrapper', side_effect=AssertionError('cache must not be used')) as download:
-            self.assertEqual(copilot.prepare(self.config), str(binary))
+            self.assertEqual(copilot.prepare(self.config), str(binary.resolve()))
             client = CopilotClient(mode='copilot-cli')
-            self.assertEqual(client._connection.path, str(binary))
+            self.assertEqual(client._connection.path, str(binary.resolve()))
             self.assertEqual(client._cli_path_source, 'environment')
         download.assert_not_called()
-        self.assertEqual((self.root / 'copilot-path.txt').read_text().strip(), str(binary))
+        self.assertEqual((self.root / 'copilot-path.txt').read_text().strip(), str(binary.resolve()))
         self.assertIn('Copilot SDK: using', self.output.getvalue())
 
     def test_official_javascript_entrypoint_is_saved_without_node_arguments(self):
         loader = self.entry('npm/node_modules/@github/copilot/npm-loader.js')
-        self.assertEqual(copilot.select(['node', str(loader)]), str(loader))
-        self.assertEqual(os.environ['COPILOT_CLI_PATH'], str(loader))
+        self.assertEqual(copilot.select(['node', str(loader)]), str(loader.resolve()))
+        self.assertEqual(os.environ['COPILOT_CLI_PATH'], str(loader.resolve()))
 
     def test_saved_cli_is_restored_silently_without_discovery(self):
         binary = self.entry('saved/copilot.exe')
@@ -65,9 +65,9 @@ class CopilotRuntimeTests(unittest.TestCase):
         binary = self.entry('replacement.exe')
         with patch.object(installer, 'find_copilot', return_value=([str(binary)], 'GitHub Copilot CLI 1.0.85')) as find:
             self.assertEqual(copilot.restore(), None)
-            self.assertEqual(copilot.prepare(self.config), str(binary))
+            self.assertEqual(copilot.prepare(self.config), str(binary.resolve()))
         find.assert_called_once_with()
-        self.assertEqual((self.root / 'copilot-path.txt').read_text().strip(), str(binary))
+        self.assertEqual((self.root / 'copilot-path.txt').read_text().strip(), str(binary.resolve()))
 
     def test_explicit_override_is_preserved_even_when_missing(self):
         explicit = str(self.root / 'user-selected.exe')
@@ -93,7 +93,7 @@ class CopilotRuntimeTests(unittest.TestCase):
                                      'HINDSIGHT_API_LLM_BASE_URL': ''}), \
              patch.object(installer, 'find_copilot', return_value=([str(binary)], 'GitHub Copilot CLI 1.0.85')):
             self.assertEqual(copilot.prepare({'HINDSIGHT_API_LLM_PROVIDER': 'openai',
-                'HINDSIGHT_API_LLM_BASE_URL': 'http://127.0.0.1:1234'}), str(binary))
+                'HINDSIGHT_API_LLM_BASE_URL': 'http://127.0.0.1:1234'}), str(binary.resolve()))
 
     def test_inherited_provider_or_external_runtime_can_disable_local_selection(self):
         for environment in ({'HINDSIGHT_API_LLM_PROVIDER': 'openai'},
@@ -122,7 +122,7 @@ class CopilotRuntimeTests(unittest.TestCase):
         binary = self.entry()
         with patch.object(installer, 'find_copilot', return_value=([str(binary)], 'GitHub Copilot CLI 1.0.85')):
             self.assertEqual(copilot.prepare(dict(self.config,
-                HINDSIGHT_API_LLM_BASE_URL='https://api.openai.com/v1/')), str(binary))
+                HINDSIGHT_API_LLM_BASE_URL='https://api.openai.com/v1/')), str(binary.resolve()))
 
     def test_failed_atomic_replace_preserves_previous_selection(self):
         saved = self.root / 'copilot-path.txt'
@@ -142,7 +142,7 @@ class CopilotRuntimeTests(unittest.TestCase):
     def test_installer_selects_cli_before_checking_sdk_authentication(self):
         binary = self.entry()
         async def authenticated():
-            self.assertEqual(os.environ['COPILOT_CLI_PATH'], str(binary))
+            self.assertEqual(os.environ['COPILOT_CLI_PATH'], str(binary.resolve()))
             return True
         with patch.object(installer, 'find_copilot', return_value=([str(binary)], 'GitHub Copilot CLI 1.0.85')), \
              patch.object(installer, 'copilot_authenticated', side_effect=authenticated), \
