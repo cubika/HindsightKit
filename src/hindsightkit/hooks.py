@@ -93,8 +93,9 @@ def can_capture(pinned, current, service):
 async def prompt_memory(config, event):
     client = connection.sdk(config, timeout=6, max_attempts=1)
     try:
-        service = Memory(client, Scope(config['bankId'], config['_repository'], config.get('_shared_bank', 'hindsightkit-shared')))
-        result = await asyncio.wait_for(service.read('recall', event.get('prompt') or '', 2048), timeout=7)
+        service = Memory(client, Scope(config['bankId'], config['_repository'], config.get('_shared_bank', SHARED_BANK)),
+                         config=config, root=home())
+        result = await service.read('recall', event.get('prompt') or '', 2048, timeout=6)
         await connection.report(config, 'copilot-cli')
         return result
     finally:
@@ -152,10 +153,16 @@ def run(event_name: str):
     blocks = []
     for item in recalled['memories']:
         facts = item['result'].get('results', [])
-        if facts:
-            blocks.append({'bank': item['bank'], 'facts': [fact['text'] for fact in facts]})
-    if blocks:
+        if facts or item.get('error'):
+            block = {key: item[key] for key in ('bank', 'source', 'status', 'error') if key in item}
+            block['facts'] = [{key: fact[key] for key in ('id', 'text', 'context', 'document_id', 'metadata',
+                               'occurred_start', 'occurred_end', 'mentioned_at', 'tags')
+                               if fact.get(key) is not None} for fact in facts]
+            blocks.append(block)
+    if blocks or not recalled.get('complete', True):
         # Upstream strips this tag from captured transcripts, preventing reinsertion.
-        context = '<hindsight_memory>\n' + json.dumps(blocks, ensure_ascii=False) + '\n</hindsight_memory>'
+        context = '<hindsight_memory>\n' + json.dumps({'memories': blocks,
+            'complete': recalled.get('complete', True), 'errors': recalled.get('errors', [])},
+            ensure_ascii=False) + '\n</hindsight_memory>'
         original = event.get('transformedPrompt') or event['prompt']
         print(json.dumps({'modifiedTransformedPrompt': original + '\n\n' + context}))

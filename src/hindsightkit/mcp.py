@@ -56,7 +56,9 @@ def serve(context: str, directory: str | None = None):
     from hindsightkit.sharing.remote import prepare_client
     instructions = ('Use retain, recall and reflect with this installation\'s selected shared bank.'
                     if connection.fixed_bank(config) else
-                    'Use retain, recall and reflect. Repository memory stays in this repository; shared memory is read-only inside repositories.')
+                    'Use recall and reflect to search repository, shared and imported connector memory together. '
+                    'Results identify sources and incomplete retrieval. Imported knowledge reflects the last synchronization. '
+                    'Use retain to save repository memory; shared and connector memory are read-only inside repositories.')
     server = FastMCP('HindsightKit', instructions=instructions)
     # A CLI process inherits the agent's launch cwd. VS Code supplies MCP roots.
     scope = Scope(connection.fixed_bank(config)) if connection.fixed_bank(config) else None
@@ -115,7 +117,7 @@ def serve(context: str, directory: str | None = None):
 
     class RepositoryMemoryGuard(Middleware):
         async def on_call_tool(self, request, call_next):
-            # Covers optional connector tools as well as core memory operations.
+            # Check the repository switch before discovery or any memory access.
             try:
                 await memory(request.fastmcp_context)
             except (ValueError, RuntimeError, OSError) as exc:
@@ -130,7 +132,7 @@ def serve(context: str, directory: str | None = None):
             raise RuntimeError('Memory scope was not initialized.')
         client = connection.sdk(config, timeout=330)
         try:
-            service = Memory(client, scope)
+            service = Memory(client, scope, config=config)
             result = await service.retain(**arguments) if operation == 'retain' else await service.read(operation, **arguments)
             await connection.report(config, 'copilot-cli' if context == 'cli' else 'vscode')
             return result
@@ -144,16 +146,12 @@ def serve(context: str, directory: str | None = None):
 
     @server.tool
     async def recall(query: str, ctx: Context, max_tokens: int = 4096) -> dict:
-        """Find relevant memory from this repository and shared memory."""
+        """Find relevant repository, shared and imported connector knowledge with its sources."""
         return await call(ctx, 'recall', query=query, max_tokens=max_tokens)
 
     @server.tool
     async def reflect(query: str, ctx: Context, max_tokens: int = 4096) -> dict:
         """Ask Hindsight to reason over each accessible bank; results identify their source."""
         return await call(ctx, 'reflect', query=query, max_tokens=max_tokens)
-
-    from hindsightkit.connectors.registry import register_tools
-    from hindsightkit.platform.runtime import home
-    register_tools(server, config, home())
 
     run_stdio(server)

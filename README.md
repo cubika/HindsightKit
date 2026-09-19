@@ -35,8 +35,8 @@ Use the release installer for installation and upgrades. It preserves the previo
 
 | Session location | Writes | Reads |
 | --- | --- | --- |
-| A Git repository | That repository's memory | Repository and shared memory |
-| Outside Git | Shared memory | Shared memory |
+| A Git repository | That repository's memory | Repository, shared memory, and readable connector imports |
+| Outside Git | Shared memory | Shared memory and readable connector imports |
 
 Open one repository per VS Code window. No per-repository enable step is needed. The [memory scope guide](docs/shared-memory.md) explains repository identity, cross-computer use, and access limits.
 
@@ -54,7 +54,7 @@ When direct access is unavailable, use `hindsightkit share --relay` to prepare a
 
 ## Optional email memory
 
-`hindsightkit connectors` opens the connector settings. The WorkIQ connector requires a supported, already installed and signed-in WorkIQ client. It keeps one current outcome per accepted email thread and provides a separate read-only `recall_mail` tool. It is optional and does not change repository memory routing.
+`hindsightkit connectors` opens the connector settings. The WorkIQ connector requires a supported, already installed and signed-in WorkIQ client. It keeps one current outcome per accepted email thread. `recall`, `reflect`, and automatic prompt recall include imported outcomes alongside repository and shared memory. Repository writes stay in the current repository.
 
 See [connectors](docs/connectors.md) for prerequisites, configuration, and current limitations.
 

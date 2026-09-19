@@ -86,10 +86,10 @@ class ClientsExtension(HttpExtension):
             authorize(authorization)
             from hindsightkit.connection import validate_bank
             from hindsightkit.memory.api import SHARED_BANK
-            from hindsightkit.connectors.registry import enabled_connectors
+            from hindsightkit.connectors.registry import readable_connectors
             return {'protocol': 1, 'routing': 'repository',
                     'sharedBank': validate_bank(self.config.get('memory_bank', SHARED_BANK)),
-                    'connectors': enabled_connectors(inventory.path.parent)}
+                    'connectors': readable_connectors(inventory.path.parent)}
 
         @router.post('/hindsightkit/scope')
         def scope(body: RepositoryScope, authorization: str | None = Header(default=None)):

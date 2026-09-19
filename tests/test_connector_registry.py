@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from hindsightkit.connectors.registry import Connector, ConnectorHost, enabled_connectors, register_tools
+from hindsightkit.connectors.registry import Connector, ConnectorHost, enabled_connectors, readable_connectors, readable_sources
+from hindsightkit.memory.api import ReadSource
 from hindsightkit.connectors.workiq.adapter import Adapter, EULA_ERROR, _accept_workiq_eula, saved_status
 from hindsightkit.connectors.workiq.source import WorkIQError
 from hindsightkit.connectors.workiq.ledger import initialize, new_config, new_run, new_status
@@ -324,10 +325,57 @@ class IndependentAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(('first','close'),calls)
             self.assertIn(('second','close'),calls)
 
-    def test_unused_optional_tools_do_not_import_adapters(self):
+    async def test_unused_optional_reads_do_not_import_adapters_or_create_state(self):
         with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.registry.import_module') as importer:
-            register_tools(Mock(), {}, Path(temp))
+            self.assertEqual(await readable_sources({}, Path(temp)), ())
+            self.assertEqual(list(Path(temp).iterdir()), [])
             importer.assert_not_called()
+
+    async def test_paused_sources_are_declared_without_loading_acquisition(self):
+        with tempfile.TemporaryDirectory() as temp, patch('hindsightkit.connectors.registry.import_module') as importer:
+            root = Path(temp)
+            settings(root, enabled=False)
+            self.assertEqual(readable_connectors(root), ['workiq'])
+            sources = await readable_sources({}, root)
+            self.assertEqual(sources, (ReadSource('workiq', 'hindsightkit-mail', ('world',), 'mid'),))
+            importer.assert_not_called()
+
+    async def test_remote_sources_refresh_and_never_use_local_state(self):
+        config = {'hindsightkit': {'mode': 'client', 'connectors': ['workiq']}}
+        with patch('hindsightkit.connection.discover', new_callable=AsyncMock,
+                   side_effect=[{'connectors': []}, {'connectors': ['workiq']}]) as discover, \
+             patch('hindsightkit.connectors.registry.readable_connectors') as local:
+            self.assertEqual(await readable_sources(config), ())
+            self.assertEqual([source.source for source in await readable_sources(config)], ['workiq'])
+            self.assertEqual(discover.await_count, 2)
+            local.assert_not_called()
+
+    async def test_fixed_bank_skips_local_and_remote_discovery(self):
+        with patch('hindsightkit.connection.discover', new_callable=AsyncMock) as discover, \
+             patch('hindsightkit.connectors.registry.readable_connectors') as local:
+            for mode in ('server', 'client'):
+                self.assertEqual(await readable_sources({'hindsightkit': {'mode': mode, 'bank': 'fixed'}}), ())
+            discover.assert_not_called()
+            local.assert_not_called()
+
+    async def test_registry_extends_retrieval_without_importing_adapter_code(self):
+        specs = tuple(Connector(name, name, '', 'fixture.' + name, name, name + '.html',
+                                memory=ReadSource(name, 'bank-' + name), memory_state='state.db')
+                      for name in ('first', 'second'))
+        with patch('hindsightkit.connection.discover', new_callable=AsyncMock,
+                   return_value={'connectors': ['second', 'first', 'second']}), \
+             patch('hindsightkit.connectors.registry.import_module') as importer:
+            result = await readable_sources({'hindsightkit': {'mode': 'client'}}, registry=specs)
+            self.assertEqual([source.bank for source in result], ['bank-second', 'bank-first'])
+            importer.assert_not_called()
+
+    async def test_unknown_or_malformed_remote_sources_are_not_silently_ignored(self):
+        for advertised in (['unknown'], 'workiq', [None]):
+            with self.subTest(advertised=advertised), \
+                 patch('hindsightkit.connection.discover', new_callable=AsyncMock,
+                       return_value={'connectors': advertised}):
+                with self.assertRaisesRegex(ValueError, 'unsupported connector'):
+                    await readable_sources({'hindsightkit': {'mode': 'client'}})
 
 
 if __name__ == '__main__':

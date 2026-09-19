@@ -2,6 +2,8 @@
 
 The optional WorkIQ connector keeps one current outcome for each useful email thread. It prepares the outcome through the official Copilot SDK, then uses the official Hindsight SDK to store and recall it. Hindsight stores each prepared outcome in `chunks` mode as one searchable world memory unit. Observations and automatic consolidation are disabled for this bank, so publication does not add a second model extraction pass.
 
+Ordinary `recall`, `reflect`, and automatic prompt recall include these outcomes through the [shared retrieval path](connectors.md#search-imported-knowledge). Questions do not need to mention email. Pausing synchronization preserves access to imported outcomes; retrieval does not fetch new messages.
+
 ## Configure mail synchronization
 
 WorkIQ 1.0.0 must already be installed and signed in. The current adapter verifies the supported Windows x64 executable. Outcome preparation requires the `github-copilot` provider and a configured model; it uses the existing model and reasoning settings.

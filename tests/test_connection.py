@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from hindsight_client_api.exceptions import ApiException
 
 from hindsightkit import connection
+from hindsightkit.memory.api import Memory, Scope, SHARED_BANK
 from hindsightkit.sharing import log as relay_log
 from hindsightkit.server import Activity, ClientsExtension, Inventory, MAX_DEVICES
 
@@ -59,6 +60,17 @@ class InventoryTests(unittest.TestCase):
         with patch.dict(os.environ, {"HINDSIGHT_API_TENANT_API_KEY": ""}):
             self.assertEqual(self.http.get(CLIENTS_PATH, headers=HEADERS).status_code, 401)
             self.assertEqual(self.http.post(CLIENTS_PATH, headers=HEADERS, json=body).status_code, 401)
+
+    def test_discovery_advertises_paused_imports_without_starting_source(self):
+        directory = self.path.parent / 'mail'
+        directory.mkdir()
+        (directory / 'sync.sqlite3').touch()
+        with patch('hindsightkit.connectors.registry.import_module') as importer:
+            self.assertEqual(self.http.get('/ext/hindsightkit/connection').status_code, 401)
+            response = self.http.get('/ext/hindsightkit/connection', headers=HEADERS)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['connectors'], ['workiq'])
+            importer.assert_not_called()
 
     def test_registration_is_idempotent_and_keeps_two_clients_per_device(self):
         first = activity(name="Dev Box A")
@@ -152,8 +164,14 @@ class _MemoryHandler(BaseHTTPRequestHandler):
             status, body = 401, {"detail": "Invalid API key"}
         elif self.path == "/redirect":
             status, body = 307, {"detail": "Redirect"}
+        elif self.path == "/ext/hindsightkit/connection":
+            body = {'protocol': 1, 'routing': 'repository', 'sharedBank': SHARED_BANK,
+                    'connectors': ['workiq']}
         elif self.path.endswith("/memories/recall"):
             body = {"results": [{"id": "synthetic-memory", "text": "Fixture response"}]}
+            if '/hindsightkit-mail/' in self.path:
+                body['results'][0].update(document_id='thread-fixture', mentioned_at='2026-09-18T12:00:00Z',
+                                          metadata={'source_url': 'https://outlook.example.invalid/thread'})
         else:
             body = {"ok": True}
         payload = json.dumps(body).encode()
@@ -211,6 +229,32 @@ class ConnectionTests(unittest.TestCase):
                                      "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"})
         env.start()
         self.addCleanup(env.stop)
+
+    def test_unified_recall_uses_authenticated_discovery_and_real_sdk_http(self):
+        server = ThreadingHTTPServer(('127.0.0.1', 0), _MemoryHandler)
+        server.requests = []
+        async def check(config):
+            client = connection.sdk(config, timeout=2, max_attempts=1)
+            try:
+                return await Memory(client, Scope('repo-a', '/a'), config=config).read(
+                    'recall', 'What compatibility constraints apply?', 1025)
+            finally:
+                await client.aclose()
+        with running(server) as url:
+            result = asyncio.run(check({'apiUrl': url, 'apiToken': TOKEN,
+                                        'hindsightkit': {'mode': 'client'}}))
+        self.assertTrue(result['complete'])
+        self.assertEqual({item['bank'] for item in result['memories']}, {'repo-a', SHARED_BANK, 'hindsightkit-mail'})
+        imported = next(item for item in result['memories'] if item['source'] == 'workiq')
+        fact = imported['result']['results'][0]
+        self.assertEqual(fact['metadata']['source_url'], 'https://outlook.example.invalid/thread')
+        self.assertEqual(fact['mentioned_at'], '2026-09-18T12:00:00Z')
+        self.assertEqual(server.requests[0]['path'], '/ext/hindsightkit/connection')
+        reads = server.requests[1:]
+        self.assertEqual(len(reads), 3)
+        self.assertEqual(sum(item['body']['max_tokens'] for item in reads), 1025)
+        self.assertTrue(all(item['body']['query'] == 'What compatibility constraints apply?' for item in reads))
+        self.assertTrue(all(item['authorization'] == 'Bearer ' + TOKEN for item in server.requests))
 
     def test_direct_http_and_tcp_forwarding_preserve_request_and_sdk_bearer(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MemoryHandler)

@@ -49,16 +49,17 @@ class LifecycleTests(unittest.TestCase):
             with patch.object(mcp, 'FastMCP', return_value=server), patch.object(mcp, 'run_stdio'), \
                  patch.object(mcp, 'resolve', new_callable=AsyncMock, return_value=Scope('fixture')) as resolve, \
                  patch.object(connection, 'sdk', return_value=client) as sdk, \
+                 patch.object(connection, 'discover', new_callable=AsyncMock, return_value={'connectors': ['workiq']}) as discover, \
                  patch.object(remote, 'prepare_client') as prepare:
                 mcp.serve('cli', str(self.root))
                 await server.call_tool('recall', {'query': 'fixture'})
-                sdk.reset_mock(); prepare.reset_mock(); resolve.reset_mock()
+                sdk.reset_mock(); prepare.reset_mock(); resolve.reset_mock(); discover.reset_mock()
                 lifecycle.stop()
                 for name, arguments in [('recall', {'query': 'fixture'}), ('retain', {'content': 'fixture'}),
-                                        ('reflect', {'query': 'fixture'}), ('recall_mail', {'query': 'fixture'})]:
+                                        ('reflect', {'query': 'fixture'})]:
                     with self.assertRaisesRegex(ToolError, 'stopped'):
                         await server.call_tool(name, arguments)
-                for operation in (sdk, prepare, resolve):
+                for operation in (sdk, prepare, resolve, discover):
                     operation.assert_not_called()
                 lifecycle.start()
                 await server.call_tool('recall', {'query': 'fixture'})

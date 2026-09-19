@@ -152,24 +152,26 @@ class McpTests(unittest.TestCase):
         asyncio.run(asyncio.wait_for(check(), timeout=90))
 
 
-class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
+class ConnectorRecallTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_advertised_mail_is_available_without_local_import_state(self):
         config = {'apiUrl': 'https://memory.example.invalid', 'apiToken': 'synthetic-key',
-                  'hindsightkit': {'mode': 'client', 'routing': 'repository', 'connectors': ['workiq']}}
+                  'hindsightkit': {'mode': 'client', 'routing': 'repository', 'connectors': []}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
             model_dump=lambda **kwargs: {'results': []})), aclose=AsyncMock())
         async def action(server):
-            tool = await server.get_tool('recall_mail')
-            self.assertIsNotNone(tool)
-            return (await server.call_tool('recall_mail', {'query': 'shared mail'})).structured_content
-        result, constructor = await self.call_tools(config, action, client, saved_mail=False)
-        self.assertEqual(result['bank'], 'hindsightkit-mail')
-        constructor.assert_called_once_with(base_url=config['apiUrl'], api_key='synthetic-key', timeout=90)
+            return (await server.call_tool('recall', {'query': 'What compatibility constraints apply?'})).structured_content
+        with patch.object(connection, 'discover', new_callable=AsyncMock,
+                          return_value={'connectors': ['workiq']}) as discover:
+            result, constructor = await self.call_tools(config, action, client, saved_mail=False)
+        self.assertEqual({item['bank'] for item in result['memories']}, {'hindsightkit-shared', 'hindsightkit-mail'})
+        self.assertTrue(result['complete'])
+        discover.assert_awaited_once_with(config)
+        constructor.assert_called_once_with(base_url=config['apiUrl'], api_key='synthetic-key', timeout=330)
 
     async def call_tools(self, config, action, sdk_client, *, saved_mail=True):
         server = memory_mcp.FastMCP("Mail connection fixture")
         with tempfile.TemporaryDirectory() as temp, \
-             patch.dict(os.environ, {'HINDSIGHTKIT_HOME': temp}), \
+             patch.dict(os.environ, {'HINDSIGHTKIT_HOME': temp, 'COPILOT_AGENT_SESSION_ID': ''}), \
              patch.object(connection, "load", return_value=config), \
              patch.object(connection, "Hindsight", return_value=sdk_client) as constructor, \
              patch.object(connection, "report", new=AsyncMock()), \
@@ -186,28 +188,35 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
                 result = await action(server)
         return result, constructor
 
-    async def test_recall_mail_uses_server_endpoint_auth_and_source_fact_options(self):
+    async def test_plain_recall_searches_imports_with_provenance_and_shared_budget(self):
         secret = "synthetic-server-mail-secret"
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": secret,
                   "hindsightkit": {"mode": "server"}}
+        fact = {'text': 'A supported compatibility decision', 'document_id': 'thread-fixture',
+                'mentioned_at': '2026-09-18T12:00:00Z',
+                'metadata': {'source_url': 'https://outlook.example.invalid/thread'}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
-            model_dump=lambda **kwargs: {"results": [], "source_facts": {}})), aclose=AsyncMock())
+            model_dump=lambda **kwargs: {"results": [fact]})), aclose=AsyncMock())
         async def action(server):
-            tool = await server.get_tool("recall_mail")
+            tool = await server.get_tool("recall")
             self.assertNotIn("bank_id", tool.parameters.get("properties", {}))
-            return (await server.call_tool("recall_mail", {"query": "Mail finding", "max_tokens": 1024})).structured_content
+            self.assertIsNone(await server.get_tool('recall_mail'))
+            return (await server.call_tool("recall", {"query": "What compatibility constraints apply?", "max_tokens": 1024})).structured_content
         result, constructor = await self.call_tools(config, action, client)
-        constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=90)
-        client.arecall.assert_awaited_once()
-        arguments = client.arecall.await_args.kwargs
-        self.assertEqual(arguments["bank_id"], "hindsightkit-mail")
-        self.assertFalse(arguments["include_source_facts"])
+        constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=secret, timeout=330)
+        calls = [call.kwargs for call in client.arecall.await_args_list]
+        self.assertEqual({call['bank_id'] for call in calls}, {'hindsightkit-mail', 'hindsightkit-shared'})
+        arguments = next(call for call in calls if call['bank_id'] == 'hindsightkit-mail')
         self.assertEqual(arguments["types"], ["world"])
-        self.assertEqual(arguments["max_tokens"], 1024)
+        self.assertEqual(arguments['budget'], 'mid')
+        self.assertEqual(sum(call['max_tokens'] for call in calls), 1024)
+        self.assertTrue(all(call['query'] == 'What compatibility constraints apply?' for call in calls))
+        imported = next(item for item in result['memories'] if item['source'] == 'workiq')
+        self.assertEqual(imported['result']['results'], [fact])
         self.assertNotIn(secret, str(result))
         client.aclose.assert_awaited_once()
 
-    async def test_fixed_client_cannot_bypass_its_bank_through_recall_mail(self):
+    async def test_fixed_client_cannot_expand_reads_to_connectors(self):
         config = {"apiUrl": "https://memory.example.invalid", "apiToken": "synthetic-client-mail-secret",
                   "hindsightkit": {"mode": "client", "bank": "allowed-shared-bank"}}
         client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
@@ -217,7 +226,9 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
             client.arecall.assert_not_awaited()
             normal = await server.get_tool("recall")
             return (await server.call_tool("recall", {"query": "Allowed shared finding", "max_tokens": 1024})).structured_content
-        result, constructor = await self.call_tools(config, action, client)
+        with patch.object(connection, 'discover', new_callable=AsyncMock) as discover:
+            result, constructor = await self.call_tools(config, action, client)
+        discover.assert_not_called()
         constructor.assert_called_once_with(base_url=config["apiUrl"], api_key=config["apiToken"], timeout=330)
         self.assertEqual([item["bank"] for item in result["memories"]], ["allowed-shared-bank"])
         self.assertEqual(client.arecall.await_args.kwargs["bank_id"], "allowed-shared-bank")
@@ -234,3 +245,17 @@ class MailToolConnectionTests(unittest.IsolatedAsyncioTestCase):
         _, constructor = await self.call_tools(config, action, client, saved_mail=False)
         constructor.assert_not_called()
         client.arecall.assert_not_awaited()
+
+    async def test_import_created_after_mcp_start_is_searchable_without_restarting(self):
+        config = {'apiUrl': 'https://memory.example.invalid', 'hindsightkit': {'mode': 'server'}}
+        client = SimpleNamespace(arecall=AsyncMock(return_value=SimpleNamespace(
+            model_dump=lambda **kwargs: {'results': []})), aclose=AsyncMock())
+        async def action(server):
+            before = (await server.call_tool('recall', {'query': 'Known limitations'})).structured_content
+            self.assertEqual(len(before['memories']), 1)
+            directory = Path(os.environ['HINDSIGHTKIT_HOME']) / 'mail'
+            directory.mkdir()
+            (directory / 'sync.sqlite3').touch()
+            return (await server.call_tool('recall', {'query': 'Known limitations'})).structured_content
+        result, _ = await self.call_tools(config, action, client, saved_mail=False)
+        self.assertEqual({item['source'] for item in result['memories']}, {'shared', 'workiq'})

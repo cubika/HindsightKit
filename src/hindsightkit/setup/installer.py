@@ -434,7 +434,6 @@ def setup_client(args, *, local_server=None, transport=None, discovered=None):
     shared_bank = connection.validate_bank(discovered.get('sharedBank', ''))
     asyncio.run(connection.request(candidate, 'GET', '/v1/default/banks/' + shared_bank + '/stats'))
     info = {'mode': 'client', 'routing': 'repository', 'activity': True,
-            'connectors': discovered.get('connectors', []),
             'deviceId': connection.device_id(old.get('deviceId')), 'name': socket.gethostname()}
     if transport:
         info['transport'] = transport

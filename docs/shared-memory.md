@@ -8,14 +8,14 @@ The managed coding integrations select memory from the session's Git repository:
 
 | Session location | Reads | Writes |
 | --- | --- | --- |
-| Inside a Git repository | That repository's bank and the server's shared bank | The repository's bank |
-| Outside Git | The server's shared bank | The shared bank |
+| Inside a Git repository | That repository's bank, the server's shared bank, and readable connector imports | The repository's bank |
+| Outside Git | The server's shared bank and readable connector imports | The shared bank |
 
 Repository sessions can use shared context without writing repository details into shared memory. Other repositories are outside that session's selected scope. Retain, recall, and reflect use the official Hindsight API.
 
 Clones with the same normalized `origin` host and repository path use the same bank on the same server, even when their local directories differ. Standard HTTPS and SSH origins are normalized, including the standard Azure DevOps forms. Different SSH host aliases, path spellings, or nondefault ports can produce different identities; use a common origin URL when two clones should share memory. Repositories without a recognized origin use an identity based on the device and local repository. Git worktrees share their repository's memory.
 
-The selected scope stays fixed for a coding session. Use one repository per VS Code window. If its workspace roots change, restart the Hindsight MCP server before using memory. Start a fresh Copilot CLI session when switching repository context.
+The selected repository stays fixed for a coding session. Readable connector imports are discovered on each read; a fixed-bank connection continues to use only its configured bank. Use one repository per VS Code window. If its workspace roots change, restart the Hindsight MCP server before using memory. Start a fresh Copilot CLI session when switching repository context.
 
 ## Pause memory for a repository
 
@@ -29,7 +29,7 @@ hindsightkit memory on
 
 `hk` accepts the same commands when that alias is installed. Memory is on by default. The setting is stored in local Git configuration, shared by the clone's worktrees and subdirectories. It is not committed or copied to other clones or computers. Running these commands outside Git reports an error.
 
-`off` stops subsequent automatic recall and session saving in Copilot CLI. It also blocks the repository's MCP calls to `retain`, `recall`, `reflect`, and optional `recall_mail`. Tools can remain visible; a call reports that repository memory is disabled. The check happens before relay startup, bank discovery, or memory requests. In-flight requests can finish. Existing saved memory and context already loaded into a chat remain available. Server connector jobs continue independently.
+`off` stops subsequent automatic recall and session saving in Copilot CLI. It also blocks the repository's MCP calls to `retain`, `recall`, and `reflect`, including reads of connector imports. Tools can remain visible; a call reports that repository memory is disabled. The check happens before relay startup, bank discovery, or memory requests. In-flight requests can finish. Existing saved memory and context already loaded into a chat remain available. Server connector jobs continue independently.
 
 `on` restores MCP access and automatic recall on the next call. Start a new Copilot CLI session to resume automatic session saving: a session that spans a pause will not save its transcript afterward, so enabling memory cannot upload the conversation from the paused period. New sessions started while memory is off also skip automatic saving for the rest of that session.
 

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
+from hindsightkit.memory.api import ReadSource
 
 
 @dataclass(frozen=True)
@@ -13,10 +14,13 @@ class Connector:
     directory: str
     view: str
     assets: tuple[str, ...] = ()
+    memory: ReadSource | None = None
+    memory_state: str = ''
 
 
 CONNECTORS = (Connector('workiq', 'WorkIQ email', 'Save useful email findings with links to their sources.',
-                        'hindsightkit.connectors.workiq.adapter', 'mail', 'connectors.html', ('connectors.js', 'connectors.css')),)
+                        'hindsightkit.connectors.workiq.adapter', 'mail', 'connectors.html', ('connectors.js', 'connectors.css'),
+                        ReadSource('workiq', 'hindsightkit-mail', ('world',), 'mid'), 'sync.sqlite3'),)
 
 
 class ConnectorHost:
@@ -89,11 +93,24 @@ def enabled_connectors(root, registry=CONNECTORS):
     return result
 
 
-def register_tools(server, config, root, registry=CONNECTORS):
-    for spec in registry:
-        directory = Path(root) / spec.directory
-        if directory.exists() or spec.id in config.get('hindsightkit', {}).get('connectors', []):
-            try:
-                import_module(spec.module).register_tools(server, config, directory)
-            except ImportError:
-                continue
+def readable_connectors(root, registry=CONNECTORS):
+    """Saved imports remain readable while acquisition is paused or unavailable."""
+    return [spec.id for spec in registry if spec.memory and spec.memory_state
+            and (Path(root) / spec.directory / spec.memory_state).is_file()]
+
+
+async def readable_sources(config, root=None, registry=CONNECTORS):
+    from hindsightkit import connection
+    from hindsightkit.platform.runtime import home
+    if connection.fixed_bank(config):
+        return ()
+    if connection.client_mode(config):
+        # Discovery belongs to the selected server, never the local importer.
+        advertised = (await connection.discover(config)).get('connectors', [])
+    else:
+        advertised = readable_connectors(root if root is not None else home(), registry)
+    supported = {spec.id: spec.memory for spec in registry if spec.memory}
+    if not isinstance(advertised, list) or any(not isinstance(identity, str) or identity not in supported
+                                              for identity in advertised):
+        raise ValueError('The server advertised an unsupported connector. Update HindsightKit.')
+    return tuple(supported[identity] for identity in dict.fromkeys(advertised))

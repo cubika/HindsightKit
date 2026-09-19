@@ -1,5 +1,13 @@
 # Connector validation log
 
+## September 19, 2026: unified retrieval
+
+The focused memory, MCP, connector, lifecycle, connection, routing, and session run passed 91 tests in 84.6 seconds. After review, the final run also covered installation and release packaging and passed 157 tests in 190.0 seconds. The command used the repository Python environment with the task source on `PYTHONPATH`: `python -m unittest test_memory test_mcp test_connector_registry test_memory_control test_lifecycle test_connection test_routing test_session_capture test_remote_setup test_installer test_release_package -v`.
+
+Ordinary recall, reflection, and prompt recall searched registered imports along with repository and shared memory. Fixtures checked imports created after MCP startup, paused synchronization, remote discovery changes, fixed-bank restrictions, unchanged write routing, result budgets, partial failures, missing banks, and cancellation of a slow source. Hook context retained document IDs, metadata, source links, and evidence dates. Review found that a duplicate connector bank could narrow a core read to world facts; keeping the core declaration first and adding a regression test corrected it.
+
+A local HTTP fixture exercised authenticated discovery and the real Hindsight SDK against three banks using a question without a source name. It verified the requests, total result budget, and returned source metadata. SDK signature checks covered the different recall and reflection parameters. MCP fixtures confirmed the three core tools and the removal of the separate mail tool. `git diff --check` passed. No real mailbox, model, or live memory bank was accessed; these checks validate retrieval routing and transport, not the relevance of a particular imported outcome.
+
 ## September 18, 2026: package layout
 
 The full unit suite passed 533 tests in 926.5 seconds after moving the WorkIQ adapter into its own package and separating Node and PowerShell resources. Earlier runs exposed stale fixture paths, a relay mock attached to the old parent package, and integration tests writing runtime state outside their temporary directories; these were corrected before the final run. Connector and MCP tests used synthetic responses, with no mailbox or model calls. A built wheel matched all 50 package files byte-for-byte, and an isolated wheel installation passed resource, adapter-import, command-entry, and Node JSONC checks.

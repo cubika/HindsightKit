@@ -176,7 +176,7 @@ class RepositoryMemoryTests(unittest.TestCase):
     def test_all_mcp_tools_honor_live_toggle_without_network_while_off(self):
         async def check():
             config = {"apiUrl": "https://memory.example.invalid",
-                      "hindsightkit": {"routing": "repository", "connectors": ["workiq"]}}
+                      "hindsightkit": {"mode": "client", "routing": "repository", "connectors": ["workiq"]}}
             result = SimpleNamespace(model_dump=lambda **kwargs: {"results": []})
             client = SimpleNamespace(aretain=AsyncMock(return_value=result), arecall=AsyncMock(return_value=result),
                                      areflect=AsyncMock(return_value=result), aclose=AsyncMock())
@@ -184,30 +184,35 @@ class RepositoryMemoryTests(unittest.TestCase):
             self.command("off")
             with patch.object(mcp.connection, "load", return_value=config), \
                  patch.object(mcp.connection, "sdk", return_value=client) as sdk, \
+                 patch.object(mcp.connection, "discover", new_callable=AsyncMock, return_value={"connectors": ["workiq"]}) as discover, \
                  patch.object(mcp, "resolve", new_callable=AsyncMock, return_value=Scope("resolved", str(self.repo))) as resolve, \
                  patch("hindsightkit.sharing.remote.prepare_client") as prepare, \
                  patch.object(mcp, "FastMCP", return_value=server), patch.object(mcp, "run_stdio"):
                 mcp.serve("cli", str(self.repo))
                 calls = {"retain": {"content": "Fixture fact"}, "recall": {"query": "Fixture query"},
-                         "reflect": {"query": "Fixture query"}, "recall_mail": {"query": "Fixture mail"}}
+                         "reflect": {"query": "Fixture query"}}
                 for name, arguments in calls.items():
                     with self.assertRaisesRegex(ToolError, "disabled for this repository"):
                         await server.call_tool(name, arguments)
                 sdk.assert_not_called()
                 prepare.assert_not_called()
                 resolve.assert_not_called()
+                discover.assert_not_called()
                 self.command("on")
                 for name, arguments in calls.items():
                     await server.call_tool(name, arguments)
                 resolve.assert_awaited_once()
                 self.assertTrue(client.aretain.called)
-                sdk.reset_mock(); prepare.reset_mock()
+                for operation in (client.arecall, client.areflect):
+                    self.assertIn('hindsightkit-mail', {call.kwargs['bank_id'] for call in operation.await_args_list})
+                sdk.reset_mock(); prepare.reset_mock(); discover.reset_mock()
                 self.command("off")
                 for name, arguments in calls.items():
                     with self.assertRaisesRegex(ToolError, "disabled for this repository"):
                         await server.call_tool(name, arguments)
                 sdk.assert_not_called()
                 prepare.assert_not_called()
+                discover.assert_not_called()
         asyncio.run(check())
 
     def test_fixed_bank_mcp_still_respects_local_repository_switch(self):

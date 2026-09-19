@@ -1,4 +1,4 @@
-"""Optional WorkIQ adapter: prerequisites, settings and native mail recall."""
+"""Optional WorkIQ adapter: prerequisites, settings and synchronization."""
 import asyncio
 import os
 from pathlib import Path
@@ -146,29 +146,3 @@ class Adapter:
                 await self.sync.close()
             finally:
                 self.sync = None
-
-
-def register_tools(server, config, directory):
-    from hindsightkit import connection
-    advertised = 'workiq' in config.get('hindsightkit', {}).get('connectors', [])
-    if connection.fixed_bank(config) or (not advertised and
-            (connection.client_mode(config) or not (Path(directory) / 'sync.sqlite3').is_file())):
-        return
-
-    @server.tool
-    async def recall_mail(query: str, max_tokens: int = 4096) -> dict:
-        """Search current email thread outcomes with source links. Read only."""
-        if not query.strip() or not 256 <= max_tokens <= 16384:
-            raise ValueError('Provide a query and max_tokens between 256 and 16384.')
-        client = connection.sdk(config, timeout=90)
-        try:
-            result = await client.arecall(bank_id='hindsightkit-mail', query=query, max_tokens=max_tokens,
-                budget='mid', types=['world'],
-                include_source_facts=False)
-            return {'bank': 'hindsightkit-mail', 'result': result.model_dump(mode='json')}
-        except Exception as exc:
-            if getattr(exc, 'status', None) == 404:
-                return {'bank': 'hindsightkit-mail', 'result': {}, 'message': 'No email has been imported.'}
-            raise
-        finally:
-            await client.aclose()
