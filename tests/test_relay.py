@@ -510,6 +510,110 @@ class RelayConfigurationTests(unittest.TestCase):
         self.assertFalse(relay._listener_owned(selected, os.getpid()))
 
 
+class RelayProbeTests(unittest.TestCase):
+    def state(self):
+        state = relay._State(spec())
+        child = Mock()
+        child.poll.return_value = None
+        state.child, state.upstream, state.ready = child, 21000, True
+        return state, child
+
+    def listener(self, respond):
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                try:
+                    respond(self.request)
+                except OSError:
+                    pass
+        class Server(socketserver.ThreadingTCPServer):
+            daemon_threads = True
+        server = Server(('127.0.0.1', 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
+        worker.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), worker.join(2)))
+        return server.server_address[1]
+
+    def test_http_statuses_are_reachable_without_keys_or_redirects(self):
+        requests = []
+        for status in (200, 302, 401, 404, 405, 500, 503):
+            with self.subTest(status=status):
+                def respond(sock):
+                    requests.append(sock.recv(4096))
+                    sock.sendall(f'HTTP/1.1 {status} Fixture\r\nLocation: http://invalid.example/\r\n\r\n'.encode())
+                port = self.listener(respond)
+                self.assertTrue(relay._probe_port(port, threading.Event()))
+        self.assertEqual(len(requests), 7)
+        self.assertTrue(all(request == b'HEAD /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'
+                            for request in requests))
+
+    def test_probe_has_total_timeout_for_slow_partial_status(self):
+        def respond(sock):
+            sock.recv(4096)
+            for byte in b'HTTP/1.1 200 OK\r\n':
+                sock.sendall(bytes([byte]))
+                time.sleep(0.06)
+        port = self.listener(respond)
+        with patch.object(relay, 'PROBE_TIMEOUT', 0.3):
+            started = time.monotonic()
+            self.assertFalse(relay._probe_port(port, threading.Event()))
+            self.assertLess(time.monotonic() - started, 0.7)
+
+    def test_probe_waits_through_short_idle_periods(self):
+        def respond(sock):
+            sock.recv(4096)
+            time.sleep(0.3)
+            sock.sendall(b'HTTP/1.0 405 Method Not Allowed\r\n')
+        port = self.listener(respond)
+        with patch.object(relay, 'PROBE_TIMEOUT', 1):
+            self.assertTrue(relay._probe_port(port, threading.Event()))
+
+    def test_stop_interrupts_waiting_for_response(self):
+        entered, release, stop = threading.Event(), threading.Event(), threading.Event()
+        def respond(sock):
+            sock.recv(4096)
+            entered.set()
+            release.wait(3)
+        port = self.listener(respond)
+        values = []
+        worker = threading.Thread(target=lambda: values.append(relay._probe_port(port, stop)))
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            stop.set()
+            worker.join(0.6)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(values, [False])
+        finally:
+            stop.set()
+            release.set()
+            worker.join(3)
+
+    def test_probe_does_not_connect_to_foreign_listener(self):
+        state, child = self.state()
+        with patch.object(relay, '_listener_owned', return_value=False), patch.object(relay, '_probe_port') as probe:
+            self.assertFalse(relay._probe_child(state, child, 21000))
+            self.assertFalse(state.ready)
+            probe.assert_not_called()
+
+    def test_old_probe_does_not_change_a_new_forwarding_port(self):
+        state, child = self.state()
+        def changed(*args):
+            state.line('SSH: Forwarding from 127.0.0.1:22000 to host port 19077.', child=child)
+            return False
+        with patch.object(relay, '_listener_owned', return_value=True), patch.object(relay, '_probe_port', side_effect=changed):
+            self.assertIsNone(relay._probe_child(state, child, 21000))
+        self.assertTrue(state.ready)
+        self.assertEqual(state.upstream, 22000)
+
+    def test_recovered_probe_restores_readiness_without_cli_output(self):
+        state, child = self.state()
+        with patch.object(relay, '_listener_owned', return_value=True), patch.object(relay, '_probe_port', side_effect=[False, True]):
+            self.assertFalse(relay._probe_child(state, child, 21000))
+            self.assertFalse(state.ready)
+            self.assertTrue(relay._probe_child(state, child, 21000))
+            self.assertTrue(state.ready)
+
+
 class RelayWorkerTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows console behavior')
     def test_background_worker_has_no_console_and_survives_launcher_exit(self):
@@ -517,7 +621,7 @@ class RelayWorkerTests(unittest.TestCase):
             root, configuration = Path(directory), spec()
             (root / 'fixture-spec.json').write_text(json.dumps(configuration))
             script = root / 'relay_fixture.py'
-            script.write_text('''import ctypes, json, os, socketserver, sys
+            script.write_text(r'''import ctypes, json, os, socketserver, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 role = sys.argv[2]
@@ -545,7 +649,9 @@ else:
     else:
         class Echo(socketserver.BaseRequestHandler):
             def handle(self):
-                self.request.sendall(self.request.recv(65536))
+                data = self.request.recv(65536)
+                self.request.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n"
+                                     if data.startswith(b"HEAD /health ") else data)
         with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo) as server:
             port, remote = server.server_address[1], configuration["remote_port"]
             print(f"SSH: Forwarding from 127.0.0.1:{port} to host port {remote}.", flush=True)
@@ -596,7 +702,7 @@ else:
                           + '\ntime.sleep(120)\n', encoding='utf-8')
         return script
 
-    def run_worker(self, root, configuration, script):
+    def run_worker(self, root, configuration, script, *arguments):
         failures = []
 
         def run():
@@ -605,7 +711,7 @@ else:
             except Exception as exc:
                 failures.append(exc)
 
-        patcher = patch.object(relay, '_child_command', return_value=[sys.executable, str(script)])
+        patcher = patch.object(relay, '_child_command', return_value=[sys._base_executable, str(script), *arguments])
         patcher.start()
         worker = threading.Thread(target=run, daemon=True)
         worker.start()
@@ -619,6 +725,70 @@ else:
 
         self.addCleanup(cleanup)
         return worker
+
+    def recovery_fixture(self, mode):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root, configuration = Path(temporary.name), spec()
+        (root / 'fixture-spec.json').write_text(json.dumps(configuration))
+        for name, value in [('PROBE_INTERVAL', 0.1), ('PROBE_TIMEOUT', 0.1),
+                            ('PROBE_FAILURES', 2), ('READY_TIMEOUT', 2)]:
+            patcher = patch.object(relay, name, value, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.run_worker(root, configuration, Path(__file__).with_name('relay_recovery_fixture.py'),
+                        str(root), mode)
+        return root, configuration
+
+    def check_recovery(self, mode):
+        root, configuration = self.recovery_fixture(mode)
+        opener = build_opener(ProxyHandler({}))
+        address = f'http://127.0.0.1:{configuration["local_port"]}/probe'
+        if mode != 'startup-stuck':
+            self.wait_ready(root)
+            with opener.open(address, timeout=2) as response:
+                self.assertEqual(response.read(), b'synthetic recovered relay')
+            (root / 'fail').touch()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            counter = root / 'attempts.txt'
+            if counter.exists() and int(counter.read_text() or '0') >= 2:
+                self.wait_ready(root)
+                with opener.open(address, timeout=2) as response:
+                    self.assertEqual(response.read(), b'synthetic recovered relay')
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('Live but unusable tunnel was never restarted.')
+        state = relay.status(root)
+        self.assertEqual(state['spec'], configuration)
+        records = [json.loads(line) for line in relay_log.path(root).read_text().splitlines()]
+        self.assertIn('tunnel.unresponsive' if mode != 'startup-stuck' else 'tunnel.ready_timeout',
+                      [record['event'] for record in records])
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
+    def test_live_tunnel_with_lost_listener_recovers_on_same_client_port(self):
+        self.check_recovery('listener-lost')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
+    def test_live_tunnel_with_unresponsive_forwarding_recovers_on_same_client_port(self):
+        self.check_recovery('unresponsive')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
+    def test_live_tunnel_that_disconnects_requests_recovers_on_same_client_port(self):
+        self.check_recovery('disconnected')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
+    def test_tunnel_that_never_becomes_ready_is_restarted(self):
+        self.check_recovery('startup-stuck')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows socket owner table')
+    def test_http_error_does_not_restart_a_working_tunnel(self):
+        root, _ = self.recovery_fixture('http-error')
+        self.wait_ready(root)
+        time.sleep(0.8)
+        self.assertEqual((root / 'attempts.txt').read_text(), '1')
+        self.assertTrue(relay.status(root)['ready'])
 
     def test_private_control_and_restart_keep_unrelated_process_running(self):
         temporary = tempfile.TemporaryDirectory()
@@ -664,7 +834,9 @@ else:
     def test_connect_proxy_reserves_stable_port_and_forwards_bytes(self):
         class Echo(socketserver.BaseRequestHandler):
             def handle(self):
-                self.request.sendall(self.request.recv(65536))
+                data = self.request.recv(65536)
+                self.request.sendall(b'HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n'
+                                     if data.startswith(b'HEAD /health ') else data)
 
         upstream = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Echo)
         threading.Thread(target=upstream.serve_forever, daemon=True).start()

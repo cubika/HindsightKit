@@ -31,6 +31,9 @@ from hindsightkit.sharing import log as relay_log
 DOWNLOAD_URL = 'https://aka.ms/TunnelsCliDownload/win-x64'
 SERVICE = 'hindsightkit-relay-v1'
 READY_TIMEOUT = 60
+PROBE_INTERVAL = 10
+PROBE_TIMEOUT = 2
+PROBE_FAILURES = 3
 TUNNEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]{0,127}')
 OWNED_ID = re.compile(r'hk-[a-f0-9]{32}(?:\.[a-z0-9]+)?')
 FORWARD = re.compile(r'^SSH: Forwarding from 127\.0\.0\.1:(\d+) to host port (\d+)\.$')
@@ -510,6 +513,55 @@ def _child_command(executable, spec):
     return [str(executable), spec['mode'], spec['tunnel_id']]
 
 
+def _probe_port(port, stop):
+    deadline = time.monotonic() + PROBE_TIMEOUT
+    with socket.create_connection(('127.0.0.1', port), timeout=PROBE_TIMEOUT) as probe:
+        probe.settimeout(max(0.001, deadline - time.monotonic()))
+        probe.sendall(b'HEAD /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+        status = bytearray()
+        while not stop.is_set() and len(status) < 1024:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            probe.settimeout(min(0.2, remaining))
+            try:
+                data = probe.recv(min(256, 1024 - len(status)))
+            except TimeoutError:
+                continue
+            if not data:
+                return False
+            status.extend(data)
+            if b'\r\n' in status:
+                return re.fullmatch(rb'HTTP/1\.[01] [1-5][0-9]{2}(?: [^\r\n]*)?',
+                                    bytes(status).split(b'\r\n', 1)[0]) is not None
+    return False
+
+
+def _probe_child(state, child, upstream):
+    with state.lock:
+        if (state.stop.is_set() or state.child is not child or child.poll() is not None
+                or state.upstream != upstream):
+            return None
+    healthy = False
+    if _listener_owned(upstream, child.pid):
+        # A listening TCP socket does not prove that its SSH channel still works.
+        # HEAD needs no key or response body; any HTTP status proves reachability.
+        try:
+            healthy = _probe_port(upstream, state.stop)
+        except OSError:
+            pass
+    with state.lock:
+        # Discard a result from a forwarding port that the CLI already replaced.
+        if (state.stop.is_set() or state.child is not child or child.poll() is not None
+                or state.upstream != upstream):
+            return None
+        previous = state.ready
+        state.ready = healthy
+    if previous != healthy:
+        relay_log.event(state.root, 'tunnel.recovered' if healthy else 'tunnel.probe_failed')
+    return healthy
+
+
 def _run_child(state, executable):
     try:
         _supervise_child(state, executable)
@@ -549,8 +601,40 @@ def _supervise_child(state, executable):
 
         reader = threading.Thread(target=read_lines, daemon=True)
         reader.start()
+        next_probe, failures, was_ready, probed_upstream = started, 0, False, None
         while child.poll() is None and not state.stop.wait(0.2):
-            pass
+            now = time.monotonic()
+            with state.lock:
+                upstream = state.upstream
+                forwarding = upstream is not None
+                was_ready |= forwarding if state.spec['mode'] == 'connect' else state.ready
+            if not was_ready and now - started >= READY_TIMEOUT:
+                with state.lock:
+                    if state.ready or state.upstream is not None:
+                        continue
+                    state.child = None
+                relay_log.event(state.root, 'tunnel.ready_timeout', timeout_seconds=READY_TIMEOUT)
+                break
+            if state.spec['mode'] != 'connect' or not forwarding or now < next_probe:
+                continue
+            if upstream != probed_upstream:
+                failures, probed_upstream = 0, upstream
+            healthy = _probe_child(state, child, upstream)
+            next_probe = time.monotonic() + PROBE_INTERVAL
+            with state.lock:
+                if state.child is not child or state.upstream != upstream or state.stop.is_set():
+                    failures = 0
+                    continue
+                if healthy is False and state.ready:
+                    failures = 0
+                    continue
+                failures = failures + 1 if healthy is False else 0
+                if failures >= PROBE_FAILURES:
+                    # Claim this child before logging or cleanup can yield to new CLI output.
+                    state.child = None
+            if failures >= PROBE_FAILURES:
+                relay_log.event(state.root, 'tunnel.unresponsive', failures=failures)
+                break
         state.reset()
         if child.poll() is None:
             child.terminate()

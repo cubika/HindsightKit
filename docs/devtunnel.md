@@ -86,7 +86,9 @@ HindsightKit manages the tunnel and its background processes. The coding client 
 | `hindsightkit stop` | Stops local services and relays and pauses this computer's memory integrations, including direct clients, until `start`. |
 | `hindsightkit unshare` | Disconnects this computer's remote client. On a server, also disables direct and relay sharing and revokes old connection codes, preserving local memory. |
 
-The relay continues after the terminal closes. Its supervisor restarts an exited tunnel process with a delay between attempts. An interrupted request can still fail; recovery does not replay it.
+The relay continues after the terminal closes. Its supervisor restarts an exited tunnel process with a delay between attempts. A process that never becomes ready is restarted after 60 seconds.
+
+On clients, the supervisor also checks HTTP reachability through the tunnel every 10 seconds, without sending a key or reading memory. A failed check clears the ready state; three consecutive failures restart the tunnel process while keeping the same local client address. Any HTTP response counts as reachable, including authentication and server errors. An interrupted request can still fail; recovery does not replay it.
 
 Setup enables automatic startup 30 seconds after Windows sign-in. On the memory server, it starts local services and resumes saved sharing; client-only installations resume their saved client relay. Client MCP and hooks can also recover a saved relay during normal use. An explicit `stop` or `unshare` stays effective across restarts. Use `hindsightkit startup on`, `off`, or `status` to control login startup, and `hindsightkit start` to resume an explicit stop. Background recovery does not open a login flow. If sign-in has expired, rerun `share --relay` on the server or `connect` on the client interactively.
 
