@@ -756,6 +756,7 @@ class ReleasePackageTests(unittest.TestCase):
             "https://github.com/restricted-owner/HindsightKit/releases/download/v0.1.1",
             "restricted-owner/HindsightKit", "internal")
         blocks = re.findall(chr(96) * 3 + r"powershell\n(.*?)\n" + chr(96) * 3, notes, re.S)
+        self.assertEqual(blocks.pop(0), "hindsightkit stop\nhindsightkit start\nhindsightkit status")
         self.assertEqual(len(blocks), 5)
         download = blocks[1].rsplit("& ([scriptblock]::Create($hindsightkitInstaller))", 1)[0]
         commands = [blocks[1], *(download + command for command in blocks[2:])]

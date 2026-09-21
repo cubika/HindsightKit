@@ -6,6 +6,8 @@ The relay recovery change passed 50 relay tests and 81 related connection, remot
 
 A reported remote client recovered after its own stop/start cycle while the server remained available. This supports rebuilding a stalled client connection as a recovery mechanism. Automatic recovery across a real two-computer server restart has not yet been verified.
 
+A separate test used a disposable private Dev Tunnels connection with synthetic HTTP traffic on one computer. The API process and host relay were stopped and restarted while the client worker and its local address stayed unchanged. HTTP access recovered 4.1 seconds after the API restarted and 31.7 seconds after the host relay became ready. One CLI restart reported ready while HTTP still failed; the supervisor detected this and recovered on its next restart. The temporary tunnel, processes, and listeners were removed and their absence checked. These timings describe that run, not a recovery deadline for other networks.
+
 ## v0.1.7 candidate
 
 Unified retrieval passed 157 memory, connector, routing, lifecycle, installation, and packaging tests in 190.0 seconds. A local HTTP fixture used authenticated discovery and the real Hindsight SDK to check retrieval across repository, shared, and imported memory, including source metadata. These checks used synthetic content and did not access a real mailbox or model. The detailed scope is recorded in [connector validation](connector-validation.md).
