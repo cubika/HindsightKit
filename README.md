@@ -4,7 +4,7 @@ HindsightKit installs a [Hindsight](https://github.com/vectorize-io/hindsight) m
 
 ## Install from a release
 
-The v0.1.7 preview supports Windows x64 with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in. Use the commands from the published version you select; `-ClientOnly` requires v0.1.2 or later.
+The v0.1.8 preview supports Windows x64 with Windows PowerShell 5.1 or PowerShell 7. Install Git and have a Copilot account available for sign-in. Use the commands from the published version you select; `-ClientOnly` requires v0.1.2 or later.
 
 1. Open **Releases** in this repository and select a published version.
 2. Use its default command to host memory on this computer, or its `-ClientOnly` command to prepare a coding client for an existing server. A restricted repository requires GitHub CLI sign-in as shown on that release page.

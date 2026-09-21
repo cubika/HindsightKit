@@ -384,16 +384,31 @@ configuration before rerunning setup. Keep TLS certificate verification enabled.
 
 ## Changes in this preview
 
-{tick}recall{tick}, {tick}reflect{tick}, and automatic prompt recall now search imported connector
-knowledge alongside repository and shared memory. Questions do not need to name the source.
-The separate {tick}recall_mail{tick} tool has been removed. Reads preserve source evidence,
-report partial failures, and respect fixed-bank restrictions. Pausing synchronization keeps
-imported outcomes searchable. Restart the Hindsight MCP server or open a new Copilot session after upgrading.
+Relay clients now detect a tunnel that stops forwarding while its process remains alive.
+The client checks HTTP reachability about every 10 seconds and clears its ready state after
+a failed check. Three consecutive failures restart the tunnel process while preserving
+the saved connection and local port. A tunnel process that never becomes ready is restarted
+after 60 seconds. Recovery does not replay interrupted memory requests or repair expired
+sign-in, network restrictions, or an unavailable server.
 
-Windows sign-in can resume HindsightKit through a per-user task. Explicit pauses and startup
-opt-out settings are preserved. Installation and service startup report progress and failures,
-and Copilot discovery skips broken launchers when a working CLI is available.
-Optional cleanup of older installations uses a cooperative time limit and retains unfinished work for retry.
+The mail dashboard also keeps partial synchronization failures visible after a run completes.
+
+## Upgrade an existing relay client
+
+Close existing Copilot CLI sessions and stop the Hindsight MCP server in VS Code before
+upgrading. Run this release's installer with {tick}-ClientOnly{tick}; the saved connection is preserved.
+Installation does not replace an already running relay worker. After installation, open a new
+terminal and run:
+
+{fence}powershell
+hindsightkit stop
+hindsightkit start
+hindsightkit status
+{fence}
+
+Then reload VS Code, enable Hindsight MCP, and open a new Copilot CLI session.
+The relay recovery fix requires the client update; an existing compatible server can stay
+on its current version. There is no need to generate a new connection code.
 
 ## Install
 

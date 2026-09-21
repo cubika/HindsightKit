@@ -1,5 +1,11 @@
 # Release validation
 
+## v0.1.8 candidate
+
+The relay recovery change passed 50 relay tests and 81 related connection, remote setup, startup, lifecycle, and logging tests. Local subprocess fixtures reproduced a live tunnel losing its listener, leaving requests unanswered, or closing requests without a response. Each recovered on the same client port after the fix. Checks also covered a bounded probe timeout, stop interruption, stale probe results, and HTTP error responses that must not restart a reachable tunnel.
+
+A reported remote client recovered after its own stop/start cycle while the server remained available. This supports rebuilding a stalled client connection as a recovery mechanism. Automatic recovery across a real two-computer server restart has not yet been verified.
+
 ## v0.1.7 candidate
 
 Unified retrieval passed 157 memory, connector, routing, lifecycle, installation, and packaging tests in 190.0 seconds. A local HTTP fixture used authenticated discovery and the real Hindsight SDK to check retrieval across repository, shared, and imported memory, including source metadata. These checks used synthetic content and did not access a real mailbox or model. The detailed scope is recorded in [connector validation](connector-validation.md).
