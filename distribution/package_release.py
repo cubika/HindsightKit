@@ -392,6 +392,8 @@ after 60 seconds. Recovery does not replay interrupted memory requests or repair
 sign-in, network restrictions, or an unavailable server.
 
 The mail dashboard also keeps partial synchronization failures visible after a run completes.
+Relay log rotation now keeps path inspection under the writer lock to prevent Windows
+rename failures when several processes log at once.
 
 ## Upgrade an existing relay client
 

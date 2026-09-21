@@ -42,10 +42,12 @@ def event(root, name, *, error=None, **fields):
         if not log.parent.exists():
             private_directory(log.parent)
         backup, lock = log.with_name(log.name + '.1'), log.with_name(log.name + '.lock')
-        for item in (log, backup, lock):
-            reject_links(item)
+        reject_links(lock)
         payload = (json.dumps(record, ensure_ascii=True) + '\n').encode('utf-8')
         with FileLock(str(lock), timeout=2):
+            # Windows path inspection can hold a handle that blocks another writer's rename.
+            for item in (log, backup):
+                reject_links(item)
             if log.exists() and log.stat().st_size + len(payload) > MAX_BYTES:
                 os.replace(log, backup)
             with log.open('ab') as output:
