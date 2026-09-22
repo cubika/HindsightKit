@@ -614,6 +614,70 @@ class RelayProbeTests(unittest.TestCase):
             self.assertTrue(state.ready)
 
 
+class HostProbeTests(unittest.TestCase):
+    def state(self):
+        configuration = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 19077}
+        state = relay._State(configuration)
+        child = Mock()
+        child.poll.return_value = None
+        state.child = child
+        state.line('Ready to accept connections for tunnel: ' + configuration['tunnel_id'], child=child)
+        return state, child
+
+    def test_cli_announcement_needs_cloud_confirmation_and_cannot_reset_grace(self):
+        state, child = self.state()
+        first = state.host_announced
+        self.assertFalse(state.ready)
+        data = {'tunnel': {'tunnelId': state.spec['tunnel_id'], 'hostConnections': 1}}
+        with patch.object(relay, '_json', return_value=data) as query:
+            self.assertTrue(relay._probe_host(state, child, 'fixture-cli'))
+            query.assert_called_once_with('fixture-cli', 'show', state.spec['tunnel_id'], timeout=5)
+        self.assertTrue(state.ready)
+        state.ready = False
+        state.line('Ready to accept connections for tunnel: ' + state.spec['tunnel_id'], child=child)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.host_announced, first)
+
+    def test_only_valid_same_tunnel_count_is_conclusive(self):
+        state, child = self.state()
+        for count, expected in ((0, False), (1, True), (2, True), (-1, None), (True, None), ('1', None), (None, None)):
+            with self.subTest(count=count), patch.object(relay, '_json', return_value={
+                    'tunnel': {'tunnelId': state.spec['tunnel_id'], 'hostConnections': count}}):
+                self.assertIs(relay._probe_host(state, child, 'fixture-cli'), expected)
+                self.assertEqual(state.ready, expected is True)
+        for data in ({}, [], {'tunnel': {'tunnelId': 'another-tunnel', 'hostConnections': 1}}):
+            with self.subTest(data=data), patch.object(relay, '_json', return_value=data):
+                self.assertIsNone(relay._probe_host(state, child, 'fixture-cli'))
+                self.assertFalse(state.ready)
+
+    def test_management_errors_are_unknown_and_clear_stale_readiness(self):
+        state, child = self.state()
+        for error in (OSError('synthetic'), RuntimeError('synthetic'), subprocess.TimeoutExpired('fixture', 5)):
+            state.ready = True
+            with self.subTest(error=type(error).__name__), patch.object(relay, '_json', side_effect=error):
+                self.assertIsNone(relay._probe_host(state, child, 'fixture-cli'))
+            self.assertFalse(state.ready)
+
+    def test_stale_query_cannot_change_replacement_child(self):
+        state, child = self.state()
+        def replace(*args, **kwargs):
+            state.child = Mock()
+            state.ready = True
+            return {'tunnel': {'tunnelId': state.spec['tunnel_id'], 'hostConnections': 0}}
+        with patch.object(relay, '_json', side_effect=replace):
+            self.assertIsNone(relay._probe_host(state, child, 'fixture-cli'))
+        self.assertTrue(state.ready)
+
+    def test_stop_during_query_does_not_restore_readiness(self):
+        state, child = self.state()
+        def stop(*args, **kwargs):
+            state.stop.set()
+            return {'tunnel': {'tunnelId': state.spec['tunnel_id'], 'hostConnections': 1}}
+        with patch.object(relay, '_json', side_effect=stop):
+            self.assertIsNone(relay._probe_host(state, child, 'fixture-cli'))
+        self.assertFalse(state.ready)
+
+
 class RelayWorkerTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows console behavior')
     def test_background_worker_has_no_console_and_survives_launcher_exit(self):
@@ -795,6 +859,10 @@ else:
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         configuration = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 19077}
+        query = patch.object(relay, '_json', return_value={
+            'tunnel': {'tunnelId': configuration['tunnel_id'], 'hostConnections': 1}})
+        query.start()
+        self.addCleanup(query.stop)
         counter = root / 'attempts.txt'
         extra = ('from pathlib import Path\n'
                  f'counter = Path({str(counter)!r})\n'
@@ -823,13 +891,87 @@ else:
         text = relay_log.path(root).read_text()
         records = [json.loads(line) for line in text.splitlines()]
         events = [item['event'] for item in records]
-        for expected in ('worker.started', 'tunnel.spawned', 'tunnel.ready', 'tunnel.exited',
+        for expected in ('worker.started', 'tunnel.spawned', 'host.announced', 'host.online', 'tunnel.exited',
                          'tunnel.retry', 'worker.stop_requested', 'worker.stopped'):
             self.assertIn(expected, events)
         self.assertTrue(any(item.get('exit_code') == 1 for item in records))
         self.assertTrue(any(item.get('category') == 'access_denied' for item in records))
         for secret in ('synthetic-secret', 'hk1.secret', receipt['token']):
             self.assertNotIn(secret, text)
+
+    def host_fixture(self, query, *, grace=0):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        configuration = {'mode': 'host', 'tunnel_id': 'hk-' + 'a' * 32, 'remote_port': 19077}
+        (root / 'fixture-spec.json').write_text(json.dumps(configuration))
+        for name, value in (('HOST_PROBE_INTERVAL', 0.1), ('HOST_STARTUP_PROBE_INTERVAL', 0.1),
+                            ('HOST_REGISTRATION_GRACE', grace)):
+            patcher = patch.object(relay, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(relay, '_json', side_effect=lambda *args, **kwargs: query(root, configuration))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.run_worker(root, configuration, Path(__file__).with_name('relay_recovery_fixture.py'), str(root), 'host')
+        return root
+
+    def test_host_with_dead_cloud_session_restarts_only_its_child(self):
+        def query(root, config):
+            count = 0 if (root / 'fail').exists() and int((root / 'attempts.txt').read_text()) == 1 else 1
+            return {'tunnel': {'tunnelId': config['tunnel_id'], 'hostConnections': count}}
+        root = self.host_fixture(query)
+        self.wait_ready(root)
+        before = relay.status(root)
+        (root / 'fail').touch()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if int((root / 'attempts.txt').read_text() or '0') >= 2 and relay.status(root).get('ready'):
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('Host session with zero cloud connections was not rebuilt.')
+        after = relay.status(root)
+        self.assertEqual(after['identity'], before['identity'])
+        self.assertEqual(after['spec'], before['spec'])
+        self.assertIn('host.offline', relay_log.path(root).read_text())
+
+    def test_host_waits_for_registration_without_claiming_ready(self):
+        queried = threading.Event()
+        def query(root, config):
+            queried.set()
+            return {'tunnel': {'tunnelId': config['tunnel_id'],
+                               'hostConnections': int((root / 'online').exists())}}
+        root = self.host_fixture(query, grace=5)
+        self.assertTrue(queried.wait(3))
+        time.sleep(0.8)
+        self.assertFalse(relay.status(root)['ready'])
+        self.assertEqual((root / 'attempts.txt').read_text(), '1')
+        (root / 'online').touch()
+        self.wait_ready(root)
+        self.assertEqual((root / 'attempts.txt').read_text(), '1')
+
+    def test_unknown_cloud_queries_do_not_accumulate_offline_failures(self):
+        calls = []
+        def query(root, config):
+            if not (root / 'fail').exists():
+                return {'tunnel': {'tunnelId': config['tunnel_id'], 'hostConnections': 1}}
+            calls.append(len(calls))
+            if len(calls) % 3 == 0:
+                raise subprocess.TimeoutExpired('fixture-cli', 5)
+            return {'tunnel': {'tunnelId': config['tunnel_id'], 'hostConnections': 0}}
+        root = self.host_fixture(query)
+        self.wait_ready(root)
+        (root / 'fail').touch()
+        deadline = time.monotonic() + 5
+        while len(calls) < 9 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertGreaterEqual(len(calls), 9)
+        self.assertFalse(relay.status(root)['ready'])
+        self.assertEqual((root / 'attempts.txt').read_text(), '1')
+        self.assertNotIn('host.offline', relay_log.path(root).read_text())
+        (root / 'fail').unlink()
+        self.wait_ready(root)
 
     def test_connect_proxy_reserves_stable_port_and_forwards_bytes(self):
         class Echo(socketserver.BaseRequestHandler):

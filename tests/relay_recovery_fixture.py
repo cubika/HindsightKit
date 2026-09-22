@@ -13,6 +13,11 @@ counter.write_text(str(attempt))
 spec = json.loads((root / 'fixture-spec.json').read_text())
 failure = root / 'fail'
 
+if mode == 'host':
+    print('Ready to accept connections for tunnel: ' + spec['tunnel_id'], flush=True)
+    time.sleep(120)
+    raise SystemExit(0)
+
 if mode == 'startup-stuck' and attempt == 1:
     time.sleep(120)
     raise SystemExit(1)

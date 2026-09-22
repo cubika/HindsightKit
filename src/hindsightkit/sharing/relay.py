@@ -34,6 +34,10 @@ READY_TIMEOUT = 60
 PROBE_INTERVAL = 10
 PROBE_TIMEOUT = 2
 PROBE_FAILURES = 3
+HOST_PROBE_INTERVAL = 30
+HOST_PROBE_TIMEOUT = 5
+HOST_STARTUP_PROBE_INTERVAL = 5
+HOST_REGISTRATION_GRACE = 60
 TUNNEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]{0,127}')
 OWNED_ID = re.compile(r'hk-[a-f0-9]{32}(?:\.[a-z0-9]+)?')
 FORWARD = re.compile(r'^SSH: Forwarding from 127\.0\.0\.1:(\d+) to host port (\d+)\.$')
@@ -77,9 +81,9 @@ class CliError(RuntimeError):
         self.returncode = result.returncode
 
 
-def _json(executable, *arguments):
+def _json(executable, *arguments, timeout=90):
     result = subprocess.run([str(executable), *arguments, '--json'], capture_output=True,
-                            text=True, encoding='utf-8', errors='replace', timeout=90,
+                            text=True, encoding='utf-8', errors='replace', timeout=timeout,
                             creationflags=_flags())
     if result.returncode:
         raise CliError(' '.join(arguments[:2]), result)
@@ -380,6 +384,7 @@ class _State:
         self.reported = set()
         self.lock = threading.Lock()
         self.ready = False
+        self.host_announced = None
         self.upstream = None
         self.child = None
         self.sockets = set()
@@ -388,6 +393,7 @@ class _State:
     def reset(self):
         with self.lock:
             self.ready, self.upstream = False, None
+            self.host_announced = None
             for connection in self.sockets:
                 try:
                     connection.shutdown(socket.SHUT_RDWR)
@@ -397,12 +403,16 @@ class _State:
 
     def line(self, text, *, child=None):
         text = text.strip()
+        announced = False
         with self.lock:
             before = self.ready
             active = not self.stop.is_set() and (child is None or
                      (self.child is child and child.poll() is None))
             if active and self.spec['mode'] == 'host':
-                self.ready |= text == 'Ready to accept connections for tunnel: ' + self.spec['tunnel_id']
+                if (self.host_announced is None and
+                        text == 'Ready to accept connections for tunnel: ' + self.spec['tunnel_id']):
+                    self.host_announced = time.monotonic()
+                    announced = True
             elif active:
                 match = FORWARD.fullmatch(text)
                 if match and int(match[2]) == self.spec['remote_port']:
@@ -412,6 +422,8 @@ class _State:
             became_ready = self.ready and not before
         if became_ready:
             self.note('tunnel.ready')
+        if announced:
+            self.note('host.announced')
         # Classify known failures; raw CLI text may contain auth tokens or device codes.
         for pattern, category in ((r'forbidden|unauthorized|access denied|\b40[13]\b', 'access_denied'),
                                   (r'not found|does not exist|\b404\b', 'tunnel_not_found'),
@@ -570,6 +582,35 @@ def _run_child(state, executable):
         state.stop.set()
 
 
+def _probe_host(state, child, executable):
+    with state.lock:
+        if (state.stop.is_set() or state.child is not child or child.poll() is not None
+                or state.host_announced is None):
+            return None
+    healthy = None
+    try:
+        data = _json(executable, 'show', state.spec['tunnel_id'], timeout=HOST_PROBE_TIMEOUT)
+        tunnel = data.get('tunnel') if isinstance(data, dict) else None
+        count = tunnel.get('hostConnections') if isinstance(tunnel, dict) else None
+        if (isinstance(tunnel, dict) and tunnel.get('tunnelId') == state.spec['tunnel_id']
+                and type(count) is int and count >= 0):
+            healthy = count > 0
+        else:
+            state.note('host.probe_unknown', category='invalid_response')
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        # A management query failure does not prove that a live data connection is broken.
+        state.note('host.probe_unknown', error=exc)
+    with state.lock:
+        if (state.stop.is_set() or state.child is not child or child.poll() is not None
+                or state.host_announced is None):
+            return None
+        previous = state.ready
+        current = state.ready = healthy is True
+    if previous != current:
+        relay_log.event(state.root, 'host.online' if healthy else 'host.unverified')
+    return healthy
+
+
 def _supervise_child(state, executable):
     delay = 1
     while not state.stop.is_set():
@@ -602,19 +643,43 @@ def _supervise_child(state, executable):
         reader = threading.Thread(target=read_lines, daemon=True)
         reader.start()
         next_probe, failures, was_ready, probed_upstream = started, 0, False, None
+        host_confirmed = False
         while child.poll() is None and not state.stop.wait(0.2):
             now = time.monotonic()
             with state.lock:
                 upstream = state.upstream
                 forwarding = upstream is not None
-                was_ready |= forwarding if state.spec['mode'] == 'connect' else state.ready
+                announced = state.host_announced
+                was_ready |= forwarding if state.spec['mode'] == 'connect' else announced is not None
             if not was_ready and now - started >= READY_TIMEOUT:
                 with state.lock:
-                    if state.ready or state.upstream is not None:
+                    if state.host_announced is not None or state.upstream is not None:
                         continue
                     state.child = None
                 relay_log.event(state.root, 'tunnel.ready_timeout', timeout_seconds=READY_TIMEOUT)
                 break
+            if state.spec['mode'] == 'host':
+                if announced is None or now < next_probe:
+                    continue
+                healthy = _probe_host(state, child, executable)
+                host_confirmed |= healthy is True
+                next_probe = time.monotonic() + (HOST_PROBE_INTERVAL if host_confirmed
+                                                 else HOST_STARTUP_PROBE_INTERVAL)
+                with state.lock:
+                    if state.child is not child or state.stop.is_set():
+                        failures = 0
+                        continue
+                    # Cloud counts may lag behind the initial host announcement.
+                    if not host_confirmed and time.monotonic() - announced < HOST_REGISTRATION_GRACE:
+                        failures = 0
+                    else:
+                        failures = failures + 1 if healthy is False else 0
+                    if failures >= PROBE_FAILURES:
+                        state.child = None
+                if failures >= PROBE_FAILURES:
+                    relay_log.event(state.root, 'host.offline', failures=failures)
+                    break
+                continue
             if state.spec['mode'] != 'connect' or not forwarding or now < next_probe:
                 continue
             if upstream != probed_upstream:

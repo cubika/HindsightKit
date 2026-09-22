@@ -88,6 +88,8 @@ HindsightKit manages the tunnel and its background processes. The coding client 
 
 The relay continues after the terminal closes. Its supervisor restarts an exited tunnel process with a delay between attempts. A process that never becomes ready is restarted after 60 seconds.
 
+On the server, ready also requires the saved tunnel's cloud status to report a connected host. The supervisor checks every 30 seconds after the first confirmation. Three consecutive checks reporting zero hosts restart only the host tunnel process; the API, database, key, and tunnel identity stay unchanged. Initial registration gets a 60-second grace period with checks every five seconds. Failed or unrecognized management queries clear ready but do not restart a connection that may still be working. Cloud registration does not prove that a remote client can reach the API; use client status to check that path.
+
 On clients, the supervisor also checks HTTP reachability through the tunnel every 10 seconds, without sending a key or reading memory. A failed check clears the ready state; three consecutive failures restart the tunnel process while keeping the same local client address. Any HTTP response counts as reachable, including authentication and server errors. An interrupted request can still fail; recovery does not replay it.
 
 When upgrading a relay client, close existing Copilot CLI sessions and stop Hindsight MCP in VS Code before running the installer with `-ClientOnly`. After installation, run `hindsightkit stop`, `hindsightkit start`, and `hindsightkit status` from a new terminal, then reopen the integrations. The installer preserves the connection but does not replace a running relay worker; `start` alone can reuse that worker.
